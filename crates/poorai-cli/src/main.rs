@@ -278,6 +278,268 @@ async fn doctor(endpoint: &str) -> Result<serde_json::Value, SafeError> {
         serde_json::json!({"hardware":hardware,"ollama_runtime":runtime.map(|x|serde_json::to_value(x).unwrap()).unwrap_or_else(|e|serde_json::json!({"status":"unavailable","reason":e.context})),"facts_only":true}),
     )
 }
+/// Context tier the boundary probe deliberately under-provisions.
+const BOUNDARY_SMALL_CONTEXT: u32 = 512;
+/// Tier large enough to hold the boundary prompt, used as the reference count.
+const BOUNDARY_REFERENCE_CONTEXT: u32 = 16_384;
+/// Repetitions of filler; the prompt must clearly exceed the small tier.
+const BOUNDARY_FILLER_REPEATS: usize = 400;
+
+/// Builds a prompt far larger than the small tier, carrying a needle at the
+/// front so a truncating deployment can be seen to have dropped it.
+fn boundary_prompt() -> String {
+    let filler = "The quick brown fox jumps over the lazy dog. ".repeat(BOUNDARY_FILLER_REPEATS);
+    format!(
+        "REMEMBER THIS CODEWORD: ZEPHYR-8813.\n{filler}\nWhat was the codeword? Answer with the codeword only."
+    )
+}
+
+/// Names what a deployment did with a prompt that exceeded its configured
+/// context, given how many prompt tokens it evaluated with and without the
+/// bound.
+///
+/// Fewer tokens with no error means the context was dropped and nothing said
+/// so; that silence is the whole point of measuring this.
+fn boundary_behaviour(reference_tokens: u64, bounded_tokens: u64) -> &'static str {
+    if bounded_tokens < reference_tokens {
+        "truncated_silently"
+    } else {
+        "limit_not_enforced"
+    }
+}
+
+/// Observes what a deployment does when a prompt exceeds its configured context.
+///
+/// This is not one behaviour across deployments. Measured on this host at the
+/// same boundary: one accepted the whole prompt and recalled the needle,
+/// ignoring the limit; one truncated to a fraction of the prompt and lost the
+/// needle with no error at all; one rejected cleanly with a typed error naming
+/// the counts. Silent truncation is the case a scheduler must know about,
+/// because nothing in the reply says the context was dropped.
+async fn probe_context_boundary(
+    provider: &OllamaProvider,
+    deployment: &DeploymentDescriptor,
+) -> Observation {
+    let prompt = boundary_prompt();
+    let ask = async |context_tokens: u32| {
+        let request = ModelRequest {
+            deployment: deployment.clone(),
+            context_tokens,
+            tools: None,
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: prompt.clone(),
+            }],
+        };
+        match provider.chat(request).await {
+            Ok(stream) => poorai_provider::collect_reply(stream)
+                .await
+                .map_err(|error| error.to_string()),
+            Err(error) => Err(error.to_string()),
+        }
+    };
+    // The reference establishes how many tokens the prompt really is, as the
+    // backend counts them.
+    let reference = match ask(BOUNDARY_REFERENCE_CONTEXT).await {
+        Ok(reply) => reply,
+        Err(reason) => {
+            return Observation::Unknown {
+                reason: format!("boundary reference request failed: {reason}"),
+            };
+        }
+    };
+    let Some(reference_tokens) = reference.metrics.as_ref().and_then(|m| m.prompt_tokens) else {
+        return Observation::Unknown {
+            reason: "backend reported no prompt token count; boundary is unmeasurable".into(),
+        };
+    };
+    if reference_tokens <= BOUNDARY_SMALL_CONTEXT as u64 {
+        return Observation::Unknown {
+            reason: "boundary prompt did not exceed the small context tier".into(),
+        };
+    }
+    match ask(BOUNDARY_SMALL_CONTEXT).await {
+        Err(reason) => Observation::Observed(serde_json::json!({
+            "behaviour": "rejected",
+            "requested_context": BOUNDARY_SMALL_CONTEXT,
+            "reference_prompt_tokens": reference_tokens,
+            "detail": reason,
+        })),
+        Ok(reply) => {
+            let bounded = reply.metrics.as_ref().and_then(|m| m.prompt_tokens);
+            let recalled = reply.content.contains("ZEPHYR-8813");
+            match bounded {
+                None => Observation::Unknown {
+                    reason: "bounded request reported no prompt token count".into(),
+                },
+                Some(bounded) => Observation::Observed(serde_json::json!({
+                    "behaviour": boundary_behaviour(reference_tokens, bounded),
+                    "requested_context": BOUNDARY_SMALL_CONTEXT,
+                    "reference_prompt_tokens": reference_tokens,
+                    "bounded_prompt_tokens": bounded,
+                    "needle_recalled": recalled,
+                })),
+            }
+        }
+    }
+}
+
+/// Observes whether a deployment can produce a usable hash-guarded edit.
+///
+/// This measures the capability, not task skill: given a file and the artifact
+/// hash a read returned, does the deployment emit an `apply_replace` call whose
+/// path and `expected_hash` the policy actually accepts? The edit is executed
+/// against a throwaway workspace, because a well-formed call that the hash
+/// guard rejects is not an edit capability. Whether a deployment can *choose*
+/// the right edit is an evaluation question, not a discovery one.
+async fn probe_edit(
+    provider: &OllamaProvider,
+    deployment: &DeploymentDescriptor,
+    trials: u32,
+) -> Observation {
+    // Proposing an edit is sampled behaviour just as emitting a tool call is, so
+    // a single miss is not evidence that a deployment cannot edit.
+    let mut successes = Vec::new();
+    let mut failures = Vec::new();
+    for trial in 1..=trials {
+        match probe_edit_once(provider, deployment).await {
+            Observation::Observed(mut value) => {
+                value["trial"] = serde_json::json!(trial);
+                successes.push(value);
+            }
+            Observation::Unknown { reason } => failures.push(format!("trial {trial}: {reason}")),
+        }
+    }
+    if successes.is_empty() {
+        return Observation::Unknown {
+            reason: format!(
+                "no usable edit in {trials} trial(s): {}",
+                failures.join("; ")
+            ),
+        };
+    }
+    Observation::Observed(serde_json::json!({
+        "trials": trials,
+        "edits": successes.len(),
+        "reliable": successes.len() == trials as usize,
+        "evidence": successes,
+        "failures": failures,
+    }))
+}
+
+async fn probe_edit_once(
+    provider: &OllamaProvider,
+    deployment: &DeploymentDescriptor,
+) -> Observation {
+    let Ok(workspace) = tempfile::tempdir() else {
+        return Observation::Unknown {
+            reason: "could not create a probe workspace".into(),
+        };
+    };
+    let original = "pub fn value() -> i32 {
+    1
+}
+";
+    if std::fs::write(workspace.path().join("probe.rs"), original).is_err() {
+        return Observation::Unknown {
+            reason: "could not seed the probe workspace".into(),
+        };
+    }
+    let expected_hash = hash_bytes(original);
+    let request = ModelRequest {
+        deployment: deployment.clone(),
+        context_tokens: 4096,
+        tools: Some(poorai_orchestrator::action_tool_schema()),
+        messages: vec![
+            ChatMessage {
+                role: "system".into(),
+                content: "Take exactly one action by calling one of the provided tools.".into(),
+            },
+            ChatMessage {
+                role: "user".into(),
+                content: format!(
+                    "File probe.rs contains:\n{original}\nIts artifact_hash is {expected_hash}.                      Call apply_replace on probe.rs so value() returns 2, passing that hash as                      expected_hash."
+                ),
+            },
+        ],
+    };
+    let reply = match provider.chat(request).await {
+        Ok(stream) => match poorai_provider::collect_reply(stream).await {
+            Ok(reply) => reply,
+            Err(error) => {
+                return Observation::Unknown {
+                    reason: format!("edit probe stream failed: {error}"),
+                };
+            }
+        },
+        Err(error) => {
+            return Observation::Unknown {
+                reason: format!("edit probe failed: {error}"),
+            };
+        }
+    };
+    let Some(call) = reply
+        .tool_calls
+        .iter()
+        .find(|call| call.name == "apply_replace")
+    else {
+        // Naming what it called instead turns a bare miss into a diagnosis.
+        let proposed: Vec<&str> = reply
+            .tool_calls
+            .iter()
+            .map(|call| call.name.as_str())
+            .collect();
+        return Observation::Unknown {
+            reason: if proposed.is_empty() {
+                "model proposed no tool call at all".into()
+            } else {
+                format!("model proposed {proposed:?} instead of apply_replace")
+            },
+        };
+    };
+    let action = match poorai_orchestrator::action_from_tool_call(call) {
+        Ok(action) => action,
+        Err(reason) => {
+            return Observation::Unknown {
+                reason: format!("edit call did not match the declared schema: {reason}"),
+            };
+        }
+    };
+    let poorai_tools::ActionProposal::ApplyReplace {
+        path,
+        expected_hash: proposed_hash,
+        replacement,
+    } = action
+    else {
+        return Observation::Unknown {
+            reason: "edit call did not decode to an apply_replace action".into(),
+        };
+    };
+    let policy = poorai_tools::ToolPolicy {
+        root: workspace.path().to_path_buf(),
+        allow_commands: vec![],
+        output_limit: 64 * 1024,
+        timeout: Duration::from_secs(10),
+        network_enabled: false,
+        sandbox: poorai_tools::SandboxPolicy::Disabled,
+        approvals: Vec::new(),
+    };
+    // The edit is applied for real, in a throwaway workspace: a call the hash
+    // guard refuses is not evidence of an edit capability.
+    match poorai_tools::apply_replace(&policy, Path::new(&path), &proposed_hash, &replacement) {
+        Ok(result) => Observation::Observed(serde_json::json!({
+            "path": path,
+            "hash_guard_satisfied": true,
+            "previous_hash": result.previous_hash,
+            "new_hash": result.new_hash,
+            "replacement_bytes": replacement.len(),
+        })),
+        Err(error) => Observation::Unknown {
+            reason: format!("proposed edit was refused by policy: {error}"),
+        },
+    }
+}
+
 /// Tool offered by the capability probe. Only a call naming it counts as evidence.
 const PROBE_TOOL: &str = "probe_echo";
 /// Upper bound on chunks read from one probe. The provider timeout bounds wall
@@ -552,24 +814,16 @@ async fn inspect(
             "cancellation".into(),
             probe_cancellation(&provider, &deployment).await,
         );
-        for (name, reason) in [
-            (
-                "context_boundary",
-                "boundary probe requires calibrated deployment limits",
-            ),
-            (
-                "edit",
-                "edit capability is evaluated through the typed-action harness",
-            ),
-        ] {
-            inspection
-                .definition
-                .capabilities
-                .entry(name.into())
-                .or_insert_with(|| Observation::Unknown {
-                    reason: reason.into(),
-                });
-        }
+        inspection.definition.capabilities.insert(
+            "context_boundary".into(),
+            probe_context_boundary(&provider, &deployment).await,
+        );
+        inspection.definition.capabilities.insert(
+            "edit".into(),
+            probe_edit(&provider, &deployment, trials).await,
+        );
+        // No capability is left as a declared placeholder: every entry above is
+        // an observation or an explained unknown.
     }
     let root = std::env::current_dir()
         .map_err(|e| SafeError {
@@ -1469,6 +1723,26 @@ mod tests {
         .await
         .unwrap_err();
         assert!(reason.contains("cancellation probe failed"));
+    }
+
+    /// Measured on this host at the same boundary: one deployment accepted the
+    /// whole prompt, one evaluated 258 tokens of 4095 and lost the needle with
+    /// no error, one returned HTTP 400.
+    #[test]
+    fn fewer_evaluated_tokens_without_an_error_is_silent_truncation() {
+        assert_eq!(boundary_behaviour(4095, 258), "truncated_silently");
+        assert_eq!(boundary_behaviour(4044, 4044), "limit_not_enforced");
+        // A backend that evaluated more than the reference did not truncate.
+        assert_eq!(boundary_behaviour(4000, 4100), "limit_not_enforced");
+    }
+
+    #[test]
+    fn the_boundary_prompt_carries_a_needle_and_exceeds_the_small_tier() {
+        let prompt = boundary_prompt();
+        assert!(prompt.starts_with("REMEMBER THIS CODEWORD: ZEPHYR-8813."));
+        // Far more characters than the small tier could hold in tokens, so the
+        // probe cannot silently degrade into a within-budget request.
+        assert!(prompt.len() > BOUNDARY_SMALL_CONTEXT as usize * 8);
     }
 
     #[test]

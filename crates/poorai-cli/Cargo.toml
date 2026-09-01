@@ -24,6 +24,7 @@ poorai-tools = { path = "../poorai-tools" }
 poorai-verify = { path = "../poorai-verify" }
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 tokio.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true

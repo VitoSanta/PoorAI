@@ -3,7 +3,7 @@
 | Milestone | Deliverable | Advancement criterion |
 |---|---|---|
 | M0 Foundation | workspace, domain schemas, event log, CLI | compile, clippy, unit tests; schema invariants tested |
-| M1 Discovery | Ollama inspect/state + HardwareProfile | captured fixtures and doctor works on target Mac |
+| M1 Discovery | **Completed** | `poorai doctor --json` captures host and backend facts. `models inspect --probe` runs the full capability suite against all seven deployments -- structured tools, streaming, cancellation, edit and context boundary -- with a persisted artifact each and no declared placeholders left. Hermetic adapter fixtures cover structural tool-call and thinking parsing, metadata pruning and NDJSON ordering; probe-policy tests cover drain, trial aggregation, cancellation and boundary classification. | Re-probe when a deployment or backend changes; a deployment whose behaviour is intermittent needs more trials than three to characterise (see below). |
 | M2 Calibration | **Completed** | Seven deployments calibrated on the local Mac across a 2048-32768 ladder, three repetitions per tier, tier order shuffled from a recorded seed. Per-tier warm-up verified by backend-reported load duration, generation rate from exact `eval_count`/`eval_duration`, memory pressure and backend state captured per sample, raw samples persisted with every profile. Profiles carry the thresholds they were judged against; refusals are persisted with the criteria that produced them. Invalidation tested across all four declared keys. | Fill the context to measure a loaded tier, not only an allocated one (see below); Linux and Windows host probes. |
 | M3 Safe execution | **Completed** | Full gitignore semantics via the ripgrep `ignore` walker with poorAI policy exclusions layered on top. Every tool attempt audited inside the hash chain, denied as well as allowed. macOS seatbelt process isolation confining writes to the workspace and denying network, with the boundary recorded on every result. Approval gates for dependency manifests, history rewriting and publishing, granted by nobody by default. Non-deterministic checks detected by reproduction so a flake cannot authorise an edit. 56 adversarial fixtures. | Linux and Windows sandbox adapters; a CLI path for a user to actually grant an approval, needed once non-dry runs exist. |
 | M4 Agent task loop | plan/act/verify/recovery | locked smoke corpus completes with recorded evidence |
@@ -26,7 +26,31 @@ Threshold values are set before M5 based on baseline measurements. No milestone 
 
 ### Capability probe results — 2026-09-01
 
-Seven deployments, `--probe-trials 3`, artifacts under `.poorai/*-probe.json`.
+Seven deployments, three trials per sampled capability, deployments unloaded between runs.
+
+| Deployment | structured_tools | edit | context_boundary | cancellation |
+|---|---|---|---|---|
+| qwen3.8:27b-mlx | 3/3 | 3/3 | limit_not_enforced | 533 ms |
+| ornith-1.5:35b | 3/3 | 2/3 unreliable | rejected | 187 ms |
+| granite4.2:30b-q6_K | 3/3 | 3/3 | rejected | 650 ms |
+| nemotron-3.5-lightning:30b-mlx | 2/3 unreliable | 2/3 unreliable | limit_not_enforced | 311 ms |
+| gpt-oss:20b | 3/3 | 3/3 | truncated_silently | 451 ms |
+| gemma4:31b-mlx | 3/3 | 3/3 | limit_not_enforced | 785 ms |
+| muse-glimmer:30b-mlx | 3/3 | unknown, 0/3 | limit_not_enforced | 751 ms |
+
+**The context boundary is three different contracts, and one of them is silent.** Given the same ~4000-token prompt at `num_ctx` 512, one deployment accepted the whole prompt and recalled a needle placed at its start; one evaluated 258 tokens of 4095, lost the needle, and returned no error at all; one rejected with a typed HTTP 400 naming the counts. This does not divide along MLX and GGUF lines — ornith and granite are both GGUF and reject, gpt-oss is GGUF and truncates.
+
+Silent truncation is the case that matters: the agent believes it sent context it did not send, and nothing in the reply says otherwise. `num_ctx` is therefore not a limit a scheduler may delegate to. The budget must be enforced before sending, and `prompt_eval_count` checked against what was believed sent. It also sharpens the M2 caveat below: where the limit is not enforced, a ladder tier may be nominal rather than an actual allocation.
+
+**Intermittency reproduced.** The earlier battery recorded nemotron-3.5-lightning at 3 of 3 for structured tools and this roadmap noted that three trials had not reproduced a directly observed miss. This battery caught it: 2 of 3, on both tools and edit. That is the case for recording a rate rather than a boolean — a single sample, and even a unanimous set of three, can report a coin flip as a fact. The trial count is still not calibrated against measured variance.
+
+**muse-glimmer proposes no edit.** Given the file contents and the artifact hash a read would return, it called `list_tree` on all three trials instead of `apply_replace`. Recorded as `unknown` with what it called instead, because absence in three trials is not proof it cannot edit — but it is a consistent behavioural difference worth carrying into M5.
+
+The `edit` probe measures the capability, not task skill: whether a deployment emits an `apply_replace` whose path and `expected_hash` the policy actually accepts, applied for real against a throwaway workspace. A well-formed call the hash guard would refuse is not an edit capability. Whether a deployment chooses the *right* edit is an evaluation question.
+
+### Superseded capability results — 2026-09-01
+
+An earlier battery, before the boundary and edit probes existed and before deployments were unloaded between runs.
 
 | Deployment | structured_tools | Tool-call chunk | cancellation | streaming |
 |---|---|---|---|---|
