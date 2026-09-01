@@ -219,6 +219,76 @@ fn the_sandbox_denies_network_when_policy_does() {
     );
 }
 
+/// Build tooling needs a scratch area. It is given one inside the workspace
+/// rather than by widening the sandbox to all of $TMPDIR, which would let one
+/// task's workspace write into another's.
+#[test]
+fn a_child_process_gets_its_scratch_directory_inside_the_workspace() {
+    let root = tempfile::tempdir().unwrap();
+    let policy = policy(root.path());
+    let result = block_on(run_command(
+        &policy,
+        "sh",
+        &["-c".to_string(), "printf %s \"$TMPDIR\"".to_string()],
+    ))
+    .unwrap();
+    assert_eq!(result.exit_code, Some(0));
+    let reported = std::path::PathBuf::from(result.stdout.trim());
+    assert!(
+        reported.starts_with(root.path().canonicalize().unwrap()),
+        "scratch directory {reported:?} is outside the workspace"
+    );
+    assert!(reported.is_dir());
+}
+
+/// The system temp directory stays outside the boundary.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_system_temp_directory_stays_unwritable_inside_the_sandbox() {
+    let root = tempfile::tempdir().unwrap();
+    let policy = policy(root.path());
+    let target = std::env::temp_dir()
+        .canonicalize()
+        .unwrap()
+        .join("poorai-should-not-exist.txt");
+    let _ = fs::remove_file(&target);
+    let result = block_on(run_command(
+        &policy,
+        "sh",
+        &[
+            "-c".to_string(),
+            format!("echo pwned > {}", target.display()),
+        ],
+    ))
+    .unwrap();
+    assert!(result.sandboxed);
+    assert!(!target.exists(), "system temp directory was writable");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn the_home_directory_stays_unwritable_inside_the_sandbox() {
+    let root = tempfile::tempdir().unwrap();
+    let policy = policy(root.path());
+    let result = block_on(run_command(
+        &policy,
+        "sh",
+        &[
+            "-c".to_string(),
+            "echo pwned > \"$HOME/poorai-should-not-exist.txt\"".to_string(),
+        ],
+    ))
+    .unwrap();
+    assert!(result.sandboxed);
+    assert_ne!(result.exit_code, Some(0));
+    let home = std::env::var("HOME").unwrap();
+    assert!(
+        !Path::new(&home)
+            .join("poorai-should-not-exist.txt")
+            .exists()
+    );
+}
+
 #[test]
 fn a_result_always_records_whether_it_was_sandboxed() {
     let root = tempfile::tempdir().unwrap();

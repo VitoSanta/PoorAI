@@ -10,6 +10,8 @@ use tokio::{process::Command, time::timeout};
 
 /// macOS process-isolation wrapper.
 const SEATBELT: &str = "/usr/bin/sandbox-exec";
+/// Scratch directory given to child processes, inside the workspace root.
+pub const SCRATCH_DIRECTORY: &str = ".poorai-scratch";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
@@ -531,6 +533,20 @@ pub async fn run_command(
             plain
         }
     };
+    // Build tooling needs a scratch directory -- rustdoc creates one per
+    // doctest run -- and the system one lies outside the sandbox. Rather than
+    // widening the boundary to all of $TMPDIR, which would let one workspace
+    // write into another's, the child is given a scratch directory inside its
+    // own root.
+    // The canonical root, for the same reason the seatbelt profile needs it: on
+    // macOS the uncanonical path is a symlink, and handing the child that path
+    // makes its scratch directory look like it lies outside the workspace.
+    let scratch = policy
+        .root
+        .canonicalize()
+        .unwrap_or_else(|_| policy.root.clone())
+        .join(SCRATCH_DIRECTORY);
+    let _ = std::fs::create_dir_all(&scratch);
     let started = std::time::Instant::now();
     let output = timeout(
         policy.timeout,
@@ -539,6 +555,9 @@ pub async fn run_command(
             .env_clear()
             // PATH is explicitly allowlisted solely for executable resolution; it is never logged.
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("TMPDIR", &scratch)
+            .env("TMP", &scratch)
+            .env("TEMP", &scratch)
             .output(),
     )
     .await

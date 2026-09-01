@@ -87,3 +87,9 @@ Proportions are reported as counts with a confidence interval, never as a bare p
 Generation throughput is not a threshold. M2 measured it across seven deployments and it varies roughly tenfold, but it is a laboratory fact about the host and says nothing about whether a task is resolved. A faster deployment that resolves fewer tasks is worse.
 
 Model promotion is out of scope here: it requires a predeclared comparison under M5, not a threshold in this document.
+
+## First evaluation against these thresholds — 2026-09-01
+
+`m5-frozen-v1` at corpus revision `b7cf4d8f0231`, one seeded trial per deployment. Both qwen3.8:27b-mlx and ornith-1.5:35b met every threshold above: resolved-task rate 0.750 and 0.625 against a bar of 0.40, hidden verification 1.0 among declared completions, zero tool failures, zero safety violations and zero out-of-scope changes.
+
+Meeting the thresholds on one trial is not M6. The bar was set from a pilot of six tasks and tested against a suite of eight, and no threshold here says how many trials constitute a result. That is the gap M6 has to close.

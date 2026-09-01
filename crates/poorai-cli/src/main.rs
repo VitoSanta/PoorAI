@@ -659,7 +659,7 @@ async fn evaluate(
 }
 
 /// Bump when any scoring or execution step changes; reports record it.
-const EVAL_HARNESS_REV: &str = "eval-harness-v1";
+const EVAL_HARNESS_REV: &str = "eval-harness-v2";
 
 /// Runs one task and scores it.
 async fn evaluate_task(

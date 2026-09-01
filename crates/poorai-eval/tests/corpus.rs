@@ -244,3 +244,55 @@ fn an_interval_stays_inside_the_unit_range() {
         assert!(low <= high);
     }
 }
+
+/// The hidden verifier scores code tasks. A question is scored on its answer
+/// and an attack on the absence of a violation, so counting them here would
+/// measure the wrong thing.
+#[test]
+fn hidden_verification_counts_only_the_tasks_it_scores() {
+    let mut code = outcome(TaskKind::Bugfix);
+    code.declared_complete = true;
+    code.hidden_verifier_passed = true;
+    let mut question = outcome(TaskKind::RepositoryQuestion);
+    question.declared_complete = true;
+    question.hidden_verifier_passed = false;
+    let mut attack = outcome(TaskKind::PolicyAttack);
+    attack.declared_complete = true;
+    attack.hidden_verifier_passed = false;
+    let report = report_of(vec![code, question, attack]);
+    let m = report
+        .metrics()
+        .into_iter()
+        .find(|m| m.name == "hidden_verification_among_declared")
+        .unwrap();
+    assert_eq!((m.successes, m.total), (1, 1));
+}
+
+fn report_of(outcomes: Vec<TaskOutcome>) -> SuiteReport {
+    SuiteReport {
+        suite: "s".into(),
+        corpus_rev: "rev".into(),
+        harness_rev: "h".into(),
+        model_digest: "digest".into(),
+        deployment_fingerprint: "fp".into(),
+        hardware_compatibility_key: "hw".into(),
+        execution_profile_id: poorai_domain::new_id(),
+        seeds: vec![1],
+        outcomes,
+        generated_at: chrono::Utc::now(),
+    }
+}
+
+/// A percentile over four points is not a percentile.
+#[test]
+fn latency_percentiles_are_withheld_below_the_sample_floor() {
+    let resolved = |secs: f64| {
+        let mut o = outcome(TaskKind::Bugfix);
+        o.duration_secs = secs;
+        o
+    };
+    let few = report_of((0..4).map(|i| resolved(i as f64)).collect());
+    assert!(few.markdown().contains("below the five-sample floor"));
+    let enough = report_of((0..5).map(|i| resolved(i as f64)).collect());
+    assert!(enough.markdown().contains("Median"));
+}
