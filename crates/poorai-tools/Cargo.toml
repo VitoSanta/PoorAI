@@ -13,5 +13,9 @@ tokio.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 
+[dev-dependencies]
+poorai-domain = { path = "../poorai-domain" }
+serde_json.workspace = true
+
 [lints]
 workspace = true

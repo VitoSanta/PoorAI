@@ -202,30 +202,62 @@ pub fn select_compatible_profile(
 }
 
 /// Executes one validated, typed action and durably records its outcome before another action may run.
+/// Executes one typed action under policy and audits the attempt.
+///
+/// Every attempt is recorded, allowed or denied. A policy denial is the security
+/// boundary doing its job, and it is the event most worth having: an audit log
+/// that holds only successes cannot show that anything was ever refused.
 pub async fn execute_action(
     store: &Store,
     run_id: poorai_domain::Id,
     policy: &ToolPolicy,
     action: ActionProposal,
 ) -> Result<serde_json::Value, String> {
+    let result = attempt_action(policy, &action).await;
+    let payload = match &result {
+        Ok(outcome) => serde_json::json!({
+            "action": action,
+            "status": "allowed",
+            "outcome": outcome,
+        }),
+        Err(denial) => serde_json::json!({
+            "action": action,
+            "status": "denied",
+            "denial": denial,
+        }),
+    };
+    // The audit is written before the denial propagates, so a refused action
+    // cannot leave the run without a record of what was asked.
+    store
+        .append(Some(run_id), "tool.action", payload)
+        .map_err(|e| e.to_string())?;
+    result
+}
+
+/// Runs one action under policy, without auditing. Callers go through
+/// `execute_action` so the attempt is recorded either way.
+async fn attempt_action(
+    policy: &ToolPolicy,
+    action: &ActionProposal,
+) -> Result<serde_json::Value, String> {
     action.validate().map_err(|e| e.to_string())?;
-    let outcome = match &action {
+    match action {
         ActionProposal::Complete { rationale } => {
-            serde_json::json!({"complete":true,"rationale":rationale})
+            Ok(serde_json::json!({"complete":true,"rationale":rationale}))
         }
         ActionProposal::ReadFile { path } => serde_json::to_value(
             poorai_tools::read_file(policy, std::path::Path::new(path))
                 .map_err(|e| e.to_string())?,
         )
-        .map_err(|e| e.to_string())?,
+        .map_err(|e| e.to_string()),
         ActionProposal::Search { query, max_matches } => serde_json::to_value(
             poorai_tools::search(policy, query, *max_matches).map_err(|e| e.to_string())?,
         )
-        .map_err(|e| e.to_string())?,
+        .map_err(|e| e.to_string()),
         ActionProposal::ListTree { max_entries } => serde_json::to_value(
             poorai_tools::list_tree(policy, *max_entries).map_err(|e| e.to_string())?,
         )
-        .map_err(|e| e.to_string())?,
+        .map_err(|e| e.to_string()),
         ActionProposal::ApplyReplace {
             path,
             expected_hash,
@@ -239,22 +271,14 @@ pub async fn execute_action(
             )
             .map_err(|e| e.to_string())?,
         )
-        .map_err(|e| e.to_string())?,
+        .map_err(|e| e.to_string()),
         ActionProposal::RunCommand { executable, args } => serde_json::to_value(
             poorai_tools::run_command(policy, executable, args)
                 .await
                 .map_err(|e| e.to_string())?,
         )
-        .map_err(|e| e.to_string())?,
-    };
-    store
-        .append(
-            Some(run_id),
-            "tool.action",
-            serde_json::json!({"action":action,"outcome":outcome}),
-        )
-        .map_err(|e| e.to_string())?;
-    Ok(outcome)
+        .map_err(|e| e.to_string()),
+    }
 }
 
 pub fn checkpoint_recovery(

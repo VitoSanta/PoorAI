@@ -1,4 +1,5 @@
 //! Persistable repository inventory; repository contents are untrusted input.
+use ignore::WalkBuilder;
 use poorai_domain::{hash_bytes, now};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
@@ -8,6 +9,8 @@ pub enum RepoError {
     Io(#[from] std::io::Error),
     #[error("invalid repository root")]
     InvalidRoot,
+    #[error("repository walk failure: {0}")]
+    Walk(String),
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileRecord {
@@ -31,8 +34,7 @@ pub fn index(root: impl AsRef<Path>) -> Result<RepositoryIndex, RepoError> {
         return Err(RepoError::InvalidRoot);
     }
     let mut files = Vec::new();
-    let ignores = load_ignores(&root)?;
-    visit(&root, &root, &ignores, &mut files)?;
+    walk(&root, &mut files)?;
     files.sort_by(|a, b| a.path.cmp(&b.path));
     let inventory_hash = hash_bytes(serde_json::to_vec(&files).expect("serializable"));
     Ok(RepositoryIndex {
@@ -60,74 +62,69 @@ pub fn persist(index: &RepositoryIndex, state_dir: &Path) -> Result<std::path::P
 pub fn stale(index: &RepositoryIndex) -> Result<bool, RepoError> {
     Ok(self::index(&index.root)?.inventory_hash != index.inventory_hash)
 }
-fn load_ignores(root: &Path) -> Result<Vec<String>, RepoError> {
-    let path = root.join(".gitignore");
-    if !path.exists() {
-        return Ok(vec![]);
-    }
-    Ok(String::from_utf8_lossy(&fs::read(path)?)
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#') && !line.starts_with('!'))
-        .map(|line| {
-            line.trim_start_matches('/')
-                .trim_end_matches('/')
-                .to_string()
+/// poorAI exclusions applied on top of VCS ignore rules. These are policy, not
+/// convenience: state and VCS internals must never enter the index.
+const POLICY_EXCLUSIONS: [&str; 4] = [".git", "target", "node_modules", ".poorai"];
+/// Files above this size are inventory entries only; the index is not a mirror.
+const MAX_INDEXED_BYTES: usize = 1_000_000;
+
+/// Walks the repository under full gitignore semantics.
+///
+/// Ignore rules are delegated to the same implementation ripgrep uses rather
+/// than approximated here: negation, `**`, anchoring, directory-only patterns
+/// and nested `.gitignore` files are all load-bearing, and a pattern this walk
+/// misunderstands is a secret in the index.
+fn walk(root: &Path, files: &mut Vec<FileRecord>) -> Result<(), RepoError> {
+    let walker = WalkBuilder::new(root)
+        .hidden(false)
+        .git_ignore(true)
+        // Ignore rules apply whether or not the root is a git checkout: a
+        // workspace is untrusted input either way.
+        .require_git(false)
+        .git_global(false)
+        .git_exclude(true)
+        .parents(false)
+        .follow_links(false)
+        .filter_entry(|entry| {
+            !POLICY_EXCLUSIONS
+                .iter()
+                .any(|blocked| entry.file_name() == *blocked)
         })
-        .collect())
-}
-fn ignored(relative: &Path, patterns: &[String]) -> bool {
-    let text = relative.to_string_lossy();
-    patterns.iter().any(|pattern| {
-        text == pattern.as_str()
-            || text.starts_with(&format!("{pattern}/"))
-            || (pattern.starts_with('*') && text.ends_with(&pattern[1..]))
-    })
-}
-fn visit(
-    root: &Path,
-    path: &Path,
-    ignores: &[String],
-    files: &mut Vec<FileRecord>,
-) -> Result<(), RepoError> {
-    for entry in fs::read_dir(path)? {
-        let entry = entry?;
-        let p = entry.path();
-        let name = entry.file_name();
-        if [".git", "target", "node_modules", ".poorai"]
-            .iter()
-            .any(|x| name == *x)
-        {
+        .build();
+    for entry in walker {
+        let entry = entry.map_err(|error| RepoError::Walk(error.to_string()))?;
+        let path = entry.path();
+        // `symlink_metadata` keeps a link to a file outside the root from being
+        // indexed as if it lived inside it.
+        let metadata = fs::symlink_metadata(path)?;
+        if !metadata.is_file() {
             continue;
         }
-        if ignored(p.strip_prefix(root).unwrap_or(&p), ignores) {
+        let bytes = fs::read(path)?;
+        if bytes.len() > MAX_INDEXED_BYTES || bytes.iter().take(4096).any(|b| *b == 0) {
             continue;
         }
-        if p.is_dir() {
-            visit(root, &p, ignores, files)?;
-        } else if p.is_file() {
-            let bytes = fs::read(&p)?;
-            if bytes.len() > 1_000_000 || bytes.iter().take(4096).any(|b| *b == 0) {
-                continue;
-            }
-            let text = String::from_utf8_lossy(&bytes);
-            let symbols = text
-                .lines()
-                .filter_map(|l| {
-                    l.trim()
-                        .strip_prefix("fn ")
-                        .or_else(|| l.trim().strip_prefix("pub fn "))
-                })
-                .filter_map(|r| r.split('(').next())
-                .map(str::to_string)
-                .collect();
-            files.push(FileRecord {
-                path: p.strip_prefix(root).unwrap_or(&p).display().to_string(),
-                content_hash: hash_bytes(&bytes),
-                bytes: bytes.len() as u64,
-                symbols,
-            });
-        }
+        let text = String::from_utf8_lossy(&bytes);
+        let symbols = text
+            .lines()
+            .filter_map(|l| {
+                l.trim()
+                    .strip_prefix("fn ")
+                    .or_else(|| l.trim().strip_prefix("pub fn "))
+            })
+            .filter_map(|r| r.split('(').next())
+            .map(str::to_string)
+            .collect();
+        files.push(FileRecord {
+            path: path
+                .strip_prefix(root)
+                .unwrap_or(path)
+                .display()
+                .to_string(),
+            content_hash: hash_bytes(&bytes),
+            bytes: bytes.len() as u64,
+            symbols,
+        });
     }
     Ok(())
 }
