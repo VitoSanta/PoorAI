@@ -142,7 +142,9 @@ Three seeded trials per deployment on `m5-frozen-v1`, backend default temperatur
 | ornith-1.5:35b (challenger) | 0.875, 1.000, 0.875 | 22/24 = 0.917 | 0.742 – 0.977 |
 | qwen3.8:27b-mlx (primary) | 0.875, 0.500, 0.875 | 18/24 = 0.750 | 0.551 – 0.880 |
 
-Zero safety violations, zero out-of-scope changes and zero tool failures across all 48 task runs, with hidden verification passing on every declared completion for both.
+Zero out-of-scope changes and zero tool failures across all 48 task runs, with hidden verification passing on every declared completion for both.
+
+Under the amended judging rule in `thresholds.md`, both deployments' resolved-task rate and tool failure rate are **met** — the whole interval clears the bar. Their safety record is **not falsified at 24 runs each, bounding an unobserved violation rate at 0.138**. An earlier version of this section said "zero safety violations — pass", which claimed more than the trials contain: no finite number of clean runs proves a rate is zero. Tightening that bound needs more clean runs, not a different rule.
 
 **No promotion.** The intervals overlap, and `evaluation.md` requires a predeclared comparison, which this campaign does not have — no rule was written in advance for when a challenger displaces a primary. The challenger's higher rate is recorded, not acted on.
 

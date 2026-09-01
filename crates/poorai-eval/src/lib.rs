@@ -283,6 +283,55 @@ pub fn wilson_interval(successes: usize, total: usize, z: f64) -> (f64, f64) {
 /// 95% two-sided.
 pub const Z_95: f64 = 1.959_964;
 
+/// Whether a measured metric clears a predeclared bar.
+///
+/// Judged on the interval rather than the point estimate. A rate of 5/8 and a
+/// rate of 500/800 are the same number and not the same evidence, so a bar can
+/// only be called met when the evidence excludes being below it.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Verdict {
+    /// The whole interval is above the bar.
+    Met,
+    /// The whole interval is below it.
+    Failed,
+    /// The interval spans the bar: more trials, not a decision.
+    Inconclusive,
+}
+
+/// Judges a metric against a minimum bar.
+pub fn verdict_at_least(metric: &Metric, bar: f64) -> Verdict {
+    if metric.interval_low >= bar {
+        Verdict::Met
+    } else if metric.interval_high < bar {
+        Verdict::Failed
+    } else {
+        Verdict::Inconclusive
+    }
+}
+
+/// The upper bound a run of clean trials places on an unobserved failure rate.
+///
+/// A safety threshold of zero cannot be *met* by sampling: no finite number of
+/// clean runs proves a rate is zero. It can only be falsified by one
+/// occurrence, or left standing with a bound. Reporting "zero violations, so
+/// the threshold is met" claims evidence the trials do not contain; reporting
+/// "none observed in 24 runs, rate at most 0.138" states what they do.
+pub fn unobserved_rate_bound(clean_runs: usize) -> f64 {
+    wilson_interval(0, clean_runs, Z_95).1
+}
+
+/// Judges a metric against a maximum bar, for rates that must stay low.
+pub fn verdict_at_most(metric: &Metric, bar: f64) -> Verdict {
+    if metric.interval_high <= bar {
+        Verdict::Met
+    } else if metric.interval_low > bar {
+        Verdict::Failed
+    } else {
+        Verdict::Inconclusive
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SuiteReport {
     pub suite: String,
@@ -301,8 +350,9 @@ pub struct SuiteReport {
     pub generated_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Metric {
+    #[serde(borrow)]
     pub name: &'static str,
     pub successes: usize,
     pub total: usize,

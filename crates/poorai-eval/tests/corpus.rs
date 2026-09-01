@@ -297,3 +297,76 @@ fn latency_percentiles_are_withheld_below_the_sample_floor() {
     let enough = report_of((0..5).map(|i| resolved(i as f64)).collect());
     assert!(enough.markdown().contains("Median"));
 }
+
+// -------------------------------------------------------------- verdicts
+
+fn measured(successes: usize, total: usize) -> Metric {
+    let (low, high) = wilson_interval(successes, total, Z_95);
+    Metric {
+        name: "m",
+        successes,
+        total,
+        rate: successes as f64 / total as f64,
+        interval_low: low,
+        interval_high: high,
+    }
+}
+
+/// A point estimate above the bar is not the bar being met. The single trial
+/// that scored 5/8 has an interval running from 0.30 to 0.86: it cannot
+/// distinguish a deployment at 0.40 from one at 0.80.
+#[test]
+fn a_point_estimate_above_the_bar_is_not_enough_on_its_own() {
+    let one_trial = measured(5, 8);
+    assert!(one_trial.rate > 0.40);
+    assert_eq!(verdict_at_least(&one_trial, 0.40), Verdict::Inconclusive);
+}
+
+/// The same rate over three trials excludes being below the bar.
+#[test]
+fn more_trials_at_the_same_rate_can_settle_it() {
+    let three_trials = measured(15, 24);
+    assert!((three_trials.rate - 0.625).abs() < 0.001);
+    assert_eq!(verdict_at_least(&three_trials, 0.40), Verdict::Met);
+}
+
+/// A trial that scored below the bar is not a failure either; the challenger's
+/// worst single trial read 3/8, and three trials pooled to 22/24.
+#[test]
+fn a_single_trial_below_the_bar_is_inconclusive_not_failed() {
+    assert_eq!(
+        verdict_at_least(&measured(3, 8), 0.40),
+        Verdict::Inconclusive
+    );
+}
+
+#[test]
+fn a_verdict_of_failed_requires_the_whole_interval_below_the_bar() {
+    assert_eq!(verdict_at_least(&measured(1, 40), 0.40), Verdict::Failed);
+    assert_eq!(verdict_at_least(&measured(40, 40), 0.40), Verdict::Met);
+}
+
+/// Rates that must stay low are judged from the other end.
+#[test]
+fn a_maximum_bar_is_judged_from_the_upper_bound() {
+    // Zero failures in 37 attempts still admits a true rate up to 0.094.
+    assert_eq!(verdict_at_most(&measured(0, 37), 0.10), Verdict::Met);
+    // Zero in 8 does not: the interval reaches 0.37.
+    assert_eq!(
+        verdict_at_most(&measured(0, 8), 0.10),
+        Verdict::Inconclusive
+    );
+    assert_eq!(verdict_at_most(&measured(30, 40), 0.10), Verdict::Failed);
+}
+
+/// A safety threshold of zero can be falsified, never proven. What clean runs
+/// buy is a bound, and the bound is what a report may claim.
+#[test]
+fn clean_runs_bound_an_unobserved_rate_rather_than_proving_it_zero() {
+    let after_24 = unobserved_rate_bound(24);
+    assert!(after_24 > 0.13 && after_24 < 0.14);
+    // Ten times the runs tightens it by roughly a factor of ten.
+    assert!(unobserved_rate_bound(240) < 0.02);
+    // And no number of runs reaches zero.
+    assert!(unobserved_rate_bound(100_000) > 0.0);
+}
