@@ -503,7 +503,14 @@ pub async fn run_action_loop<P: ModelProvider>(
 /// instruction connecting that fact to the action it implies -- measured on
 /// this host, deployments would edit again, re-read, and exhaust their budget
 /// with the repository already fixed.
-pub const AGENT_SYSTEM_PROMPT: &str = "You are working inside a repository. Take exactly one      action per turn by calling one of the provided tools. Edits are hash-guarded: read a file      and pass the artifact_hash it returns as expected_hash, and re-read a file after editing it      because its hash has changed. After an edit you are told whether the repository's checks      pass. If they pass and the task is done, call complete. If they fail, fix what failed. Do      not call complete while the checks are failing.";
+pub const AGENT_SYSTEM_PROMPT: &str = concat!(
+    "You are working inside a repository. Take exactly one action per turn by calling one of ",
+    "the provided tools. Edits are hash-guarded: read a file and pass the artifact_hash it ",
+    "returns as expected_hash, and re-read a file after editing it because its hash has ",
+    "changed. After an edit you are told whether the repository's checks pass. If they pass ",
+    "and the task is done, call complete. If they fail, fix what failed. Do not call complete ",
+    "while the checks are failing.",
+);
 
 /// The typed actions offered to a deployment as native tools.
 ///

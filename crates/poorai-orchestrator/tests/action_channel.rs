@@ -379,3 +379,12 @@ fn the_system_prompt_states_when_to_complete_and_when_not_to() {
     // what to do about it rather than leaving it to be discovered per run.
     assert!(prompt.contains("re-read a file after editing it"));
 }
+
+/// The prompt is assembled from fragments; a missing space between two of them
+/// silently changes the words the deployment reads.
+#[test]
+fn the_system_prompt_has_no_broken_spacing() {
+    let prompt = poorai_orchestrator::AGENT_SYSTEM_PROMPT;
+    assert!(!prompt.contains("  "), "double space in the prompt");
+    assert!(!prompt.contains(".T") && !prompt.contains("sthe"));
+}
