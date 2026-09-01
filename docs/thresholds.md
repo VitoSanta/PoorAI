@@ -53,6 +53,31 @@ Applied to pilot baselines, per metric, and fixed before the frozen corpus is ru
 
 Where the pilot yields fewer than 5 samples for a metric, no threshold is set from it and the metric is reported without a bar, labelled as such.
 
+## Stage two — success thresholds, derived 2026-09-01
+
+Pilot: six repair tasks on a corpus disjoint from the M5 frozen corpus, qwen3.8:27b-mlx as primary deployment, one run each. The pilot runs are discarded and are not evaluation results.
+
+Pilot baselines: 3 of 6 tasks declared complete and verified; 44 tool attempts of which 0 failed and 12 were denied; 0 interventions; 0 context or backend failures; verified-run durations 71.1 s, 87.6 s, 89.1 s.
+
+| Metric | Threshold | Derivation |
+|---|---|---|
+| Resolved-task rate | **≥ 0.40** | 0.500 → down to nearest 5 points = 0.50 → minus 10-point margin |
+| Verification pass rate among declared completions | **1.0** | Fixed by the rule; pilot observed 3 of 3 |
+| Tool failure rate | **≤ 0.10** | 0.000 → up to nearest 5 points = 0.00 → plus 10-point margin |
+| Time-to-verified-result | **no threshold** | 3 verified samples, below the 5-sample floor; reported without a bar |
+| Intervention count | **0** | Fixed by the rule; pilot observed 0 |
+| Context/backend failures per run | **0** | Pilot mean 0, rounded up |
+
+Denials were excluded from the tool failure rate as the rule requires. All 12 were `stale file hash; reread before editing`, which is the hash guard working.
+
+### What the resolved-task rate does and does not measure
+
+It measures **declared and verified completion**, and in this pilot that materially understates repair. All six tasks ended with correct code on disk; three were never declared complete. The deployment fixed the bug, then kept proposing further edits with a hash its own edit had invalidated, until the action budget ran out. The action budget was the binding constraint in every failing run — each used exactly its 8 actions.
+
+This is recorded rather than tuned away. Raising the budget or reshaping the prompt would move the rate, and adjusting either after seeing the pilot would be fitting the threshold to the result by another route. The 0.40 bar is therefore conservative by construction, and a future harness change that raises the rate does not retroactively justify raising the bar — only a dated amendment can.
+
+An earlier pilot run, before the loop re-ran the narrow check after each edit, produced the same 3-of-6 rate with the same pattern. The harness defect was fixed because it was a gap between the loop and `verification-recovery.md`, identifiable without reference to the score; the pilot was then re-run once and these thresholds derived from that run.
+
 ## Reporting rule
 
 Proportions are reported as counts with a confidence interval, never as a bare percentage. Latency is reported as median and 90th percentile, never as a mean. A run whose corpus revision or verifier differs from another's is flagged and not compared.
