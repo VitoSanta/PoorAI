@@ -441,6 +441,7 @@ pub async fn run_action_loop<P: ModelProvider>(
             });
             continue;
         }
+        let edited = matches!(action, ActionProposal::ApplyReplace { .. });
         // A denial is a tool result, not the end of the run. Aborting here
         // discards work already done -- a stale-hash refusal literally says
         // "reread before editing", which the deployment can act on. The action
@@ -449,9 +450,37 @@ pub async fn run_action_loop<P: ModelProvider>(
             Ok(outcome) => outcome,
             Err(denial) => serde_json::json!({"denied": denial}),
         };
+        // "Make one hypothesis-linked correction, rerun the narrow check."
+        // Without this the deployment has no way to learn whether its edit
+        // worked: it can only guess, and a correct edit followed by guessing
+        // burns the action budget instead of completing.
+        let mut result = outcome;
+        if edited && result.get("denied").is_none() && !checks.is_empty() {
+            let after = poorai_verify::baseline(policy, checks)
+                .await
+                .map_err(|e| e.to_string())?;
+            let failing: Vec<&str> = after
+                .checks
+                .iter()
+                .filter(|check| check.result.exit_code != Some(0))
+                .map(|check| check.command.as_str())
+                .collect();
+            store
+                .append(
+                    Some(run_id),
+                    "verification.interim",
+                    serde_json::json!({"step": step, "passing": failing.is_empty()}),
+                )
+                .map_err(|e| e.to_string())?;
+            result = serde_json::json!({
+                "edit": result,
+                "checks_passing": failing.is_empty(),
+                "failing_checks": failing,
+            });
+        }
         request.messages.push(poorai_domain::ChatMessage {
             role: "tool".into(),
-            content: serde_json::to_string(&outcome).map_err(|e| e.to_string())?,
+            content: serde_json::to_string(&result).map_err(|e| e.to_string())?,
         });
     }
     store

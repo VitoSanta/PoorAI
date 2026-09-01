@@ -255,3 +255,106 @@ async fn the_whole_run_is_recorded_under_one_identifier() {
         assert_eq!(pair[1].previous_hash.as_ref(), Some(&pair[0].event_hash));
     }
 }
+
+/// verification-recovery.md: "make one hypothesis-linked correction, rerun the
+/// narrow check". Without the rerun the deployment cannot learn whether its
+/// edit worked, so a correct edit is followed by guessing.
+#[tokio::test]
+async fn a_successful_edit_is_followed_by_the_narrow_check() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("code.rs"), "broken").unwrap();
+    let policy = ToolPolicy {
+        root: root.path().to_path_buf(),
+        allow_commands: vec!["true".into()],
+        output_limit: 4096,
+        timeout: Duration::from_secs(10),
+        network_enabled: false,
+        sandbox: SandboxPolicy::Disabled,
+        approvals: Vec::new(),
+    };
+    let store = Store::open(":memory:").unwrap();
+    let run_id = poorai_domain::new_id();
+    let provider = RecoveringProvider {
+        turn: Arc::new(Mutex::new(1)),
+        hash: poorai_domain::hash_bytes("broken"),
+    };
+    let request = ModelRequest {
+        deployment: DeploymentDescriptor {
+            schema_version: 1,
+            id: poorai_domain::new_id(),
+            provider: "fake".into(),
+            endpoint: "http://localhost/".into(),
+            model_ref: "fake".into(),
+            backend_options: Default::default(),
+            auth_ref: None,
+        },
+        messages: vec![],
+        context_tokens: 512,
+        tools: None,
+    };
+    let checks = vec![("true".to_string(), vec![])];
+    poorai_orchestrator::run_action_loop(&store, &provider, run_id, request, &policy, &checks, 6)
+        .await
+        .unwrap();
+    let interim: Vec<_> = store
+        .events_for_run(run_id)
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.event_type == "verification.interim")
+        .collect();
+    assert_eq!(interim.len(), 1, "the edit was not followed by a check");
+    assert_eq!(interim[0].payload["passing"], true);
+}
+
+/// A denied edit changed nothing, so there is nothing to re-check.
+#[tokio::test]
+async fn a_denied_edit_does_not_trigger_a_check() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("code.rs"), "broken").unwrap();
+    let policy = ToolPolicy {
+        root: root.path().to_path_buf(),
+        allow_commands: vec!["true".into()],
+        output_limit: 4096,
+        timeout: Duration::from_secs(10),
+        network_enabled: false,
+        sandbox: SandboxPolicy::Disabled,
+        approvals: Vec::new(),
+    };
+    let store = Store::open(":memory:").unwrap();
+    let run_id = poorai_domain::new_id();
+    // Turn 0 proposes the stale-hash edit, which is refused.
+    let provider = RecoveringProvider {
+        turn: Arc::new(Mutex::new(0)),
+        hash: poorai_domain::hash_bytes("broken"),
+    };
+    let request = ModelRequest {
+        deployment: DeploymentDescriptor {
+            schema_version: 1,
+            id: poorai_domain::new_id(),
+            provider: "fake".into(),
+            endpoint: "http://localhost/".into(),
+            model_ref: "fake".into(),
+            backend_options: Default::default(),
+            auth_ref: None,
+        },
+        messages: vec![],
+        context_tokens: 512,
+        tools: None,
+    };
+    let checks = vec![("true".to_string(), vec![])];
+    poorai_orchestrator::run_action_loop(&store, &provider, run_id, request, &policy, &checks, 6)
+        .await
+        .unwrap();
+    let events = store.events_for_run(run_id).unwrap();
+    let denied = events
+        .iter()
+        .filter(|e| e.payload["status"] == "denied")
+        .count();
+    let interim = events
+        .iter()
+        .filter(|e| e.event_type == "verification.interim")
+        .count();
+    assert_eq!(denied, 1);
+    // One allowed edit followed, so exactly one check -- not two.
+    assert_eq!(interim, 1);
+}
