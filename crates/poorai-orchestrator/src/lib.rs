@@ -387,6 +387,20 @@ pub async fn run_action_loop<P: ModelProvider>(
         .map_err(|e| e.to_string())?;
         let action = action_from_reply(&reply)?;
         if matches!(action, ActionProposal::Complete { .. }) {
+            // A completion is an action, and every action is audited. Handling
+            // it before the audit left the declared rationale out of the log
+            // entirely -- the one part of a completion that says anything.
+            store
+                .append(
+                    Some(run_id),
+                    "tool.action",
+                    serde_json::json!({
+                        "action": action,
+                        "status": "allowed",
+                        "outcome": {"declared": true, "step": step},
+                    }),
+                )
+                .map_err(|e| e.to_string())?;
             let after = poorai_verify::baseline(policy, checks)
                 .await
                 .map_err(|e| e.to_string())?;

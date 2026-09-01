@@ -168,3 +168,73 @@ async fn the_audit_chain_covers_denied_actions() {
         );
     }
 }
+
+/// A completion is an action. Auditing every other action but not this one
+/// leaves the declared rationale -- the only part of a completion that says
+/// anything -- out of the record.
+#[tokio::test]
+async fn a_declared_completion_is_audited_with_its_rationale() {
+    struct CompletingProvider;
+    #[async_trait::async_trait]
+    impl poorai_provider::ModelProvider for CompletingProvider {
+        async fn inspect(
+            &self,
+            _: &poorai_domain::DeploymentDescriptor,
+        ) -> Result<poorai_domain::ModelInspection, poorai_provider::ProviderError> {
+            unreachable!()
+        }
+        async fn runtime_state(
+            &self,
+        ) -> Result<poorai_domain::BackendState, poorai_provider::ProviderError> {
+            unreachable!()
+        }
+        async fn chat(
+            &self,
+            _: poorai_domain::ModelRequest,
+        ) -> Result<poorai_provider::ModelStream, poorai_provider::ProviderError> {
+            Ok(Box::pin(futures_util::stream::iter([Ok(
+                poorai_domain::ModelChunk {
+                    content: r#"{"capability":"complete","rationale":"checksum_of computes it"}"#
+                        .into(),
+                    done: true,
+                    ..Default::default()
+                },
+            )])))
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let store = Store::open(":memory:").unwrap();
+    let run_id = poorai_domain::new_id();
+    let request = poorai_domain::ModelRequest {
+        deployment: poorai_domain::DeploymentDescriptor {
+            schema_version: 1,
+            id: poorai_domain::new_id(),
+            provider: "fake".into(),
+            endpoint: "http://localhost/".into(),
+            model_ref: "fake".into(),
+            backend_options: Default::default(),
+            auth_ref: None,
+        },
+        messages: vec![],
+        context_tokens: 512,
+        tools: None,
+        seed: None,
+        temperature_milli: None,
+    };
+    poorai_orchestrator::run_action_loop(
+        &store,
+        &CompletingProvider,
+        run_id,
+        request,
+        &policy(root.path()),
+        &[],
+        4,
+    )
+    .await
+    .unwrap();
+    let completion = audited(&store, run_id)
+        .into_iter()
+        .find(|p| p["action"]["capability"] == "complete")
+        .expect("the completion was not audited");
+    assert_eq!(completion["action"]["rationale"], "checksum_of computes it");
+}
