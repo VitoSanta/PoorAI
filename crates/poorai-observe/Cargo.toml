@@ -1,0 +1,15 @@
+[package]
+name = "poorai-observe"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+poorai-domain = { path = "../poorai-domain" }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

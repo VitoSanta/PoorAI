@@ -1,0 +1,43 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/poorai-domain",
+  "crates/poorai-provider",
+  "crates/poorai-ollama",
+  "crates/poorai-store",
+  "crates/poorai-observe",
+  "crates/poorai-tools",
+  "crates/poorai-repo",
+  "crates/poorai-verify",
+  "crates/poorai-orchestrator",
+  "crates/poorai-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+async-trait = "0.1.89"
+blake3 = "1.8.3"
+chrono = { version = "0.4.42", features = ["serde"] }
+clap = { version = "4.5.48", features = ["derive"] }
+futures-util = "0.3.31"
+futures-core = "0.3.31"
+hex = "0.4.3"
+regex = "1.11.2"
+reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls", "stream"] }
+rusqlite = { version = "0.37.0", features = ["bundled", "chrono"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+tempfile = "3.23.0"
+thiserror = "2.0.16"
+tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread", "process", "time", "sync"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
+uuid = { version = "1.18.1", features = ["v7", "serde"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"

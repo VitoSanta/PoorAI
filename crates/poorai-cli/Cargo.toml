@@ -1,0 +1,31 @@
+[package]
+name = "poorai-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "poorai"
+path = "src/main.rs"
+
+[dependencies]
+chrono.workspace = true
+clap.workspace = true
+futures-util.workspace = true
+poorai-domain = { path = "../poorai-domain" }
+poorai-ollama = { path = "../poorai-ollama" }
+poorai-orchestrator = { path = "../poorai-orchestrator" }
+poorai-provider = { path = "../poorai-provider" }
+poorai-repo = { path = "../poorai-repo" }
+poorai-store = { path = "../poorai-store" }
+poorai-tools = { path = "../poorai-tools" }
+poorai-verify = { path = "../poorai-verify" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true
