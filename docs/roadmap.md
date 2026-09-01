@@ -4,7 +4,7 @@
 |---|---|---|
 | M0 Foundation | workspace, domain schemas, event log, CLI | compile, clippy, unit tests; schema invariants tested |
 | M1 Discovery | Ollama inspect/state + HardwareProfile | captured fixtures and doctor works on target Mac |
-| M2 Calibration | ladder harness/profile store | repeatable samples; invalidation tests; no arbitrary capacity default |
+| M2 Calibration | **Completed** | Seven deployments calibrated on the local Mac across a 2048-32768 ladder, three repetitions per tier, tier order shuffled from a recorded seed. Per-tier warm-up verified by backend-reported load duration, generation rate from exact `eval_count`/`eval_duration`, memory pressure and backend state captured per sample, raw samples persisted with every profile. Profiles carry the thresholds they were judged against; refusals are persisted with the criteria that produced them. Invalidation tested across all four declared keys. | Fill the context to measure a loaded tier, not only an allocated one (see below); Linux and Windows host probes. |
 | M3 Safe execution | **Completed** | Full gitignore semantics via the ripgrep `ignore` walker with poorAI policy exclusions layered on top. Every tool attempt audited inside the hash chain, denied as well as allowed. macOS seatbelt process isolation confining writes to the workspace and denying network, with the boundary recorded on every result. Approval gates for dependency manifests, history rewriting and publishing, granted by nobody by default. Non-deterministic checks detected by reproduction so a flake cannot authorise an edit. 56 adversarial fixtures. | Linux and Windows sandbox adapters; a CLI path for a user to actually grant an approval, needed once non-dry runs exist. |
 | M4 Agent task loop | plan/act/verify/recovery | locked smoke corpus completes with recorded evidence |
 | M5 Evaluation | benchmark runner/reports | two models evaluated on frozen suite with artifacts |
@@ -65,6 +65,26 @@ Two defects were found while closing this milestone. `execute_action` propagated
 The sandbox is real and measured, not declared: a seatbelt-confined command cannot write outside the workspace, can write inside it, and cannot reach the network — verified against an unsandboxed control that does reach it. `ToolResult.sandboxed` records whether the boundary was actually in force, so an unsandboxed run is visibly unsandboxed. `SandboxPolicy::Required` fails closed where no sandbox exists. Only the macOS adapter is implemented; Linux and Windows report unavailable rather than pretending.
 
 That audit defect was real and is worth recording: `execute_action` propagated every tool error with `?` before appending to the log, so the event stream held successes only. A policy denial is the boundary doing its job and the event most worth having — the log could not previously show that anything had ever been refused. Denials are now written before the error propagates, and the hash chain covers them.
+
+### Calibration results — 2026-09-01
+
+Ladder 2048/4096/8192/16384/32768, seed 42, three repetitions per tier, models unloaded between deployments. Every tier of every deployment was admitted; no sample was measured cold; every rate came from backend-reported token counts.
+
+| Deployment | Median first token | Generation rate | Worst tier spread |
+|---|---|---|---|
+| nemotron-3.5-lightning:30b-mlx | 39-47 ms | 59-69 tok/s | 18 ms |
+| ornith-1.5:35b | 61-63 ms | 70-71 tok/s | 2 ms |
+| gpt-oss:20b | 104-130 ms | 54-64 tok/s | 11 ms |
+| qwen3.8:27b-mlx | 125-147 ms | 17-23 tok/s | 40 ms |
+| granite4.2:30b-q6_K | 132-140 ms | 7.4-7.6 tok/s | 23 ms |
+| muse-glimmer:30b-mlx | 201-301 ms | 15-16 tok/s | 41 ms |
+| gemma4:31b-mlx | 378-432 ms | 13-16 tok/s | 82 ms |
+
+**What this measures, and what it does not.** The fixed prompt is 74 tokens, so a 32768-token tier allocates that much KV cache and then runs a short generation. The ladder therefore answers whether a deployment can be configured and served at a context size without failing or causing memory pressure — which is what context bounding needs — and not what it costs to run with that context full. Throughput is near-flat across tiers for exactly this reason; reading it as "context size is free" would be wrong. Measuring a loaded tier needs a ladder of prompt sizes, not only of `num_ctx` values.
+
+Generation rate is a laboratory throughput fact and carries no claim about task quality. A deployment ten times faster than another may still resolve fewer tasks; that comparison belongs to M5 and must not be anticipated from this table.
+
+**Two harness artifacts were found and removed by measuring rather than assuming.** A single warm-up per run left every tier after the first carrying a model reload, because the backend reloads when `num_ctx` changes: ~1.7s first-token against ~11ms warm, on every GGUF deployment while MLX deployments showed nothing. The median hid it and the variance inherited it, so affected tiers recorded a spread near 700,000 on samples whose real spread was single-digit milliseconds. And running seven 30B deployments back to back left earlier models resident, so free memory fell below the declared floor and the last deployment was refused for pressure that the battery order had created. Deployments are now unloaded between calibrations, and warm-up is per tier.
 
 ### Current safety boundary
 
