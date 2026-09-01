@@ -5,7 +5,7 @@
 | M0 Foundation | workspace, domain schemas, event log, CLI | compile, clippy, unit tests; schema invariants tested |
 | M1 Discovery | Ollama inspect/state + HardwareProfile | captured fixtures and doctor works on target Mac |
 | M2 Calibration | ladder harness/profile store | repeatable samples; invalidation tests; no arbitrary capacity default |
-| M3 Safe execution | repo index, typed tools, policy | adversarial path/secret/command tests pass |
+| M3 Safe execution | **Completed** | Full gitignore semantics via the ripgrep `ignore` walker with poorAI policy exclusions layered on top. Every tool attempt audited inside the hash chain, denied as well as allowed. macOS seatbelt process isolation confining writes to the workspace and denying network, with the boundary recorded on every result. Approval gates for dependency manifests, history rewriting and publishing, granted by nobody by default. Non-deterministic checks detected by reproduction so a flake cannot authorise an edit. 56 adversarial fixtures. | Linux and Windows sandbox adapters; a CLI path for a user to actually grant an approval, needed once non-dry runs exist. |
 | M4 Agent task loop | plan/act/verify/recovery | locked smoke corpus completes with recorded evidence |
 | M5 Evaluation | benchmark runner/reports | two models evaluated on frozen suite with artifacts |
 | M6 Beta | usability/reliability hardening | predeclared success, regression, safety thresholds met |
@@ -50,7 +50,19 @@ The suite is mutation-checked, not just green: relaxing the measured-capacity ru
 
 ### Safety boundary under adversarial test
 
-Each suite is mutation-checked. Disabling ignore-rule evaluation fails 8 of the 10 gitignore fixtures; restoring the original audit behaviour, where a denial returned before the event was written, fails 5 of the 6 audit fixtures.
+Every suite is mutation-checked rather than merely green:
+
+| Mutation | Fixtures that fail |
+|---|---|
+| ignore-rule evaluation disabled | 8 of 10 gitignore |
+| audit restored to success-only | 5 of 6 audit |
+| approval gate removed from edits | 1 of 12 sandbox/approval |
+| sandbox never applied | 3 of 12 sandbox/approval |
+| non-determinism never detected | 1 of 11 malformed/flaky |
+
+Two defects were found while closing this milestone. `execute_action` propagated every tool error with `?` before appending to the log, so the event stream held successes only — a policy denial is the boundary doing its job and the event most worth having. And `FailureClass::NonDeterminism` was unreachable: nothing could construct it, so a flaky check classified as `Assertion`, which authorises an edit-and-retry cycle. The agent would have edited working code to chase a failure that was never in the code. A failing check is now re-run, and an outcome that changes on identical inputs stops recovery instead of licensing an edit.
+
+The sandbox is real and measured, not declared: a seatbelt-confined command cannot write outside the workspace, can write inside it, and cannot reach the network — verified against an unsandboxed control that does reach it. `ToolResult.sandboxed` records whether the boundary was actually in force, so an unsandboxed run is visibly unsandboxed. `SandboxPolicy::Required` fails closed where no sandbox exists. Only the macOS adapter is implemented; Linux and Windows report unavailable rather than pretending.
 
 That audit defect was real and is worth recording: `execute_action` propagated every tool error with `?` before appending to the log, so the event stream held successes only. A policy denial is the boundary doing its job and the event most worth having — the log could not previously show that anything had ever been refused. Denials are now written before the error propagates, and the hash chain covers them.
 

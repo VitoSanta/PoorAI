@@ -123,6 +123,29 @@ pub fn compare(
         new_failures,
     }
 }
+/// Re-runs a failing check to tell a real failure from a flake.
+///
+/// Without this, `NonDeterminism` is unreachable: a flaky test classifies as
+/// `Assertion`, which authorises an edit-and-retry cycle, so the agent edits
+/// working code to chase a failure that was never in the code. A check whose
+/// outcome changes on identical inputs is non-deterministic, and the recovery
+/// taxonomy stops rather than edits.
+pub async fn classify_with_reproduction(
+    policy: &ToolPolicy,
+    command: &str,
+    args: &[String],
+    first: &ToolResult,
+) -> Result<FailureClass, ToolError> {
+    if first.exit_code == Some(0) {
+        return Ok(classify(first));
+    }
+    let second = run_command(policy, command, args).await?;
+    if second.exit_code != first.exit_code {
+        return Ok(FailureClass::NonDeterminism);
+    }
+    Ok(classify(first))
+}
+
 pub fn classify(result: &ToolResult) -> FailureClass {
     if result.stderr.contains("error[") || result.stderr.contains("error:") {
         FailureClass::Compilation

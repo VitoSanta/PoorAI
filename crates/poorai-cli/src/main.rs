@@ -754,6 +754,10 @@ async fn prepare_profiled_run(
         output_limit: 64 * 1024,
         timeout: Duration::from_secs(120),
         network_enabled: false,
+        sandbox: poorai_tools::SandboxPolicy::Preferred,
+        // No approval is granted by default; the CLI has no flag to grant one
+        // until a run can actually ask the user for it.
+        approvals: Vec::new(),
     };
     let state_dir = root.join(".poorai");
     std::fs::create_dir_all(&state_dir).map_err(|e| SafeError {
@@ -858,6 +862,10 @@ async fn verify(run_id: Option<String>, scope: String) -> Result<serde_json::Val
         output_limit: 64 * 1024,
         timeout: Duration::from_secs(120),
         network_enabled: false,
+        sandbox: poorai_tools::SandboxPolicy::Preferred,
+        // No approval is granted by default; the CLI has no flag to grant one
+        // until a run can actually ask the user for it.
+        approvals: Vec::new(),
     };
     let state_dir = root.join(".poorai");
     std::fs::create_dir_all(&state_dir).map_err(|e| SafeError {

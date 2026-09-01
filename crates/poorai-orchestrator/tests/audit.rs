@@ -16,6 +16,8 @@ fn policy(root: &Path) -> ToolPolicy {
         output_limit: 4096,
         timeout: Duration::from_secs(5),
         network_enabled: false,
+        sandbox: poorai_tools::SandboxPolicy::Disabled,
+        approvals: Vec::new(),
     }
 }
 

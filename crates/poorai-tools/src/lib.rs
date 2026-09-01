@@ -8,6 +8,9 @@ use std::{
 };
 use tokio::{process::Command, time::timeout};
 
+/// macOS process-isolation wrapper.
+const SEATBELT: &str = "/usr/bin/sandbox-exec";
+
 #[derive(Debug, thiserror::Error)]
 pub enum ToolError {
     #[error("policy denied: {0}")]
@@ -74,6 +77,95 @@ impl ActionProposal {
         }
     }
 }
+/// Process-level isolation for command execution.
+///
+/// The boundary is recorded on every result rather than assumed: a run that
+/// could not be sandboxed must be visibly unsandboxed, never silently so.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxPolicy {
+    /// Refuse to run a command at all when no sandbox is available.
+    Required,
+    /// Sandbox where the platform supports it, and record when it did not.
+    Preferred,
+    Disabled,
+}
+
+/// Actions whose effects reach past the workspace, and which a user must
+/// authorise explicitly. Denial is the default; a grant is never inferred.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum Approval {
+    /// Editing a dependency manifest or lockfile.
+    DependencyChange,
+    /// Rewriting version-control history.
+    HistoryRewrite,
+    /// Publishing a package or pushing to a remote.
+    Publish,
+}
+
+/// Dependency manifests and lockfiles. Editing one changes what the build
+/// fetches and executes, so it is an approval gate rather than a plain edit.
+const DEPENDENCY_MANIFESTS: [&str; 12] = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "package.json",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "requirements.txt",
+    "pyproject.toml",
+    "poetry.lock",
+    "go.mod",
+    "go.sum",
+    "Gemfile",
+];
+
+/// Git subcommands and flags that discard or rewrite recorded history.
+const HISTORY_REWRITE_ARGS: [&str; 6] = [
+    "rebase",
+    "filter-branch",
+    "filter-repo",
+    "--force",
+    "-f",
+    "--amend",
+];
+
+/// Returns the approval a proposed command requires, if any.
+pub fn command_approval(executable: &str, args: &[String]) -> Option<Approval> {
+    let name = Path::new(executable)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| executable.to_string());
+    if args.iter().any(|arg| arg == "publish") {
+        return Some(Approval::Publish);
+    }
+    if name == "git" {
+        if args.iter().any(|arg| arg == "push") {
+            return Some(Approval::Publish);
+        }
+        if args
+            .iter()
+            .any(|arg| HISTORY_REWRITE_ARGS.contains(&arg.as_str()))
+        {
+            return Some(Approval::HistoryRewrite);
+        }
+        // `git reset --hard` and `git clean -fd` discard uncommitted work.
+        if args.iter().any(|arg| arg == "reset") && args.iter().any(|arg| arg == "--hard") {
+            return Some(Approval::HistoryRewrite);
+        }
+    }
+    None
+}
+
+/// Returns the approval editing `relative` requires, if any.
+pub fn edit_approval(relative: &Path) -> Option<Approval> {
+    let name = relative.file_name()?.to_string_lossy().to_string();
+    DEPENDENCY_MANIFESTS
+        .contains(&name.as_str())
+        .then_some(Approval::DependencyChange)
+}
+
 #[derive(Debug, Clone)]
 pub struct ToolPolicy {
     pub root: PathBuf,
@@ -81,6 +173,9 @@ pub struct ToolPolicy {
     pub output_limit: usize,
     pub timeout: Duration,
     pub network_enabled: bool,
+    pub sandbox: SandboxPolicy,
+    /// Approvals the user has explicitly granted for this run.
+    pub approvals: Vec<Approval>,
 }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -100,6 +195,9 @@ impl PolicyProfile {
             output_limit: 64 * 1024,
             timeout: Duration::from_secs(120),
             network_enabled: false,
+            sandbox: SandboxPolicy::Preferred,
+            // Nothing beyond the workspace is authorised until a user says so.
+            approvals: Vec::new(),
         }
     }
 }
@@ -138,6 +236,41 @@ impl ToolPolicy {
         }
         Ok(checked)
     }
+    /// Denies unless the user granted this approval for the run.
+    pub fn require(&self, approval: Approval) -> Result<(), ToolError> {
+        if self.approvals.contains(&approval) {
+            return Ok(());
+        }
+        Err(ToolError::Denied(format!(
+            "{approval:?} requires explicit user approval"
+        )))
+    }
+    /// Builds a seatbelt profile confining writes to the workspace root.
+    ///
+    /// Returns `None` when the platform offers no sandbox, or when the root
+    /// cannot be expressed safely in a profile.
+    fn sandbox_profile(&self) -> Option<String> {
+        if !cfg!(target_os = "macos") || !Path::new(SEATBELT).is_file() {
+            return None;
+        }
+        // The canonical path is required: on macOS `/tmp` is a symlink, and a
+        // profile written against the uncanonical path grants nothing.
+        let root = self.root.canonicalize().ok()?;
+        let root = root.to_str()?;
+        // A root that cannot be quoted safely would let the path itself rewrite
+        // the profile, so refuse rather than emit a weakened one.
+        if root.contains('"') || root.contains('\\') {
+            return None;
+        }
+        let network = if self.network_enabled {
+            ""
+        } else {
+            "(deny network*)"
+        };
+        Some(format!(
+            "(version 1)(allow default)(deny file-write*)(allow file-write* (subpath \"{root}\"))(allow file-write-data (literal \"/dev/null\") (literal \"/dev/stdout\") (literal \"/dev/stderr\")){network}"
+        ))
+    }
     pub fn redact(&self, text: &str) -> (String, bool) {
         let re = Regex::new(r"(?i)(api[_-]?key|token|password)\s*[=:]\s*[^\s]+|AKIA[0-9A-Z]{16}")
             .expect("valid regex");
@@ -154,6 +287,9 @@ pub struct ToolResult {
     pub duration_ms: u128,
     pub redacted: bool,
     pub artifact_hash: String,
+    /// Whether the process actually ran inside a sandbox. Recorded rather than
+    /// assumed so an unsandboxed run is visible in the audit.
+    pub sandboxed: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileReadResult {
@@ -234,6 +370,9 @@ pub fn apply_replace(
     expected_hash: &str,
     replacement: &str,
 ) -> Result<ApplyResult, ToolError> {
+    if let Some(approval) = edit_approval(relative) {
+        policy.require(approval)?;
+    }
     let path = policy.resolve(relative)?;
     let existing = std::fs::read(&path)?;
     if existing.iter().take(4096).any(|b| *b == 0) {
@@ -367,11 +506,35 @@ pub async fn run_command(
     {
         return Err(ToolError::Denied("network is disabled by policy".into()));
     }
+    if let Some(approval) = command_approval(executable, args) {
+        policy.require(approval)?;
+    }
+    let profile = match policy.sandbox {
+        SandboxPolicy::Disabled => None,
+        SandboxPolicy::Preferred | SandboxPolicy::Required => policy.sandbox_profile(),
+    };
+    if profile.is_none() && policy.sandbox == SandboxPolicy::Required {
+        return Err(ToolError::Denied(
+            "policy requires a sandbox and this platform provides none".into(),
+        ));
+    }
+    let sandboxed = profile.is_some();
+    let mut command = match &profile {
+        Some(profile) => {
+            let mut wrapped = Command::new(SEATBELT);
+            wrapped.arg("-p").arg(profile).arg(executable).args(args);
+            wrapped
+        }
+        None => {
+            let mut plain = Command::new(executable);
+            plain.args(args);
+            plain
+        }
+    };
     let started = std::time::Instant::now();
     let output = timeout(
         policy.timeout,
-        Command::new(executable)
-            .args(args)
+        command
             .current_dir(&policy.root)
             .env_clear()
             // PATH is explicitly allowlisted solely for executable resolution; it is never logged.
@@ -395,6 +558,7 @@ pub async fn run_command(
         stderr,
         duration_ms: started.elapsed().as_millis(),
         redacted: a || b,
+        sandboxed,
     })
 }
 #[cfg(test)]
@@ -408,6 +572,8 @@ mod tests {
             output_limit: 1,
             timeout: Duration::from_secs(1),
             network_enabled: false,
+            sandbox: SandboxPolicy::Disabled,
+            approvals: Vec::new(),
         };
         assert!(p.resolve(Path::new("../secret")).is_err());
     }
@@ -419,6 +585,8 @@ mod tests {
             output_limit: 1,
             timeout: Duration::ZERO,
             network_enabled: false,
+            sandbox: SandboxPolicy::Disabled,
+            approvals: Vec::new(),
         };
         assert!(p.redact("token=abc").0.contains("REDACTED"));
     }
@@ -433,6 +601,8 @@ mod tests {
             output_limit: 100,
             timeout: Duration::ZERO,
             network_enabled: false,
+            sandbox: SandboxPolicy::Disabled,
+            approvals: Vec::new(),
         };
         assert!(read_file(&policy, Path::new("bad.bin")).is_err());
         assert!(read_file(&policy, Path::new("../safe.txt")).is_err());
@@ -448,6 +618,8 @@ mod tests {
             output_limit: 100,
             timeout: Duration::ZERO,
             network_enabled: false,
+            sandbox: SandboxPolicy::Disabled,
+            approvals: Vec::new(),
         };
         assert!(apply_replace(&policy, Path::new("safe.txt"), "wrong", "after").is_err());
         let hash = hash_bytes("before");
@@ -471,6 +643,8 @@ mod tests {
             output_limit: 100,
             timeout: Duration::ZERO,
             network_enabled: false,
+            sandbox: SandboxPolicy::Disabled,
+            approvals: Vec::new(),
         };
         assert!(policy.resolve(Path::new("escape/secret.txt")).is_err());
     }
@@ -488,6 +662,8 @@ mod tests {
             output_limit: 100,
             timeout: Duration::ZERO,
             network_enabled: false,
+            sandbox: SandboxPolicy::Disabled,
+            approvals: Vec::new(),
         };
         assert!(list_tree(&policy, 10).unwrap().is_empty());
         assert!(search(&policy, "needle", 10).unwrap().is_empty());

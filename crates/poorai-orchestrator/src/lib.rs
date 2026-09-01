@@ -690,6 +690,8 @@ mod tests {
             output_limit: 128,
             timeout: Duration::from_secs(1),
             network_enabled: false,
+            sandbox: poorai_tools::SandboxPolicy::Disabled,
+            approvals: Vec::new(),
         };
         let store = Store::open(":memory:").unwrap();
         let run_id = new_id();
@@ -711,6 +713,8 @@ mod tests {
             output_limit: 1024,
             timeout: Duration::from_secs(10),
             network_enabled: false,
+            sandbox: poorai_tools::SandboxPolicy::Disabled,
+            approvals: Vec::new(),
         };
         let store = Store::open(":memory:").unwrap();
         let request = ModelRequest {
@@ -740,6 +744,8 @@ mod tests {
             output_limit: 1024,
             timeout: Duration::from_secs(10),
             network_enabled: false,
+            sandbox: poorai_tools::SandboxPolicy::Disabled,
+            approvals: Vec::new(),
         };
         let pass = poorai_domain::hash_bytes("pass");
         let fail = poorai_domain::hash_bytes("fail");
