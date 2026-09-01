@@ -104,7 +104,7 @@ struct ChatRequest<'a> {
     model: &'a str,
     messages: &'a [poorai_domain::ChatMessage],
     stream: bool,
-    options: BTreeMap<&'a str, u32>,
+    options: BTreeMap<&'a str, serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<&'a serde_json::Value>,
 }
@@ -311,7 +311,13 @@ impl ModelProvider for OllamaProvider {
     }
     async fn chat(&self, request: ModelRequest) -> Result<ModelStream, ProviderError> {
         let mut options = BTreeMap::new();
-        options.insert("num_ctx", request.context_tokens);
+        options.insert("num_ctx", serde_json::json!(request.context_tokens));
+        if let Some(seed) = request.seed {
+            options.insert("seed", serde_json::json!(seed));
+        }
+        if let Some(milli) = request.temperature_milli {
+            options.insert("temperature", serde_json::json!(milli as f64 / 1000.0));
+        }
         let body = ChatRequest {
             model: &request.deployment.model_ref,
             messages: &request.messages,
@@ -681,6 +687,8 @@ mod tests {
             deployment,
             context_tokens: 32,
             tools: None,
+            seed: None,
+            temperature_milli: None,
             messages: vec![],
         };
         let mut chunks = provider.chat(request).await.unwrap();

@@ -674,6 +674,8 @@ async fn calibration_sample<P: ModelProvider>(
         deployment: deployment.clone(),
         context_tokens,
         tools: None,
+        seed: None,
+        temperature_milli: None,
         messages: vec![poorai_domain::ChatMessage {
             role: "user".into(),
             content: CALIBRATION_PROMPT.into(),
@@ -1402,6 +1404,8 @@ mod tests {
             deployment: deployment(),
             context_tokens: 32,
             tools: None,
+            seed: None,
+            temperature_milli: None,
             messages: vec![],
         };
         let result = run_single_action(&store, &ActionProvider, new_id(), request, &policy, &[])
@@ -1445,6 +1449,8 @@ mod tests {
             deployment: deployment(),
             context_tokens: 32,
             tools: None,
+            seed: None,
+            temperature_milli: None,
             messages: vec![],
         };
         let checks = vec![("sh".into(), vec!["check.sh".into()])];

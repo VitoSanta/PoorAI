@@ -227,6 +227,15 @@ pub struct ModelRequest {
     pub messages: Vec<ChatMessage>,
     pub context_tokens: u32,
     pub tools: Option<serde_json::Value>,
+    /// Sampling seed. A run that records a seed it never sent is not
+    /// reproducible, whatever the record says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+    /// Sampling temperature, in thousandths so the request stays comparable
+    /// by value. Measured on this host: a seed alone does not make sampling
+    /// reproducible, and a seed with temperature 0 does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature_milli: Option<u64>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChatMessage {

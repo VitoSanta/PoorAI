@@ -143,6 +143,10 @@ enum EvalCommand {
         /// to distinguish repeated trials of the same suite.
         #[arg(long, default_value_t = 1)]
         seed: u64,
+        /// Sampling temperature in thousandths. Omitted leaves the backend
+        /// default; 0 makes a seeded run reproducible on this host.
+        #[arg(long)]
+        temperature_milli: Option<u64>,
         #[arg(long, default_value_t = 300)]
         turn_timeout_secs: u64,
         /// Where reports are written.
@@ -276,6 +280,7 @@ async fn main() {
                 model,
                 profile,
                 seed,
+                temperature_milli,
                 turn_timeout_secs,
                 out_dir,
             } => print(
@@ -286,6 +291,7 @@ async fn main() {
                     model,
                     profile,
                     seed,
+                    temperature_milli,
                     turn_timeout_secs,
                     out_dir,
                 )
@@ -352,6 +358,8 @@ async fn probe_context_boundary(
             deployment: deployment.clone(),
             context_tokens,
             tools: None,
+            seed: None,
+            temperature_milli: None,
             messages: vec![ChatMessage {
                 role: "user".into(),
                 content: prompt.clone(),
@@ -476,6 +484,8 @@ async fn probe_edit_once(
         deployment: deployment.clone(),
         context_tokens: 4096,
         tools: Some(poorai_orchestrator::action_tool_schema()),
+        seed: None,
+        temperature_milli: None,
         messages: vec![
             ChatMessage {
                 role: "system".into(),
@@ -575,6 +585,7 @@ async fn evaluate(
     model: String,
     profile: PathBuf,
     seed: u64,
+    temperature_milli: Option<u64>,
     turn_timeout_secs: u64,
     out_dir: PathBuf,
 ) -> Result<serde_json::Value, SafeError> {
@@ -613,7 +624,17 @@ async fn evaluate(
     })?;
     let mut outcomes = Vec::new();
     for task in &suite.tasks {
-        outcomes.push(evaluate_task(&provider, &deployment, &execution, task, seed).await);
+        outcomes.push(
+            evaluate_task(
+                &provider,
+                &deployment,
+                &execution,
+                task,
+                seed,
+                temperature_milli,
+            )
+            .await,
+        );
     }
     let report = poorai_eval::SuiteReport {
         suite: suite.name.clone(),
@@ -624,6 +645,7 @@ async fn evaluate(
         hardware_compatibility_key: hardware.compatibility_key.clone(),
         execution_profile_id: execution.id,
         seeds: vec![seed],
+        temperature_milli,
         outcomes,
         generated_at: now(),
     };
@@ -668,6 +690,7 @@ async fn evaluate_task(
     execution: &poorai_domain::ExecutionProfile,
     task: &poorai_eval::Task,
     seed: u64,
+    temperature_milli: Option<u64>,
 ) -> poorai_eval::TaskOutcome {
     let mut outcome = poorai_eval::TaskOutcome {
         task_id: task.id.clone(),
@@ -731,6 +754,8 @@ async fn evaluate_task(
         deployment: deployment.clone(),
         context_tokens: execution.context_tokens,
         tools: Some(poorai_orchestrator::action_tool_schema()),
+        seed: Some(seed),
+        temperature_milli,
         messages: vec![
             poorai_domain::ChatMessage {
                 role: "system".into(),
@@ -1000,6 +1025,8 @@ async fn probe_cancellation(
         deployment: deployment.clone(),
         context_tokens: 512,
         tools: None,
+        seed: None,
+        temperature_milli: None,
         messages: vec![ChatMessage {
             role: "user".into(),
             content: CANCEL_PROMPT.into(),
@@ -1049,6 +1076,8 @@ async fn inspect(
             deployment: deployment.clone(),
             context_tokens: 512,
             tools: None,
+            seed: None,
+            temperature_milli: None,
             messages: vec![ChatMessage {
                 role: "user".into(),
                 content: "Reply with OK.".into(),
@@ -1100,6 +1129,8 @@ async fn inspect(
                 deployment: deployment.clone(),
                 context_tokens: 512,
                 tools: Some(tool_schema.clone()),
+                seed: None,
+                temperature_milli: None,
                 messages: vec![ChatMessage {
                     role: "user".into(),
                     content: "Call the probe_echo tool with value 'ok'. Do not answer in prose."
@@ -1529,6 +1560,8 @@ async fn prepare_profiled_run(
         deployment: deployment.clone(),
         context_tokens: execution.context_tokens,
         tools: Some(poorai_orchestrator::action_tool_schema()),
+        seed: None,
+        temperature_milli: None,
         messages: vec![
             poorai_domain::ChatMessage {
                 role: "system".into(),

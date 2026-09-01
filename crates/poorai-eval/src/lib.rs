@@ -293,6 +293,10 @@ pub struct SuiteReport {
     pub hardware_compatibility_key: String,
     pub execution_profile_id: poorai_domain::Id,
     pub seeds: Vec<u64>,
+    /// Recorded because a seed alone does not make sampling reproducible on
+    /// every backend; measured on this host, a seed with temperature 0 does.
+    #[serde(default)]
+    pub temperature_milli: Option<u64>,
     pub outcomes: Vec<TaskOutcome>,
     pub generated_at: chrono::DateTime<chrono::Utc>,
 }
