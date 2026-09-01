@@ -2,12 +2,16 @@ use clap::{Args, Parser, Subcommand};
 use futures_util::StreamExt;
 use poorai_domain::{
     ChatMessage, DeploymentDescriptor, HardwareProfile, ModelRequest, Observation, Provenance,
-    ToolCall, hash_bytes, new_id, now,
+    ToolCall, Validate, hash_bytes, new_id, now,
 };
 use poorai_ollama::OllamaProvider;
 use poorai_provider::ModelProvider;
 use serde::Serialize;
-use std::{collections::BTreeMap, path::PathBuf, time::Duration};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 #[derive(Parser)]
 #[command(name = "poorai", about = "Local, evidence-driven coding agent")]
@@ -56,6 +60,13 @@ enum Command {
         profile: Option<PathBuf>,
         #[arg(long)]
         dry_run: bool,
+        /// Effects beyond the workspace this run may perform. Nothing is
+        /// granted by default, and a grant covers only what it names.
+        #[arg(long, value_delimiter = ',', value_enum)]
+        approve: Vec<ApprovalArg>,
+        /// Provider timeout for one turn of the action loop.
+        #[arg(long, default_value_t = 300)]
+        turn_timeout_secs: u64,
     },
     Eval(Eval),
     Report {
@@ -64,6 +75,24 @@ enum Command {
         format: String,
     },
 }
+/// User-grantable approvals, named on the command line.
+#[derive(Clone, Copy, clap::ValueEnum)]
+#[value(rename_all = "kebab-case")]
+enum ApprovalArg {
+    DependencyChange,
+    HistoryRewrite,
+    Publish,
+}
+impl From<ApprovalArg> for poorai_tools::Approval {
+    fn from(value: ApprovalArg) -> Self {
+        match value {
+            ApprovalArg::DependencyChange => Self::DependencyChange,
+            ApprovalArg::HistoryRewrite => Self::HistoryRewrite,
+            ApprovalArg::Publish => Self::Publish,
+        }
+    }
+}
+
 #[derive(Args)]
 struct Models {
     #[command(subcommand)]
@@ -213,9 +242,20 @@ async fn main() {
             model,
             profile,
             dry_run,
+            approve,
+            turn_timeout_secs,
         } => print(
             cli.json,
-            run(task, model, profile, dry_run, &cli.ollama_endpoint).await,
+            run(
+                task,
+                model,
+                profile,
+                dry_run,
+                approve.into_iter().map(Into::into).collect(),
+                turn_timeout_secs,
+                &cli.ollama_endpoint,
+            )
+            .await,
         ),
         Command::Verify { run_id, scope } => print(cli.json, verify(run_id, scope).await),
         Command::Eval(e) => match e.command {
@@ -560,6 +600,45 @@ async fn inspect(
 /// Bump when any measurement step changes; stored profiles invalidate on it.
 const CALIBRATION_HARNESS_REV: &str = "calibration-harness-v3";
 
+/// Reads a calibration profile from a `poorai calibrate` artifact.
+///
+/// The artifact wraps the profile alongside its samples and seed, because a
+/// stable point without its measurements is a claim rather than evidence. A
+/// bare profile is still accepted so a profile can be passed on its own.
+fn load_calibration(path: &Path) -> Result<poorai_domain::CalibrationProfile, SafeError> {
+    let bytes = std::fs::read(path).map_err(|e| SafeError {
+        category: "invalid_input",
+        context: e.to_string(),
+    })?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| SafeError {
+        category: "invalid_input",
+        context: format!("calibration artifact is not JSON: {e}"),
+    })?;
+    let profile = value
+        .pointer("/run/profile")
+        .or_else(|| value.pointer("/profile"))
+        .unwrap_or(&value);
+    let profile: poorai_domain::CalibrationProfile = serde_json::from_value(profile.clone())
+        .map_err(|e| SafeError {
+            category: "invalid_input",
+            context: format!("invalid calibration profile: {e}"),
+        })?;
+    // A refused run persists no usable profile; say so rather than failing on a
+    // missing field.
+    if value.pointer("/run/outcome").and_then(|o| o.as_str()) == Some("refused") {
+        return Err(SafeError {
+            category: "invalid_input",
+            context: "this artifact records a refused calibration; it authorises no execution"
+                .into(),
+        });
+    }
+    profile.validate().map_err(|e| SafeError {
+        category: "invalid_input",
+        context: format!("calibration profile is not valid: {e}"),
+    })?;
+    Ok(profile)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn calibrate(
     endpoint: &str,
@@ -667,10 +746,13 @@ async fn run(
     model: Option<String>,
     profile: Option<PathBuf>,
     dry_run: bool,
+    approvals: Vec<poorai_tools::Approval>,
+    turn_timeout_secs: u64,
     endpoint: &str,
 ) -> Result<serde_json::Value, SafeError> {
     if !dry_run {
-        return prepare_profiled_run(task, model, profile, endpoint).await;
+        return prepare_profiled_run(task, model, profile, approvals, turn_timeout_secs, endpoint)
+            .await;
     }
     let root = std::env::current_dir()
         .map_err(|e| SafeError {
@@ -733,6 +815,8 @@ async fn prepare_profiled_run(
     task: String,
     model: Option<String>,
     profile: Option<PathBuf>,
+    approvals: Vec<poorai_tools::Approval>,
+    turn_timeout_secs: u64,
     endpoint: &str,
 ) -> Result<serde_json::Value, SafeError> {
     let model = model.ok_or_else(|| SafeError {
@@ -743,15 +827,7 @@ async fn prepare_profiled_run(
         category: "invalid_input",
         context: "--profile CALIBRATION_JSON is required".into(),
     })?;
-    let calibration: poorai_domain::CalibrationProfile =
-        serde_json::from_slice(&std::fs::read(&path).map_err(|e| SafeError {
-            category: "invalid_input",
-            context: e.to_string(),
-        })?)
-        .map_err(|e| SafeError {
-            category: "invalid_input",
-            context: format!("invalid calibration profile: {e}"),
-        })?;
+    let calibration = load_calibration(&path)?;
     let root = std::env::current_dir()
         .map_err(|e| SafeError {
             category: "internal",
@@ -762,8 +838,10 @@ async fn prepare_profiled_run(
             category: "internal",
             context: e.to_string(),
         })?;
-    let provider =
-        OllamaProvider::new(endpoint, Duration::from_secs(20)).map_err(provider_error)?;
+    // Each turn of the loop carries more context than the last, so a provider
+    // timeout sized for a single reply cuts the run off mid-task.
+    let provider = OllamaProvider::new(endpoint, Duration::from_secs(turn_timeout_secs))
+        .map_err(provider_error)?;
     let deployment = DeploymentDescriptor {
         schema_version: 1,
         id: new_id(),
@@ -792,7 +870,7 @@ async fn prepare_profiled_run(
         &inspection.definition.digest,
         &deployment,
         &hardware,
-        "calibration-harness-v1",
+        CALIBRATION_HARNESS_REV,
     )
     .map_err(|e| SafeError {
         category: "invalid_input",
@@ -823,9 +901,8 @@ async fn prepare_profiled_run(
         timeout: Duration::from_secs(120),
         network_enabled: false,
         sandbox: poorai_tools::SandboxPolicy::Preferred,
-        // No approval is granted by default; the CLI has no flag to grant one
-        // until a run can actually ask the user for it.
-        approvals: Vec::new(),
+        // Only what the user named on the command line.
+        approvals,
     };
     let state_dir = root.join(".poorai");
     std::fs::create_dir_all(&state_dir).map_err(|e| SafeError {
@@ -837,10 +914,65 @@ async fn prepare_profiled_run(
             category: "internal",
             context: e.to_string(),
         })?;
-    let request=poorai_domain::ModelRequest { deployment:deployment.clone(),context_tokens:execution.context_tokens,tools:None,messages:vec![poorai_domain::ChatMessage { role:"system".into(),content:"Return exactly one ActionProposal JSON object. Use only read_file, search, list_tree, apply_replace, or run_command.".into() },poorai_domain::ChatMessage { role:"user".into(),content:task.clone() }]};
+    // The run is anchored to a recorded repository state: without it the audit
+    // cannot say which tree an edit was made against.
+    let index = poorai_repo::index(&root).map_err(|e| SafeError {
+        category: "invalid_input",
+        context: e.to_string(),
+    })?;
+    let index_artifact = poorai_repo::persist(&index, &state_dir).map_err(|e| SafeError {
+        category: "internal",
+        context: e.to_string(),
+    })?;
+    let run_id = new_id();
+    store
+        .append(
+            Some(run_id),
+            "run.started",
+            serde_json::json!({
+                "task": task,
+                "execution_profile_id": execution.id,
+                "calibration_id": execution.calibration_id,
+                "evidence": execution.evidence,
+                "context_tokens": execution.context_tokens,
+                "deployment_fingerprint": deployment.fingerprint(),
+                "model_digest": inspection.definition.digest,
+                "hardware_compatibility_key": hardware.compatibility_key,
+                "harness_rev": CALIBRATION_HARNESS_REV,
+                "repository_inventory_hash": index.inventory_hash,
+                "approvals_granted": policy.approvals,
+                "sandbox_policy": policy.sandbox,
+                "allow_commands": policy.allow_commands,
+                "network_enabled": policy.network_enabled,
+            }),
+        )
+        .map_err(|e| SafeError {
+            category: "internal",
+            context: e.to_string(),
+        })?;
+    let request = poorai_domain::ModelRequest {
+        deployment: deployment.clone(),
+        context_tokens: execution.context_tokens,
+        tools: Some(poorai_orchestrator::action_tool_schema()),
+        messages: vec![
+            poorai_domain::ChatMessage {
+                role: "system".into(),
+                content: "You are working inside a repository. Take exactly one action per turn \
+                          by calling one of the provided tools. Edits are hash-guarded: read a \
+                          file and pass the artifact_hash it returns as expected_hash. Call \
+                          complete only when you believe the repository's own checks will pass."
+                    .into(),
+            },
+            poorai_domain::ChatMessage {
+                role: "user".into(),
+                content: task.clone(),
+            },
+        ],
+    };
     let result = poorai_orchestrator::run_action_loop(
         &store,
         &provider,
+        run_id,
         request,
         &policy,
         &checks,
@@ -855,9 +987,17 @@ async fn prepare_profiled_run(
         category: "task_failed",
         context: e,
     })?;
-    Ok(
-        serde_json::json!({"task":task,"execution_profile":execution,"runtime_snapshot":runtime,"artifact":artifact,"run":result}),
-    )
+    Ok(serde_json::json!({
+        "task": task,
+        "run_id": run_id,
+        "execution_profile": execution,
+        "runtime_snapshot": runtime,
+        "artifact": artifact,
+        "index_artifact": index_artifact,
+        "repository_inventory_hash": index.inventory_hash,
+        "approvals_granted": policy.approvals,
+        "run": result,
+    }))
 }
 fn index_repository(path: PathBuf) -> Result<serde_json::Value, SafeError> {
     let index = poorai_repo::index(path).map_err(|e| SafeError {

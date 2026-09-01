@@ -201,7 +201,6 @@ pub fn select_compatible_profile(
     select_profile(strategy_id, Some(calibration), &hardware.compatibility_key)
 }
 
-/// Executes one validated, typed action and durably records its outcome before another action may run.
 /// Executes one typed action under policy and audits the attempt.
 ///
 /// Every attempt is recorded, allowed or denied. A policy denial is the security
@@ -308,11 +307,11 @@ pub struct TaskRunResult {
 pub async fn run_single_action<P: ModelProvider>(
     store: &Store,
     provider: &P,
+    run_id: poorai_domain::Id,
     request: poorai_domain::ModelRequest,
     policy: &ToolPolicy,
     checks: &[(String, Vec<String>)],
 ) -> Result<TaskRunResult, String> {
-    let run_id = new_id();
     let before = poorai_verify::baseline(policy, checks)
         .await
         .map_err(|e| e.to_string())?;
@@ -323,13 +322,11 @@ pub async fn run_single_action<P: ModelProvider>(
             serde_json::to_value(&before).map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
-    let mut stream = provider.chat(request).await.map_err(|e| e.to_string())?;
-    let chunk = stream
-        .next()
-        .await
-        .ok_or("provider returned empty stream")?
-        .map_err(|e| e.to_string())?;
-    let action = parse_action_proposal(&chunk.content)?;
+    let reply =
+        poorai_provider::collect_reply(provider.chat(request).await.map_err(|e| e.to_string())?)
+            .await
+            .map_err(|e| e.to_string())?;
+    let action = action_from_reply(&reply)?;
     let outcome = execute_action(store, run_id, policy, action).await?;
     let after = poorai_verify::baseline(policy, checks)
         .await
@@ -354,16 +351,21 @@ pub async fn run_single_action<P: ModelProvider>(
     })
 }
 
-/// Executes a bounded reasoning/action loop. Completion is accepted only after deterministic checks pass.
+/// Executes a bounded reasoning/action loop. Completion is accepted only after
+/// deterministic checks pass.
+///
+/// The caller supplies `run_id` so every event of one run -- its opening
+/// provenance, each tool attempt, verification and outcome -- shares an
+/// identifier. A loop that minted its own would split the audit in two.
 pub async fn run_action_loop<P: ModelProvider>(
     store: &Store,
     provider: &P,
+    run_id: poorai_domain::Id,
     mut request: poorai_domain::ModelRequest,
     policy: &ToolPolicy,
     checks: &[(String, Vec<String>)],
     max_actions: u8,
 ) -> Result<TaskRunResult, String> {
-    let run_id = new_id();
     let before = poorai_verify::baseline(policy, checks)
         .await
         .map_err(|e| e.to_string())?;
@@ -375,16 +377,15 @@ pub async fn run_action_loop<P: ModelProvider>(
         )
         .map_err(|e| e.to_string())?;
     for step in 0..max_actions {
-        let mut stream = provider
-            .chat(request.clone())
-            .await
-            .map_err(|e| e.to_string())?;
-        let chunk = stream
-            .next()
-            .await
-            .ok_or("provider returned empty stream")?
-            .map_err(|e| e.to_string())?;
-        let action = parse_action_proposal(&chunk.content)?;
+        let reply = poorai_provider::collect_reply(
+            provider
+                .chat(request.clone())
+                .await
+                .map_err(|e| e.to_string())?,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        let action = action_from_reply(&reply)?;
         if matches!(action, ActionProposal::Complete { .. }) {
             let after = poorai_verify::baseline(policy, checks)
                 .await
@@ -440,7 +441,14 @@ pub async fn run_action_loop<P: ModelProvider>(
             });
             continue;
         }
-        let outcome = execute_action(store, run_id, policy, action).await?;
+        // A denial is a tool result, not the end of the run. Aborting here
+        // discards work already done -- a stale-hash refusal literally says
+        // "reread before editing", which the deployment can act on. The action
+        // budget, not the first refusal, is what bounds the loop.
+        let outcome = match execute_action(store, run_id, policy, action).await {
+            Ok(outcome) => outcome,
+            Err(denial) => serde_json::json!({"denied": denial}),
+        };
         request.messages.push(poorai_domain::ChatMessage {
             role: "tool".into(),
             content: serde_json::to_string(&outcome).map_err(|e| e.to_string())?,
@@ -454,6 +462,110 @@ pub async fn run_action_loop<P: ModelProvider>(
         )
         .map_err(|e| e.to_string())?;
     Err("action budget exhausted before verified completion".into())
+}
+
+/// The typed actions offered to a deployment as native tools.
+///
+/// M1 measured every target deployment emitting native tool calls, so the
+/// action channel is the tool channel: it carries a name and typed arguments,
+/// with no prose to fence, decorate or invent a schema around.
+pub fn action_tool_schema() -> serde_json::Value {
+    let function =
+        |name: &str, description: &str, properties: serde_json::Value, required: &[&str]| {
+            serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": properties,
+                        "required": required,
+                    },
+                }
+            })
+        };
+    serde_json::json!([
+        function(
+            "read_file",
+            "Read one workspace-relative text file.",
+            serde_json::json!({"path": {"type": "string"}}),
+            &["path"],
+        ),
+        function(
+            "search",
+            "Search workspace text files for a literal string.",
+            serde_json::json!({
+                "query": {"type": "string"},
+                "max_matches": {"type": "integer"},
+            }),
+            &["query", "max_matches"],
+        ),
+        function(
+            "list_tree",
+            "List workspace files.",
+            serde_json::json!({"max_entries": {"type": "integer"}}),
+            &["max_entries"],
+        ),
+        function(
+            "apply_replace",
+            "Replace a file's entire contents. expected_hash must be the artifact_hash from a prior read_file of that path.",
+            serde_json::json!({
+                "path": {"type": "string"},
+                "expected_hash": {"type": "string"},
+                "replacement": {"type": "string"},
+            }),
+            &["path", "expected_hash", "replacement"],
+        ),
+        function(
+            "run_command",
+            "Run one allowlisted command.",
+            serde_json::json!({
+                "executable": {"type": "string"},
+                "args": {"type": "array", "items": {"type": "string"}},
+            }),
+            &["executable", "args"],
+        ),
+        function(
+            "complete",
+            "Declare the task done. Accepted only if deterministic verification then passes.",
+            serde_json::json!({"rationale": {"type": "string"}}),
+            &["rationale"],
+        ),
+    ])
+}
+
+/// Builds a typed action from a native tool call.
+///
+/// The call's name selects the capability and its arguments are decoded into
+/// the typed shape; a name that is not an offered capability is refused rather
+/// than guessed at.
+pub fn action_from_tool_call(call: &poorai_domain::ToolCall) -> Result<ActionProposal, String> {
+    let mut arguments = call.arguments.clone();
+    if !arguments.is_object() {
+        return Err(format!(
+            "tool call {} carried no argument object",
+            call.name
+        ));
+    }
+    arguments["capability"] = serde_json::Value::String(call.name.clone());
+    let action: ActionProposal = serde_json::from_value(arguments).map_err(|e| {
+        format!(
+            "tool call {} did not match its declared schema: {e}",
+            call.name
+        )
+    })?;
+    action.validate().map_err(|e| e.to_string())?;
+    Ok(action)
+}
+
+/// Takes the action from a reply: the native tool channel where the deployment
+/// used it, and a bare JSON object otherwise.
+fn action_from_reply(reply: &poorai_provider::ModelReply) -> Result<ActionProposal, String> {
+    match reply.tool_calls.first() {
+        Some(call) => action_from_tool_call(call),
+        None => parse_action_proposal(&reply.content),
+    }
 }
 
 /// Parses exactly one JSON action proposal; prose and fenced output are rejected.
@@ -1263,7 +1375,7 @@ mod tests {
             tools: None,
             messages: vec![],
         };
-        let result = run_single_action(&store, &ActionProvider, request, &policy, &[])
+        let result = run_single_action(&store, &ActionProvider, new_id(), request, &policy, &[])
             .await
             .unwrap();
         assert!(result.verified);
@@ -1307,7 +1419,7 @@ mod tests {
             messages: vec![],
         };
         let checks = vec![("sh".into(), vec!["check.sh".into()])];
-        let result = run_action_loop(&store, &provider, request, &policy, &checks, 4)
+        let result = run_action_loop(&store, &provider, new_id(), request, &policy, &checks, 4)
             .await
             .unwrap();
         assert!(result.verified);

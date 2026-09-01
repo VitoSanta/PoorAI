@@ -88,4 +88,18 @@ Generation rate is a laboratory throughput fact and carries no claim about task 
 
 ### Current safety boundary
 
-`poorai run` supports only `--dry-run`. It does not invoke a model, edit a repository, or claim completion. A non-dry run remains deliberately unavailable until M2/M3/M4 evidence gates are satisfied.
+`poorai run` executes for real. A non-dry run requires an explicit `--model` and a `--profile` pointing at a calibration artifact, and refuses to proceed unless that calibration still matches the model digest, deployment fingerprint, hardware compatibility key and harness revision in force. An artifact recording a refused calibration authorises nothing.
+
+Every effect stays inside the M3 boundary: commands run seatbelt-confined with no network, edits are hash-guarded, and dependency manifests, history rewriting and publishing each need an explicit `--approve`, granted by nobody unless named on the command line.
+
+The whole run is recorded under one identifier — opening provenance (execution profile, calibration id, model digest, hardware key, repository inventory hash, approvals granted, sandbox policy), verification baseline, every tool attempt allowed or denied, verification result and outcome — inside the hash chain.
+
+**First verified non-dry run, 2026-09-01.** qwen3.8:27b-mlx against an isolated fixture repository holding a failing test: `list_tree`, `read_file`, `apply_replace`, `run_command`, then `complete` accepted only after `cargo test` passed. Eight events, chain intact, `verified: true`.
+
+Three defects were found by running it rather than by reasoning about it:
+
+- The action loop read the stream's first chunk. This is the same defect as the M1 capability probe and the M2 calibration sampler — the third occurrence — so stream consumption now lives in one place, `poorai_provider::collect_reply`, rather than being rewritten correctly each time it is needed.
+- Actions were requested as prose JSON. The deployment answered with a fenced block wrapping a schema it invented, and the parser correctly refused both. Since M1 measured every target deployment emitting native tool calls at 3 of 3, actions are now offered as native tools: a name and typed arguments, with no prose to fence or schema to guess.
+- A denied action ended the run. The deployment had already fixed the bug, then proposed a second edit with a stale hash; the refusal — which literally says "reread before editing" — discarded the correct work. A denial is now returned to the deployment as a tool result, and the action budget rather than the first refusal is what bounds the loop.
+
+A fourth was found by reading the audit: the loop minted its own run identifier, so a run's provenance and its actions were recorded under different ids and `report` showed only half the trail.
