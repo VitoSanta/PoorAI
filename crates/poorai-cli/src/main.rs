@@ -589,7 +589,7 @@ async fn calibrate(
     let host = MacosHostProbe {
         free_percent_floor: pressure_floor,
     };
-    let (profile, samples) = poorai_orchestrator::calibrate(
+    let outcome = poorai_orchestrator::calibrate(
         &provider,
         &host,
         &deployment,
@@ -624,18 +624,22 @@ async fn calibrate(
         category: "internal",
         context: e.to_string(),
     })?;
-    let artifact = dir.join(format!("{}.json", profile.id));
-    let temporary = dir.join(format!("{}.tmp", profile.id));
+    // A refusal is persisted exactly like a calibration. The evidence for why a
+    // deployment could not be calibrated is worth as much as the profile.
+    let record = serde_json::json!({"seed": seed, "run": &outcome});
+    let name = match &outcome {
+        poorai_orchestrator::CalibrationOutcome::Calibrated { profile, .. } => {
+            profile.id.to_string()
+        }
+        poorai_orchestrator::CalibrationOutcome::Refused { .. } => {
+            format!("refused-{}", new_id())
+        }
+    };
+    let artifact = dir.join(format!("{name}.json"));
+    let temporary = dir.join(format!("{name}.tmp"));
     std::fs::write(
         &temporary,
-        // The raw samples travel with the profile: a stable point without the
-        // measurements behind it is a claim, not evidence.
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "profile": profile,
-            "seed": seed,
-            "samples": samples,
-        }))
-        .expect("serializable"),
+        serde_json::to_vec_pretty(&record).expect("serializable"),
     )
     .map_err(|e| SafeError {
         category: "internal",
@@ -645,11 +649,16 @@ async fn calibrate(
         category: "internal",
         context: e.to_string(),
     })?;
+    if let poorai_orchestrator::CalibrationOutcome::Refused { reason, .. } = &outcome {
+        return Err(SafeError {
+            category: "calibration",
+            context: format!("{reason}; evidence at {}", artifact.display()),
+        });
+    }
     Ok(serde_json::json!({
-        "calibration": profile,
         "artifact": artifact,
         "seed": seed,
-        "samples": samples,
+        "run": outcome,
         "invalidation_keys": ["model_digest","deployment_fingerprint","compatibility_key","harness_rev"],
     }))
 }

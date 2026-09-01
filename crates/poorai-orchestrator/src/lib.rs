@@ -641,7 +641,7 @@ pub async fn calibrate<P: ModelProvider>(
     harness_rev: &str,
     thresholds: poorai_domain::CalibrationThresholds,
     seed: u64,
-) -> Result<(CalibrationProfile, Vec<CalibrationSample>), String> {
+) -> Result<CalibrationOutcome, String> {
     if ladder.is_empty() || ladder.contains(&0) {
         return Err("context ladder must contain positive values".into());
     }
@@ -660,7 +660,7 @@ pub async fn calibrate<P: ModelProvider>(
         }
     }
     let mut points = Vec::new();
-    let mut rejected = Vec::new();
+    let mut rejected: Vec<RejectedTier> = Vec::new();
     for context_tokens in ladder {
         let tier: Vec<&CalibrationSample> = samples
             .iter()
@@ -717,16 +717,42 @@ pub async fn calibrate<P: ModelProvider>(
         let measured_cold = tier
             .iter()
             .any(|sample| sample_ran_warm(sample) == Some(false));
-        if thresholds.admits(&point) && !measured_cold {
+        let mut reasons = Vec::new();
+        if point.success_rate < thresholds.min_success_rate {
+            reasons.push("success_rate");
+        }
+        if point.median_first_token_ms > thresholds.max_median_first_token_ms {
+            reasons.push("median_first_token_ms");
+        }
+        if point.memory_pressure_observed && !thresholds.allow_memory_pressure {
+            reasons.push("memory_pressure");
+        }
+        if measured_cold {
+            reasons.push("measured_cold");
+        }
+        if reasons.is_empty() {
             points.push(point);
         } else {
-            rejected.push(*context_tokens);
+            rejected.push(RejectedTier {
+                context_tokens: *context_tokens,
+                reasons,
+                measured: point,
+            });
         }
     }
     if points.is_empty() {
-        return Err(format!(
-            "no context tier met the calibration thresholds; rejected {rejected:?}"
-        ));
+        let criteria: Vec<String> = rejected
+            .iter()
+            .map(|tier| format!("{}:{}", tier.context_tokens, tier.reasons.join("+")))
+            .collect();
+        return Ok(CalibrationOutcome::Refused {
+            reason: format!(
+                "no context tier met the calibration thresholds ({})",
+                criteria.join(", ")
+            ),
+            samples,
+            rejected,
+        });
     }
     let mut artifacts: Vec<String> = warm_ups
         .iter()
@@ -747,7 +773,39 @@ pub async fn calibrate<P: ModelProvider>(
         created_at: now(),
     };
     profile.validate().map_err(|e| e.to_string())?;
-    Ok((profile, samples))
+    Ok(CalibrationOutcome::Calibrated {
+        profile,
+        samples,
+        rejected,
+    })
+}
+
+/// A tier that was measured but not admitted, with the criteria it failed.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RejectedTier {
+    pub context_tokens: u32,
+    pub reasons: Vec<&'static str>,
+    pub measured: poorai_domain::StablePoint,
+}
+
+/// The result of a calibration run.
+///
+/// A refusal is a measurement result, not a lost run: it carries the samples
+/// and the criteria that produced it, so the reason can be read from the
+/// artifact instead of reproduced by running the battery again.
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum CalibrationOutcome {
+    Calibrated {
+        profile: CalibrationProfile,
+        samples: Vec<CalibrationSample>,
+        rejected: Vec<RejectedTier>,
+    },
+    Refused {
+        reason: String,
+        samples: Vec<CalibrationSample>,
+        rejected: Vec<RejectedTier>,
+    },
 }
 
 /// Reasons a stored calibration no longer describes the current deployment.
@@ -900,7 +958,7 @@ mod tests {
     async fn calibrate_fake(
         ladder: &[u32],
         thresholds: poorai_domain::CalibrationThresholds,
-    ) -> Result<(CalibrationProfile, Vec<CalibrationSample>), String> {
+    ) -> Result<CalibrationOutcome, String> {
         calibrate(
             &FakeProvider,
             &UnknownHostProbe,
@@ -915,9 +973,27 @@ mod tests {
         .await
     }
 
+    fn calibrated(
+        outcome: CalibrationOutcome,
+    ) -> (
+        CalibrationProfile,
+        Vec<CalibrationSample>,
+        Vec<RejectedTier>,
+    ) {
+        match outcome {
+            CalibrationOutcome::Calibrated {
+                profile,
+                samples,
+                rejected,
+            } => (profile, samples, rejected),
+            CalibrationOutcome::Refused { reason, .. } => panic!("refused: {reason}"),
+        }
+    }
+
     #[tokio::test]
     async fn calibration_has_three_samples_per_tier() {
-        let (profile, samples) = calibrate_fake(&[32, 64], Default::default()).await.unwrap();
+        let (profile, samples, _) =
+            calibrated(calibrate_fake(&[32, 64], Default::default()).await.unwrap());
         assert_eq!(profile.stable_points.len(), 2);
         assert!(
             profile
@@ -940,13 +1016,14 @@ mod tests {
 
     #[tokio::test]
     async fn every_sample_carries_a_backend_snapshot() {
-        let (_, samples) = calibrate_fake(&[32], Default::default()).await.unwrap();
+        let (_, samples, _) = calibrated(calibrate_fake(&[32], Default::default()).await.unwrap());
         assert!(samples.iter().all(|sample| sample.backend_state.is_some()));
     }
 
     #[tokio::test]
     async fn the_warm_up_sample_is_not_counted_as_a_measurement() {
-        let (profile, samples) = calibrate_fake(&[32], Default::default()).await.unwrap();
+        let (profile, samples, _) =
+            calibrated(calibrate_fake(&[32], Default::default()).await.unwrap());
         assert_eq!(samples.len(), 3);
         assert_eq!(profile.stable_points[0].samples, 3);
         // The discarded warm-up still leaves a raw artifact behind.
@@ -958,7 +1035,8 @@ mod tests {
     #[tokio::test]
     async fn every_tier_is_warmed_before_it_is_measured() {
         let ladder = [32, 64, 128];
-        let (profile, samples) = calibrate_fake(&ladder, Default::default()).await.unwrap();
+        let (profile, samples, _) =
+            calibrated(calibrate_fake(&ladder, Default::default()).await.unwrap());
         assert_eq!(samples.len(), ladder.len() * 3);
         // One warm-up artifact per tier, on top of the measured samples.
         assert_eq!(
@@ -1021,11 +1099,55 @@ mod tests {
                 allow_memory_pressure: false,
             },
         )
-        .await;
-        assert!(
-            refused.is_err(),
-            "a tier that failed thresholds was admitted"
-        );
+        .await
+        .unwrap();
+        let CalibrationOutcome::Refused {
+            reason,
+            samples,
+            rejected,
+        } = refused
+        else {
+            panic!("a tier that failed thresholds was admitted");
+        };
+        // A refusal carries the evidence for itself: which criterion failed,
+        // the measured point, and every sample behind it.
+        assert!(reason.contains("median_first_token_ms"));
+        assert_eq!(rejected.len(), 1);
+        assert_eq!(rejected[0].context_tokens, 32);
+        assert_eq!(rejected[0].reasons, vec!["median_first_token_ms"]);
+        assert_eq!(rejected[0].measured.samples, 3);
+        assert_eq!(samples.len(), 3);
+    }
+
+    /// Memory pressure disqualifies a tier on its own, and says so.
+    #[tokio::test]
+    async fn a_tier_measured_under_memory_pressure_is_refused_with_that_reason() {
+        struct PressuredHost;
+        #[async_trait::async_trait]
+        impl HostProbe for PressuredHost {
+            async fn memory_pressure(&self) -> poorai_domain::Observation {
+                poorai_domain::Observation::Observed(
+                    serde_json::json!({"under_pressure": true, "system_free_percent": 4}),
+                )
+            }
+        }
+        let outcome = calibrate(
+            &FakeProvider,
+            &PressuredHost,
+            &deployment(),
+            &hardware(),
+            "digest".into(),
+            &[32],
+            "harness",
+            Default::default(),
+            1,
+        )
+        .await
+        .unwrap();
+        let CalibrationOutcome::Refused { rejected, .. } = outcome else {
+            panic!("a tier measured under pressure was admitted");
+        };
+        assert_eq!(rejected[0].reasons, vec!["memory_pressure"]);
     }
 
     #[test]
