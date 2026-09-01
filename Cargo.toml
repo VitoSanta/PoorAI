@@ -10,6 +10,7 @@ members = [
   "crates/poorai-repo",
   "crates/poorai-verify",
   "crates/poorai-orchestrator",
+  "crates/poorai-eval",
   "crates/poorai-cli",
 ]
 

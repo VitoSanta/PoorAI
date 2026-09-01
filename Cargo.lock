@@ -903,6 +903,7 @@ dependencies = [
  "clap",
  "futures-util",
  "poorai-domain",
+ "poorai-eval",
  "poorai-ollama",
  "poorai-orchestrator",
  "poorai-provider",
@@ -929,6 +930,19 @@ dependencies = [
  "serde_json",
  "thiserror",
  "uuid",
+]
+
+[[package]]
+name = "poorai-eval"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "poorai-domain",
+ "poorai-tools",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
