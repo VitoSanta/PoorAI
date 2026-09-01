@@ -645,10 +645,14 @@ pub async fn calibrate<P: ModelProvider>(
     if ladder.is_empty() || ladder.contains(&0) {
         return Err("context ladder must contain positive values".into());
     }
-    // Warm-up, discarded. Measuring a cold load reports the loader, not the tier.
-    let warm_up = calibration_sample(provider, host, deployment, ladder[0], 0).await;
+    // Warm-up is per tier, not per run. A backend reloads the model when the
+    // context size changes, so one warm-up leaves every other tier's first
+    // sample carrying a reload -- measured at ~1.7s against ~11ms warm, an
+    // artifact of the harness that the median hides and the variance inherits.
+    let mut warm_ups = vec![];
     let mut samples = vec![];
     for context_tokens in shuffled(ladder, seed) {
+        warm_ups.push(calibration_sample(provider, host, deployment, context_tokens, 0).await);
         for repetition in 1..=CALIBRATION_REPETITIONS {
             samples.push(
                 calibration_sample(provider, host, deployment, context_tokens, repetition).await,
@@ -706,7 +710,14 @@ pub async fn calibrate<P: ModelProvider>(
                 )
             }),
         };
-        if thresholds.admits(&point) {
+        // A tier whose measured samples include an observed model load was not
+        // measured warm, whatever its latencies look like. Where the backend
+        // reports no load duration this is unknowable, and the tier is judged
+        // on its thresholds alone rather than assumed cold.
+        let measured_cold = tier
+            .iter()
+            .any(|sample| sample_ran_warm(sample) == Some(false));
+        if thresholds.admits(&point) && !measured_cold {
             points.push(point);
         } else {
             rejected.push(*context_tokens);
@@ -717,7 +728,8 @@ pub async fn calibrate<P: ModelProvider>(
             "no context tier met the calibration thresholds; rejected {rejected:?}"
         ));
     }
-    let mut artifacts: Vec<String> = std::iter::once(&warm_up)
+    let mut artifacts: Vec<String> = warm_ups
+        .iter()
         .chain(samples.iter())
         .map(|sample| poorai_domain::hash_bytes(serde_json::to_vec(sample).unwrap_or_default()))
         .collect();
@@ -935,11 +947,56 @@ mod tests {
     #[tokio::test]
     async fn the_warm_up_sample_is_not_counted_as_a_measurement() {
         let (profile, samples) = calibrate_fake(&[32], Default::default()).await.unwrap();
-        // Three measured repetitions, and a fourth raw artifact for the
-        // discarded warm-up.
         assert_eq!(samples.len(), 3);
         assert_eq!(profile.stable_points[0].samples, 3);
-        assert!(profile.raw_artifact_hashes.len() >= samples.len());
+        // The discarded warm-up still leaves a raw artifact behind.
+        assert!(profile.raw_artifact_hashes.len() > samples.len());
+    }
+
+    /// A backend reloads on a context change, so one warm-up per run leaves
+    /// every other tier's first sample carrying a reload.
+    #[tokio::test]
+    async fn every_tier_is_warmed_before_it_is_measured() {
+        let ladder = [32, 64, 128];
+        let (profile, samples) = calibrate_fake(&ladder, Default::default()).await.unwrap();
+        assert_eq!(samples.len(), ladder.len() * 3);
+        // One warm-up artifact per tier, on top of the measured samples.
+        assert_eq!(
+            profile.raw_artifact_hashes.len(),
+            samples.len() + ladder.len()
+        );
+        assert!(samples.iter().all(|sample| sample.repetition > 0));
+    }
+
+    #[test]
+    fn a_reported_model_load_marks_a_sample_cold() {
+        let with_load = |load_duration_ns: Option<u64>| CalibrationSample {
+            context_tokens: 32,
+            repetition: 1,
+            ok: true,
+            error: None,
+            first_token_ms: 1.0,
+            total_ms: 1.0,
+            chunks: 1,
+            generation_tokens_per_second: 1.0,
+            rate_source: "backend_reported_tokens",
+            metrics: Some(poorai_domain::GenerationMetrics {
+                load_duration_ns,
+                ..Default::default()
+            }),
+            memory_pressure: poorai_domain::Observation::Unknown {
+                reason: "test".into(),
+            },
+            backend_state: None,
+        };
+        // Measured on this machine: ~1.7s reloading, ~11ms warm.
+        assert_eq!(
+            sample_ran_warm(&with_load(Some(1_700_000_000))),
+            Some(false)
+        );
+        assert_eq!(sample_ran_warm(&with_load(Some(11_000_000))), Some(true));
+        // A backend that reports nothing leaves this unknowable, not false.
+        assert_eq!(sample_ran_warm(&with_load(None)), None);
     }
 
     #[test]

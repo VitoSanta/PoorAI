@@ -558,7 +558,7 @@ async fn inspect(
     Ok(serde_json::json!({"inspection":inspection,"artifact":artifact,"probed":probe}))
 }
 /// Bump when any measurement step changes; stored profiles invalidate on it.
-const CALIBRATION_HARNESS_REV: &str = "calibration-harness-v2";
+const CALIBRATION_HARNESS_REV: &str = "calibration-harness-v3";
 
 #[allow(clippy::too_many_arguments)]
 async fn calibrate(
