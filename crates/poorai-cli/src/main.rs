@@ -759,11 +759,7 @@ async fn evaluate_task(
         messages: vec![
             poorai_domain::ChatMessage {
                 role: "system".into(),
-                content: "You are working inside a repository. Take exactly one action per turn \
-                          by calling one of the provided tools. Edits are hash-guarded: read a \
-                          file and pass the artifact_hash it returns as expected_hash. Call \
-                          complete only when you believe the repository's own checks will pass."
-                    .into(),
+                content: poorai_orchestrator::AGENT_SYSTEM_PROMPT.into(),
             },
             poorai_domain::ChatMessage {
                 role: "user".into(),
@@ -1565,11 +1561,7 @@ async fn prepare_profiled_run(
         messages: vec![
             poorai_domain::ChatMessage {
                 role: "system".into(),
-                content: "You are working inside a repository. Take exactly one action per turn \
-                          by calling one of the provided tools. Edits are hash-guarded: read a \
-                          file and pass the artifact_hash it returns as expected_hash. Call \
-                          complete only when you believe the repository's own checks will pass."
-                    .into(),
+                content: poorai_orchestrator::AGENT_SYSTEM_PROMPT.into(),
             },
             poorai_domain::ChatMessage {
                 role: "user".into(),

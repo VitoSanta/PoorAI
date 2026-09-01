@@ -366,3 +366,16 @@ async fn a_denied_edit_does_not_trigger_a_check() {
     // One allowed edit followed, so exactly one check -- not two.
     assert_eq!(interim, 1);
 }
+
+/// The completion rule must be stated in both directions. A deployment told
+/// only when *not* to complete has nothing connecting a passing check to the
+/// action it implies.
+#[test]
+fn the_system_prompt_states_when_to_complete_and_when_not_to() {
+    let prompt = poorai_orchestrator::AGENT_SYSTEM_PROMPT;
+    assert!(prompt.contains("If they pass and the task is done, call complete"));
+    assert!(prompt.contains("Do not call complete while the checks are failing"));
+    // The hash guard is the most common denial in practice, so the prompt says
+    // what to do about it rather than leaving it to be discovered per run.
+    assert!(prompt.contains("re-read a file after editing it"));
+}
