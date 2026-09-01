@@ -11,6 +11,8 @@
 | gpt-oss:20b | efficiency baseline | laboratory |
 | gemma4:31b-mlx / muse-glimmer:30b-mlx | controls | laboratory |
 
+The capability matrix is an **eligibility gate, not a predictor**. Measured across seven deployments, the `edit` probe result has no relationship to how many edit tasks a deployment resolves: the only one that never probed a valid edit is not last, and three of the four that probed perfectly are at the bottom, including one that resolved none. The probe measures whether a deployment can emit an edit the policy accepts, which is a different question from whether it can use that ability to finish a task. Only evaluation answers the second.
+
 No table entry asserts an ability. On discovery, inspect actual serving metadata and execute capability probes: structured tool request, streaming, context boundary, edit task, and timeout/cancellation. Strategies are versioned JSON/TOML and can be promoted only through evaluation.
 
 ## Probe requirements

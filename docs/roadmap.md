@@ -158,6 +158,41 @@ The hardening's effect was not uniform: it moved the challenger from 13/24 to 20
 
 An earlier reading of this history recorded the opposite conclusion — that no resolved run needed more than 7, so the ceiling was not limiting. That held for the pre-hardening campaign and does not hold now. The budget stays at 8 rather than being raised to another invented number: deriving it from measured usage requires a further campaign, and is recorded as remaining work rather than done reflexively to improve a score.
 
+### All seven deployments — 2026-09-02
+
+Three seeded trials each on `m5-frozen-v1`, deployments unloaded between models.
+
+| Deployment | Role | Pooled | 95% interval | Edit tasks |
+|---|---|---|---|---|
+| ornith-1.5:35b | challenger | 22/24 = 0.917 | 0.742 – 0.977 | 13/15 |
+| qwen3.8:27b-mlx | primary | 18/24 = 0.750 | 0.551 – 0.880 | 9/15 |
+| nemotron-3.5-lightning:30b-mlx | long-context control | 18/24 = 0.750 | 0.551 – 0.880 | 9/15 |
+| granite4.2:30b-q6_K | coding control | 15/24 = 0.625 | 0.427 – 0.788 | 6/15 |
+| muse-glimmer:30b-mlx | control | 13/24 = 0.542 | 0.351 – 0.721 | 4/15 |
+| gpt-oss:20b | efficiency baseline | 12/24 = 0.500 | 0.314 – 0.686 | 3/15 |
+| gemma4:31b-mlx | control | 6/24 = 0.250 | 0.120 – 0.449 | 0/15 |
+
+No safety violation and no out-of-scope change in any of the 168 task runs. Every deployment resolved both adversarial tasks on all three trials.
+
+**The M1 edit probe does not predict task resolution.** This was tested as a prediction written before the campaign, and it failed.
+
+| Deployment | M1 edit probe | Edit tasks resolved |
+|---|---|---|
+| ornith-1.5:35b | 2/3 | 13/15 |
+| qwen3.8:27b-mlx | 3/3 | 9/15 |
+| granite4.2:30b-q6_K | 3/3 | 6/15 |
+| muse-glimmer:30b-mlx | 0/3, unknown | 4/15 |
+| gpt-oss:20b | 3/3 | 3/15 |
+| gemma4:31b-mlx | 3/3 | 0/15 |
+
+The only deployment the probe could not observe editing at all is not last; three of the four that probed 3/3 are at the bottom, including the one that resolved nothing. The relationship is not weak, it is absent.
+
+This is what the probe was defined to measure — whether a deployment emits an `apply_replace` the policy accepts — and that is a different question from whether it can use the ability to finish a task. The failure was in expecting it to transfer, and `model-profiles.md` now says the matrix is an eligibility gate rather than a predictor.
+
+A second prediction also failed: nemotron, marked unreliable at 2 of 3 on both tools and edit, was expected to show the widest spread across seeds. It spread 0.250 while the primary spread 0.375. Intermittency measured on a single-turn probe did not carry into multi-turn runs.
+
+**gemma4 resolves nothing that requires an edit or an answer.** It passes only the two adversarial tasks, which are passed by not acting. Its 0.250 is therefore not a weak score on the suite; it is the score of a deployment that does not complete work on it, and reading the aggregate without the per-task column would hide that.
+
 ### Current safety boundary
 
 `poorai run` executes for real. A non-dry run requires an explicit `--model` and a `--profile` pointing at a calibration artifact, and refuses to proceed unless that calibration still matches the model digest, deployment fingerprint, hardware compatibility key and harness revision in force. An artifact recording a refused calibration authorises nothing.
