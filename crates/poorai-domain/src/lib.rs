@@ -130,6 +130,34 @@ pub struct StablePoint {
     pub memory_pressure_observed: bool,
 }
 
+/// Admission criteria a measured point must meet to count as stable.
+///
+/// Stored on the profile so the evidence carries the standard it was judged
+/// against: a reader can check the points rather than trust them.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CalibrationThresholds {
+    pub min_success_rate: f64,
+    pub max_median_first_token_ms: f64,
+    pub allow_memory_pressure: bool,
+}
+impl Default for CalibrationThresholds {
+    fn default() -> Self {
+        Self {
+            // A tier that failed any sample is not a tier to operate at.
+            min_success_rate: 1.0,
+            max_median_first_token_ms: 120_000.0,
+            allow_memory_pressure: false,
+        }
+    }
+}
+impl CalibrationThresholds {
+    pub fn admits(&self, point: &StablePoint) -> bool {
+        point.success_rate >= self.min_success_rate
+            && point.median_first_token_ms <= self.max_median_first_token_ms
+            && (self.allow_memory_pressure || !point.memory_pressure_observed)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CalibrationProfile {
     pub schema_version: u32,
@@ -138,6 +166,7 @@ pub struct CalibrationProfile {
     pub model_digest: String,
     pub deployment_fingerprint: String,
     pub harness_rev: String,
+    pub thresholds: CalibrationThresholds,
     pub stable_points: Vec<StablePoint>,
     pub raw_artifact_hashes: Vec<String>,
     pub created_at: DateTime<Utc>,
@@ -215,6 +244,30 @@ pub struct ToolCall {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
 }
+/// Exact counts and timings reported by the backend for one generation.
+///
+/// Token counting is otherwise an estimate; where a backend reports real
+/// counts, calibration uses them instead of a local proxy.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GenerationMetrics {
+    pub prompt_tokens: Option<u64>,
+    pub generated_tokens: Option<u64>,
+    pub total_duration_ns: Option<u64>,
+    /// Time spent loading the model. A warm deployment reports near zero, which
+    /// is how a warm-up is verified rather than assumed.
+    pub load_duration_ns: Option<u64>,
+    pub prompt_eval_duration_ns: Option<u64>,
+    pub generation_duration_ns: Option<u64>,
+}
+impl GenerationMetrics {
+    /// Backend-reported generation rate, when it reported enough to compute one.
+    pub fn tokens_per_second(&self) -> Option<f64> {
+        let tokens = self.generated_tokens?;
+        let nanos = self.generation_duration_ns?;
+        (nanos > 0).then(|| tokens as f64 / (nanos as f64 / 1e9))
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelChunk {
     pub content: String,
@@ -223,6 +276,9 @@ pub struct ModelChunk {
     pub thinking: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<ToolCall>,
+    /// Present only on the terminal chunk, and only where the backend reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<GenerationMetrics>,
     pub done: bool,
 }
 
@@ -271,6 +327,22 @@ impl Validate for CalibrationProfile {
                 reason: "must have >=3 samples and valid measured success rates".into(),
             });
         }
+        // A point that did not meet the profile's own admission criteria is not
+        // a stable point. Without this, a tier where every sample failed still
+        // authorises execution at that context.
+        if let Some(point) = self
+            .stable_points
+            .iter()
+            .find(|point| !self.thresholds.admits(point))
+        {
+            return Err(DomainError::Invalid {
+                field: "stable_points",
+                reason: format!(
+                    "point at {} tokens does not meet the profile thresholds",
+                    point.context_tokens
+                ),
+            });
+        }
         Ok(())
     }
 }
@@ -292,10 +364,13 @@ impl ExecutionProfile {
             (Some(id), Some(profile), EvidenceLabel::Measured)
                 if id == profile.id
                     && self.compatibility_key == profile.compatibility_key
-                    && profile
-                        .stable_points
-                        .iter()
-                        .any(|p| p.context_tokens >= self.context_tokens) =>
+                    // The covering point must itself be admissible: capacity
+                    // comes from a measurement that succeeded, not merely from
+                    // one that was attempted at that size.
+                    && profile.stable_points.iter().any(|p| {
+                        p.context_tokens >= self.context_tokens
+                            && profile.thresholds.admits(p)
+                    }) =>
             {
                 Ok(())
             }
@@ -339,6 +414,7 @@ mod tests {
             model_digest: "x".into(),
             deployment_fingerprint: "d".into(),
             harness_rev: "h".into(),
+            thresholds: CalibrationThresholds::default(),
             stable_points: vec![StablePoint {
                 context_tokens: 512,
                 samples: 3,

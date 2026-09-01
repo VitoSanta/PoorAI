@@ -10,6 +10,7 @@ name = "poorai"
 path = "src/main.rs"
 
 [dependencies]
+async-trait.workspace = true
 chrono.workspace = true
 clap.workspace = true
 futures-util.workspace = true

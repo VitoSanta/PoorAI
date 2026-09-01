@@ -3,8 +3,8 @@ use async_trait::async_trait;
 use chrono::Utc;
 use futures_util::{StreamExt, stream};
 use poorai_domain::{
-    BackendState, DeploymentDescriptor, ModelChunk, ModelDefinition, ModelInspection, ModelRequest,
-    Observation, Provenance, ToolCall, new_id,
+    BackendState, DeploymentDescriptor, GenerationMetrics, ModelChunk, ModelDefinition,
+    ModelInspection, ModelRequest, Observation, Provenance, ToolCall, new_id,
 };
 use poorai_provider::{ModelProvider, ModelStream, ProviderError};
 use reqwest::{Client, Url};
@@ -114,6 +114,32 @@ struct ChatResponse {
     message: Option<NativeMessage>,
     #[serde(default)]
     done: bool,
+    #[serde(default)]
+    prompt_eval_count: Option<u64>,
+    #[serde(default)]
+    eval_count: Option<u64>,
+    #[serde(default)]
+    total_duration: Option<u64>,
+    #[serde(default)]
+    load_duration: Option<u64>,
+    #[serde(default)]
+    prompt_eval_duration: Option<u64>,
+    #[serde(default)]
+    eval_duration: Option<u64>,
+}
+impl ChatResponse {
+    /// Ollama reports counts and timings on the terminal chunk only.
+    fn metrics(&self) -> Option<GenerationMetrics> {
+        let metrics = GenerationMetrics {
+            prompt_tokens: self.prompt_eval_count,
+            generated_tokens: self.eval_count,
+            total_duration_ns: self.total_duration,
+            load_duration_ns: self.load_duration,
+            prompt_eval_duration_ns: self.prompt_eval_duration,
+            generation_duration_ns: self.eval_duration,
+        };
+        (metrics != GenerationMetrics::default()).then_some(metrics)
+    }
 }
 #[derive(Default, Deserialize)]
 struct NativeMessage {
@@ -175,6 +201,7 @@ pub fn parse_ndjson_chunks(body: &str) -> Result<Vec<ModelChunk>, ProviderError>
                 serde_json::from_str(line).map_err(|_| ProviderError::Protocol {
                     safe_context: "malformed Ollama streaming chunk".into(),
                 })?;
+            let metrics = response.metrics();
             let message = response.message.unwrap_or_default();
             Ok(ModelChunk {
                 content: message.content,
@@ -188,6 +215,7 @@ pub fn parse_ndjson_chunks(body: &str) -> Result<Vec<ModelChunk>, ProviderError>
                         id: call.id,
                     })
                     .collect(),
+                metrics,
                 done: response.done,
             })
         })

@@ -33,6 +33,20 @@ enum Command {
         model: String,
         #[arg(long, value_delimiter = ',', default_value = "2048,4096,8192")]
         ladder: Vec<u32>,
+        /// Seeds the tier-order shuffle. Recorded with the profile so the run
+        /// is reproducible.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        /// Free-memory percentage below which a sample counts as under
+        /// pressure. A declared policy floor, recorded with every reading.
+        #[arg(long, default_value_t = 20)]
+        pressure_floor: u8,
+        /// Fraction of samples a tier must pass to be a stable point.
+        #[arg(long, default_value_t = 1.0)]
+        min_success_rate: f64,
+        /// Median first-token latency a tier may not exceed.
+        #[arg(long, default_value_t = 120_000.0)]
+        max_median_first_token_ms: f64,
     },
     Run {
         task: String,
@@ -174,9 +188,25 @@ async fn main() {
                 index_repository(path.unwrap_or_else(|| PathBuf::from("."))),
             ),
         },
-        Command::Calibrate { model, ladder } => print(
+        Command::Calibrate {
+            model,
+            ladder,
+            seed,
+            pressure_floor,
+            min_success_rate,
+            max_median_first_token_ms,
+        } => print(
             cli.json,
-            calibrate(&cli.ollama_endpoint, model, ladder).await,
+            calibrate(
+                &cli.ollama_endpoint,
+                model,
+                ladder,
+                seed,
+                pressure_floor,
+                min_success_rate,
+                max_median_first_token_ms,
+            )
+            .await,
         ),
         Command::Run {
             task,
@@ -527,13 +557,21 @@ async fn inspect(
     })?;
     Ok(serde_json::json!({"inspection":inspection,"artifact":artifact,"probed":probe}))
 }
+/// Bump when any measurement step changes; stored profiles invalidate on it.
+const CALIBRATION_HARNESS_REV: &str = "calibration-harness-v2";
+
+#[allow(clippy::too_many_arguments)]
 async fn calibrate(
     endpoint: &str,
     model: String,
     ladder: Vec<u32>,
+    seed: u64,
+    pressure_floor: u8,
+    min_success_rate: f64,
+    max_median_first_token_ms: f64,
 ) -> Result<serde_json::Value, SafeError> {
     let provider =
-        OllamaProvider::new(endpoint, Duration::from_secs(120)).map_err(provider_error)?;
+        OllamaProvider::new(endpoint, Duration::from_secs(600)).map_err(provider_error)?;
     let deployment = DeploymentDescriptor {
         schema_version: 1,
         id: new_id(),
@@ -548,13 +586,23 @@ async fn calibrate(
         .await
         .map_err(provider_error)?;
     let hardware = probe_hardware().await;
-    let profile = poorai_orchestrator::calibrate(
+    let host = MacosHostProbe {
+        free_percent_floor: pressure_floor,
+    };
+    let (profile, samples) = poorai_orchestrator::calibrate(
         &provider,
+        &host,
         &deployment,
         &hardware,
         inspected.definition.digest,
         &ladder,
-        "calibration-harness-v1",
+        CALIBRATION_HARNESS_REV,
+        poorai_domain::CalibrationThresholds {
+            min_success_rate,
+            max_median_first_token_ms,
+            allow_memory_pressure: false,
+        },
+        seed,
     )
     .await
     .map_err(|e| SafeError {
@@ -580,7 +628,14 @@ async fn calibrate(
     let temporary = dir.join(format!("{}.tmp", profile.id));
     std::fs::write(
         &temporary,
-        serde_json::to_vec_pretty(&profile).expect("serializable"),
+        // The raw samples travel with the profile: a stable point without the
+        // measurements behind it is a claim, not evidence.
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "profile": profile,
+            "seed": seed,
+            "samples": samples,
+        }))
+        .expect("serializable"),
     )
     .map_err(|e| SafeError {
         category: "internal",
@@ -590,9 +645,13 @@ async fn calibrate(
         category: "internal",
         context: e.to_string(),
     })?;
-    Ok(
-        serde_json::json!({"calibration":profile,"artifact":artifact,"invalidation_keys":["model_digest","deployment_fingerprint","compatibility_key","harness_rev"]}),
-    )
+    Ok(serde_json::json!({
+        "calibration": profile,
+        "artifact": artifact,
+        "seed": seed,
+        "samples": samples,
+        "invalidation_keys": ["model_digest","deployment_fingerprint","compatibility_key","harness_rev"],
+    }))
 }
 async fn run(
     task: String,
@@ -1006,6 +1065,40 @@ async fn run_probe(command: &str, args: &[&str]) -> Option<String> {
         None
     }
 }
+/// Host probe backing calibration samples on this machine.
+///
+/// `free_percent_floor` is a declared policy floor, not an inferred capacity:
+/// it decides when an observed free-memory reading counts as pressure, and it
+/// is recorded alongside the reading so the judgement can be re-examined.
+struct MacosHostProbe {
+    free_percent_floor: u8,
+}
+#[async_trait::async_trait]
+impl poorai_orchestrator::HostProbe for MacosHostProbe {
+    async fn memory_pressure(&self) -> Observation {
+        match probe_memory_pressure().await {
+            Observation::Observed(value) => {
+                let free = value
+                    .get("system_free_percent")
+                    .and_then(serde_json::Value::as_u64);
+                match free {
+                    Some(free) => Observation::Observed(serde_json::json!({
+                        "system_free_percent": free,
+                        "free_percent_floor": self.free_percent_floor,
+                        "under_pressure": free < self.free_percent_floor as u64,
+                        "source": "memory_pressure -Q",
+                    })),
+                    // A reading we cannot interpret is unknown, never "no pressure".
+                    None => Observation::Unknown {
+                        reason: "memory pressure reading had no free percentage".into(),
+                    },
+                }
+            }
+            unknown => unknown,
+        }
+    }
+}
+
 async fn probe_memory_pressure() -> Observation {
     let Some(output) = run_probe("memory_pressure", &["-Q"]).await else {
         return Observation::Unknown {

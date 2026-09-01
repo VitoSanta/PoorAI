@@ -43,17 +43,17 @@ fn any_deployment() -> impl Strategy<Value = DeploymentDescriptor> {
         )
 }
 
+/// Points that meet the default thresholds, so a profile built from them is
+/// valid. Points that fail thresholds are exercised by their own properties.
 fn any_stable_point() -> impl Strategy<Value = StablePoint> {
-    (1u32..131_072, 3u32..10, 0.0f64..=1.0).prop_map(|(context_tokens, samples, success_rate)| {
-        StablePoint {
-            context_tokens,
-            samples,
-            success_rate,
-            median_first_token_ms: 1.0,
-            generation_tokens_per_second: 1.0,
-            variance: 0.0,
-            memory_pressure_observed: false,
-        }
+    (1u32..131_072, 3u32..10, 0.0f64..=1.0).prop_map(|(context_tokens, samples, _)| StablePoint {
+        context_tokens,
+        samples,
+        success_rate: 1.0,
+        median_first_token_ms: 1.0,
+        generation_tokens_per_second: 1.0,
+        variance: 0.0,
+        memory_pressure_observed: false,
     })
 }
 
@@ -65,6 +65,7 @@ fn calibration_with(points: Vec<StablePoint>, key: &str) -> CalibrationProfile {
         model_digest: "digest".into(),
         deployment_fingerprint: "fingerprint".into(),
         harness_rev: "harness".into(),
+        thresholds: CalibrationThresholds::default(),
         stable_points: points,
         raw_artifact_hashes: vec![],
         created_at: now(),
@@ -114,11 +115,17 @@ proptest! {
         content in "[a-z ]{0,30}",
         thinking in proptest::option::of("[a-z ]{1,30}"),
         calls in proptest::collection::vec("[a-z_]{1,12}", 0..4),
+        generated_tokens in proptest::option::of(any::<u64>()),
         done in any::<bool>(),
     ) {
         let chunk = ModelChunk {
             content,
             thinking,
+            metrics: generated_tokens.map(|generated_tokens| GenerationMetrics {
+                generated_tokens: Some(generated_tokens),
+                generation_duration_ns: Some(1_000_000_000),
+                ..Default::default()
+            }),
             tool_calls: calls
                 .into_iter()
                 .map(|name| ToolCall {
@@ -133,6 +140,27 @@ proptest! {
             serde_json::from_str(&serde_json::to_string(&chunk).unwrap()).unwrap();
         prop_assert_eq!(&chunk, &decoded);
         prop_assert_eq!(chunk.tool_calls.len(), decoded.tool_calls.len());
+        // Backend-reported counts must survive the round trip, or a calibration
+        // artifact loses the numbers its rate was computed from.
+        prop_assert_eq!(
+            chunk.metrics.as_ref().and_then(|m| m.generated_tokens),
+            decoded.metrics.as_ref().and_then(|m| m.generated_tokens)
+        );
+    }
+
+    /// A rate is reported only when the backend gave enough to compute one.
+    #[test]
+    fn a_reported_rate_requires_both_a_count_and_a_duration(
+        tokens in proptest::option::of(1u64..10_000),
+        nanos in proptest::option::of(0u64..10_000_000_000),
+    ) {
+        let metrics = GenerationMetrics {
+            generated_tokens: tokens,
+            generation_duration_ns: nanos,
+            ..Default::default()
+        };
+        let computable = tokens.is_some() && nanos.is_some_and(|n| n > 0);
+        prop_assert_eq!(metrics.tokens_per_second().is_some(), computable);
     }
 
     #[test]
@@ -249,6 +277,61 @@ proptest! {
     #[test]
     fn calibration_accepts_measured_points(points in proptest::collection::vec(any_stable_point(), 1..5)) {
         prop_assert!(calibration_with(points, "key").validate().is_ok());
+    }
+
+    /// Capacity must come from a measurement that succeeded, not merely one
+    /// attempted at that size. A tier where every sample failed is a record of
+    /// failure; authorising execution from it is inventing capacity.
+    #[test]
+    fn a_tier_that_failed_its_thresholds_authorises_nothing(
+        context_tokens in 1u32..131_072,
+        success_rate in 0.0f64..1.0,
+    ) {
+        let failed = StablePoint {
+            context_tokens,
+            samples: 3,
+            success_rate,
+            median_first_token_ms: 1.0,
+            generation_tokens_per_second: 0.0,
+            variance: 0.0,
+            memory_pressure_observed: false,
+        };
+        let calibration = calibration_with(vec![failed], "key");
+        // The profile itself must refuse to hold a point below its thresholds.
+        prop_assert!(calibration.validate().is_err());
+        let profile = execution_for(
+            Some(&calibration),
+            context_tokens,
+            0,
+            EvidenceLabel::Measured,
+        );
+        prop_assert!(profile.validate_against(Some(&calibration)).is_err());
+    }
+
+    /// Memory pressure during measurement disqualifies the point unless the
+    /// profile declares that pressure is acceptable.
+    #[test]
+    fn a_tier_measured_under_memory_pressure_authorises_nothing(
+        context_tokens in 1u32..131_072,
+    ) {
+        let pressured = StablePoint {
+            context_tokens,
+            samples: 3,
+            success_rate: 1.0,
+            median_first_token_ms: 1.0,
+            generation_tokens_per_second: 1.0,
+            variance: 0.0,
+            memory_pressure_observed: true,
+        };
+        let calibration = calibration_with(vec![pressured], "key");
+        prop_assert!(calibration.validate().is_err());
+        let profile = execution_for(
+            Some(&calibration),
+            context_tokens,
+            0,
+            EvidenceLabel::Measured,
+        );
+        prop_assert!(profile.validate_against(Some(&calibration)).is_err());
     }
 
     /// MASTER_SPEC rule 4: capacity comes from evidence, never extrapolation.
