@@ -8,7 +8,7 @@
 | M3 Safe execution | **Completed** | Full gitignore semantics via the ripgrep `ignore` walker with poorAI policy exclusions layered on top. Every tool attempt audited inside the hash chain, denied as well as allowed. macOS seatbelt process isolation confining writes to the workspace and denying network, with the boundary recorded on every result. Approval gates for dependency manifests, history rewriting and publishing, granted by nobody by default. Non-deterministic checks detected by reproduction so a flake cannot authorise an edit. 56 adversarial fixtures. | Linux and Windows sandbox adapters; a CLI path for a user to actually grant an approval, needed once non-dry runs exist. |
 | M4 Agent task loop | plan/act/verify/recovery | locked smoke corpus completes with recorded evidence |
 | M5 Evaluation | **Completed** | `poorai-eval` holds the frozen corpus as data: eight tasks across all six kinds, each with a base workspace, allowed files, a visible verifier, a hidden verifier written only after the agent finishes, a time budget and a provenance note. Reproducible runner, JSON and Markdown reports, and a primary-versus-challenger comparison on `m5-frozen-v1` (`b7cf4d8f0231`). Proportions carry Wilson intervals; latency percentiles are withheld below five samples. | Repeated seeded trials — a single trial per deployment cannot separate these two; the remaining five deployments as controls. |
-| M6 Beta | usability/reliability hardening | predeclared success, regression, safety thresholds met |
+| M6 Beta | **In progress** | Every predeclared threshold met by both evaluated deployments over three seeded trials each: resolved-task rate 0.917 and 0.750 against a bar of 0.40, hidden verification 1.0 among declared completions, zero tool failures in 261 attempts, zero safety violations and zero out-of-scope changes across 48 task runs. Sampling seed and temperature now reach the backend, so a trial is describable. | Decide how many trials constitute a result — no threshold says, and a single trial of the challenger once read 0.375, below the bar. Derive the action budget from measured usage instead of the undefended constant 8, which is demonstrably binding. Evaluate the remaining five deployments as controls. Usability hardening is untouched. |
 
 Threshold values are set before M5 based on baseline measurements. No milestone is advanced merely because a demo works.
 
@@ -132,6 +132,29 @@ On `attack-injected-instruction` neither deployment ever tried the injected `cur
 **Both deployments failed the same repository question.** Each declared completion with a rationale that did not name `checksum_of`. Answering is scored on the rationale, so a completion that answers nothing is not a resolution.
 
 **A harness defect preceded these numbers.** The first run reported 4/8 for both deployments with `visible_verifier_passed` false on every task: `cargo test` runs doctests, `rustdoc` needs a scratch directory, and the sandbox denied it because it lay outside the workspace. The loop's own check uses `--lib` and skips doctests, which is why it passed while the corpus verifiers failed. Child processes are now given a scratch directory inside their own workspace rather than the boundary being widened to all of `$TMPDIR` — a widening an existing fixture rejected, correctly, since task workspaces are themselves temporary directories and one could then write into another's. That run is superseded and `eval-harness-v2` records the change.
+
+### Repeated trials — 2026-09-01
+
+Three seeded trials per deployment on `m5-frozen-v1`, backend default temperature, deployments unloaded between models.
+
+| | per seed | pooled | 95% interval |
+|---|---|---|---|
+| ornith-1.5:35b (challenger) | 0.875, 1.000, 0.875 | 22/24 = 0.917 | 0.742 – 0.977 |
+| qwen3.8:27b-mlx (primary) | 0.875, 0.500, 0.875 | 18/24 = 0.750 | 0.551 – 0.880 |
+
+Zero safety violations, zero out-of-scope changes and zero tool failures across all 48 task runs, with hidden verification passing on every declared completion for both.
+
+**No promotion.** The intervals overlap, and `evaluation.md` requires a predeclared comparison, which this campaign does not have — no rule was written in advance for when a challenger displaces a primary. The challenger's higher rate is recorded, not acted on.
+
+**Why repeated trials, concretely.** A single trial of the challenger in the first campaign scored 0.375, below the 0.40 bar; three trials showed that as sampling variance. The primary's trials here range 0.500 to 0.875 on an unchanged corpus. Any single number from this suite, reported alone, would have been a coin flip presented as a measurement — which is the same failure the M1 probe made, at a different scale.
+
+**Three campaigns, and why.** The first measured the pre-hardening agent. The second measured it after the completion rule was stated in both directions. The third followed a defect fix that made one task measurable for the first time. Campaign-to-campaign numbers for the other seven tasks remain comparable; the repository question's results in the first two are artifacts, not measurements.
+
+The hardening's effect was not uniform: it moved the challenger from 13/24 to 20/24 and left the primary at 17/24 unchanged. Runs where the repository was fixed and the completion never declared fell from 7 to 1 for the challenger and stayed at 4 for the primary, so the primary's failures have a cause the prompt does not address.
+
+**The action budget is undefended and now demonstrably binding.** `select_profile` sets `max_actions: 8` as a bare constant; the profile's recorded rationale describes the context choice and says nothing about it, and no document specifies it, unlike the edit-verify and context-retry budgets which `verification-recovery.md` does specify. In this campaign 9 of 40 resolved runs used 7 or 8 actions and every unresolved run used exactly 8, with `multifile-rename` resolving only at 7 and 8. A distribution pressed against its ceiling is truncated, not measured.
+
+An earlier reading of this history recorded the opposite conclusion — that no resolved run needed more than 7, so the ceiling was not limiting. That held for the pre-hardening campaign and does not hold now. The budget stays at 8 rather than being raised to another invented number: deriving it from measured usage requires a further campaign, and is recorded as remaining work rather than done reflexively to improve a score.
 
 ### Current safety boundary
 

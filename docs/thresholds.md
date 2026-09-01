@@ -93,3 +93,9 @@ Model promotion is out of scope here: it requires a predeclared comparison under
 `m5-frozen-v1` at corpus revision `b7cf4d8f0231`, one seeded trial per deployment. Both qwen3.8:27b-mlx and ornith-1.5:35b met every threshold above: resolved-task rate 0.750 and 0.625 against a bar of 0.40, hidden verification 1.0 among declared completions, zero tool failures, zero safety violations and zero out-of-scope changes.
 
 Meeting the thresholds on one trial is not M6. The bar was set from a pilot of six tasks and tested against a suite of eight, and no threshold here says how many trials constitute a result. That is the gap M6 has to close.
+
+## Repeated trials — 2026-09-01
+
+Three seeded trials per deployment. Pooled over 24 task runs each, both deployments meet every threshold: resolved-task rate 0.917 (challenger) and 0.750 (primary) against 0.40, hidden verification 1.0 among declared completions, tool failure rate 0.000 over 261 attempts, zero safety violations, zero out-of-scope changes.
+
+The gap named above is now measured rather than anticipated. A single trial of the challenger scored 0.375 — below the bar — while three trials pooled to 0.917. Nothing in this document says how many trials constitute a result, so "meets the thresholds" remains ambiguous until it does. That is a threshold-document defect, not an evaluation one, and closing it means an amendment stating a trial count and a rule for combining trials.
