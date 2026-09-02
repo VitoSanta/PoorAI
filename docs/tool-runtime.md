@@ -33,3 +33,13 @@ Creation, partial edit and whole-file rewrite are three tools rather than one. A
 `RunCommand` runs under an allowlist, in a sandbox where the platform provides one, with `env_clear` and only `PATH` restored. `HOME` and `TMPDIR` point inside the workspace, so package managers keep caches and config within the boundary instead of the boundary being widened to reach them; that also makes a run hermetic, since nothing downloaded persists into the next one and nothing in the real home is read.
 
 Every attempt is audited before its result propagates, allowed or denied.
+
+## Hashes and refusals
+
+An edit is guarded by the hash of the file as it is on disk. Every result that carries such a hash reports it twice: under its own name (`new_hash` after an edit, `artifact_hash` after a read) and under `expected_hash`, which is the name of the parameter the next call must pass it as. One value under two names is redundant; one value under two names where only one of them matches the parameter is a mapping the caller has to infer, and a measured run never made that inference — it re-sent the pre-edit hash four times across two intervening re-reads.
+
+Refusals carry what the refusal already knew. A stale hash names the hash the file now has. An edit whose `find` text is absent *and* whose `replace` text is present is reported as already applied, because "not found" is true but sends the caller round the loop again on work that is done.
+
+## The command allowlist
+
+The allowlist is derived from the repository — the executables named by an explicit `.poorai/checks.json`, by CI configuration, or by the build systems whose markers are present — never a fixed list. Common aliases travel with what a repository declares: `python3` admits `python` and the reverse, `pytest` and `poetry` admit the interpreter they run under, `npm` admits `node` and `npx`, `flutter` admits `dart`. A project whose declared check runs `python3` denying `python` refuses the interpreter it already permits, and did cost a measured run an action.

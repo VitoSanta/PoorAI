@@ -249,9 +249,19 @@ Refusal-means-refusal and once-means-once are both mutation-checked: treating a 
 
 Ordered, with the measurement behind each. `direction.md` carries the target behaviours these serve.
 
-**1. Language agnosticism.** A violation of MASTER_SPEC requirement 6 rather than a missing feature: check discovery knows two build systems, symbol extraction matches Rust declarations, and the command allowlist names fixed executables. On any other repository the agent cannot tell whether it succeeded, and retrieval loses the signal worth five times any other. It is first because every measurement taken until it is fixed is confined to two languages and therefore does not generalise.
+**1. Language agnosticism.** *Closed.* Check discovery reads an explicit declaration, then CI configuration, then a fifteen-entry marker registry; verification words rank candidate steps rather than filtering them, and exclusion is by effect. Symbol extraction recognises `modifier* keyword Name` across the declaration keywords of eight languages. The command allowlist is derived from the repository rather than fixed, and common interpreter aliases travel with it — a project whose declared check runs `python3` no longer denies `python`, which had cost a run an action.
 
-**2. Resolved but not declared.** The dominant failure mode: 11 of 48 runs in one campaign, 2 of 19 in the next, each with the repository correctly fixed and the completion never stated. Whether the fix belongs in the loop or in a per-deployment strategy depends on whether the pattern is shared, which the current campaign is measuring.
+**2. Resolved but not declared.** *Closed — it was a defect in the loop.* The dominant failure mode, 11 of 48 runs in one campaign and 2 of 19 in the next: the repository correctly fixed and the completion never stated. Present in every deployment tested, which is why it was never a per-model strategy question.
+
+The action loop never appended the assistant's reply to the conversation. Every request was the system prompt, the task, and a run of tool messages answering nothing. A deployment that cannot see what it already proposed re-derives the same action from the same unchanged prompt — which is exactly what the audit shows: a byte-identical edit re-sent four times, across two intervening re-reads of a file it had already correctly fixed. Budget visibility, added first on the theory that the deployment was judged against a limit it could not see, did not move the case at all; the problem was never budget.
+
+Three narrower defects surfaced while diagnosing it, each an instance of the harness withholding something it already knew:
+
+- A stale-hash refusal withheld the current hash, making the caller spend a turn re-reading to learn what the refusal had in hand.
+- Results named the value `new_hash` and `artifact_hash` while the parameter consuming it is `expected_hash` — one value under three names, with the mapping left to be inferred. It never was. Results now also carry it under the name the next call must pass it as.
+- An edit whose replacement was already in place reported only "find text does not appear", when the actionable fact is that this edit already landed.
+
+The Python repository case now runs read, edit, checks pass, complete, in three actions, where it previously exhausted its budget on a file it had already fixed. The two history assertions fail when the assistant turn is removed.
 
 **3. Resumable sessions.** Every run starts from nothing, and the largest measured success is 48 actions against the hundreds a real project needs. The event log and the ledger already hold and reconstruct the facts; naming a session and reopening it is what is missing.
 

@@ -16,6 +16,18 @@ A policy denial is returned to the deployment as a tool result rather than endin
 
 Every event of a run shares the run's identifier, from opening provenance through to outcome.
 
+## The conversation
+
+Each turn appends the deployment's own reply to the history before the result of it. This is not a formality. For most of this project's life the loop appended only tool messages, so every request was the system prompt, the task, and a run of results answering nothing — a deployment could not see what it had already proposed, and re-derived the same action from the same unchanged prompt. That single omission produced the dominant measured failure mode, a repository correctly fixed with the completion never declared, in 11 of 48 runs of one campaign and in every deployment tested. Two fixtures now assert that the assistant's turn reaches the history it is sent next, and that no tool result outnumbers the turns it answers; both fail when the append is removed.
+
+A reply that carries structured tool calls and no prose is recorded as its calls rather than as an empty turn, so what was proposed survives in the history either way.
+
+## What the harness knows, the deployment is told
+
+A refusal that withholds what it already knows costs a turn to rediscover. So a stale-hash refusal names the current hash; an edit whose replacement is already in place is reported as already applied rather than as a missing match; and every result carrying a content hash names it `expected_hash`, the name of the parameter that consumes it, as well as under its own. Each of these was measured costing actions in a run that had none to spare.
+
+Every tool result also carries the budget: how many actions remain, and — once deterministic checks are passing — how long they have been passing and how many actions have gone by without a file changing. The loop does not act on these itself; declaring completion stays the deployment's to do.
+
 ## Repetition
 
 A deployment proposing the same refused action three times is not short of budget; it is not reading the refusal, and more actions buy more repeats. The loop names it: the repetition is recorded as `loop.detected` and the deployment is told plainly that the action will not succeed and what to do instead.
