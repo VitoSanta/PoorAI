@@ -129,6 +129,154 @@ fn walk(root: &Path, files: &mut Vec<FileRecord>) -> Result<(), RepoError> {
     Ok(())
 }
 
+/// A ranked passage of the repository, with everything needed to audit why it
+/// was chosen and what it cost.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Excerpt {
+    pub path: String,
+    /// One-based and inclusive.
+    pub first_line: usize,
+    pub last_line: usize,
+    pub content: String,
+    /// Hash of the whole file, so an edit guarded by it stays sound.
+    pub content_hash: String,
+    /// Which signals selected this passage, in the words of the signals.
+    pub rationale: String,
+    /// An estimate. Token counts are provider-specific and only exact when a
+    /// backend reports them, so this is labelled rather than presented as one.
+    pub estimated_tokens: usize,
+}
+
+/// Words too common to discriminate between files.
+const STOP_WORDS: [&str; 24] = [
+    "the", "and", "for", "that", "with", "this", "from", "into", "must", "should", "when", "where",
+    "which", "what", "does", "not", "you", "are", "was", "has", "have", "its", "it's", "make",
+];
+
+/// Weight per signal. Named constants rather than inline numbers so a ranking
+/// decision can be argued with instead of reverse-engineered.
+const SYMBOL_EXACT: u32 = 40;
+const SYMBOL_PARTIAL: u32 = 12;
+const PATH_MATCH: u32 = 8;
+const CONTENT_OCCURRENCE: u32 = 2;
+/// Occurrences beyond this add nothing: a file that mentions a term a hundred
+/// times is not fifty times more relevant than one that mentions it twice.
+const MAX_COUNTED_OCCURRENCES: usize = 8;
+/// Lines of context kept either side of the densest match.
+const EXCERPT_CONTEXT_LINES: usize = 12;
+/// Characters per token. A rough, documented estimate, not a count.
+const CHARS_PER_TOKEN: usize = 4;
+
+fn terms_of(query: &str) -> Vec<String> {
+    let mut terms: Vec<String> = query
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .map(|w| w.to_lowercase())
+        .filter(|w| w.len() >= 3 && !STOP_WORDS.contains(&w.as_str()))
+        .collect();
+    terms.sort();
+    terms.dedup();
+    terms
+}
+
+/// Ranks repository passages against a task statement.
+///
+/// This is lexical: it matches symbol names, path components and literal
+/// occurrences. It does not understand the code, and a passage it ranks first
+/// is the one that mentions the task's words most, which is not the same as the
+/// one that matters most. The rationale on every excerpt says which signals
+/// fired, so a wrong retrieval is diagnosable rather than mysterious.
+pub fn retrieve(
+    root: &Path,
+    index: &RepositoryIndex,
+    query: &str,
+    max_excerpts: usize,
+    token_budget: usize,
+) -> Result<Vec<Excerpt>, RepoError> {
+    let terms = terms_of(query);
+    if terms.is_empty() || max_excerpts == 0 {
+        return Ok(Vec::new());
+    }
+    let mut scored: Vec<(u32, String, &FileRecord)> = Vec::new();
+    for file in &index.files {
+        let text = fs::read_to_string(root.join(&file.path)).unwrap_or_default();
+        let lowered = text.to_lowercase();
+        let lowered_path = file.path.to_lowercase();
+        let mut score = 0u32;
+        let mut reasons = Vec::new();
+        for term in &terms {
+            if file.symbols.iter().any(|s| s.to_lowercase() == *term) {
+                score += SYMBOL_EXACT;
+                reasons.push(format!("defines {term}"));
+            } else if file.symbols.iter().any(|s| s.to_lowercase().contains(term)) {
+                score += SYMBOL_PARTIAL;
+                reasons.push(format!("symbol mentions {term}"));
+            }
+            if lowered_path.contains(term) {
+                score += PATH_MATCH;
+                reasons.push(format!("path contains {term}"));
+            }
+            let occurrences = lowered.matches(term.as_str()).count();
+            if occurrences > 0 {
+                score += CONTENT_OCCURRENCE * occurrences.min(MAX_COUNTED_OCCURRENCES) as u32;
+                reasons.push(format!("mentions {term} {occurrences}x"));
+            }
+        }
+        if score > 0 {
+            reasons.dedup();
+            scored.push((score, reasons.join(", "), file));
+        }
+    }
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.2.path.cmp(&b.2.path)));
+
+    let mut excerpts = Vec::new();
+    let mut spent = 0usize;
+    for (score, rationale, file) in scored.into_iter().take(max_excerpts) {
+        let text = match fs::read_to_string(root.join(&file.path)) {
+            Ok(text) => text,
+            Err(_) => continue,
+        };
+        let lines: Vec<&str> = text.lines().collect();
+        if lines.is_empty() {
+            continue;
+        }
+        // The densest line wins the window, so an excerpt is centred on the
+        // evidence rather than on the top of the file.
+        let best = lines
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, line)| {
+                let lowered = line.to_lowercase();
+                terms
+                    .iter()
+                    .filter(|t| lowered.contains(t.as_str()))
+                    .count()
+            })
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let first = best.saturating_sub(EXCERPT_CONTEXT_LINES);
+        let last = (best + EXCERPT_CONTEXT_LINES).min(lines.len() - 1);
+        let content = lines[first..=last].join(
+            "
+",
+        );
+        let estimated_tokens = content.len().div_ceil(CHARS_PER_TOKEN);
+        if spent + estimated_tokens > token_budget {
+            continue;
+        }
+        spent += estimated_tokens;
+        excerpts.push(Excerpt {
+            path: file.path.clone(),
+            first_line: first + 1,
+            last_line: last + 1,
+            content,
+            content_hash: file.content_hash.clone(),
+            rationale: format!("score {score}: {rationale}"),
+            estimated_tokens,
+        });
+    }
+    Ok(excerpts)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

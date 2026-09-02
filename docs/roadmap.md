@@ -217,6 +217,16 @@ Two scoring defects were fixed alongside. A backend fault was being counted as t
 
 **The weakest part of this table is that it has one trial per deployment.** Repair trials on an unchanged corpus ranged from 0.500 to 0.875 for a single deployment, so a single generation trial cannot separate a capable deployment from a lucky one. These results are a first look, not a measurement of the kind the repair suite now carries.
 
+### Reaching a real repository — 2026-09-02
+
+Two limits stood between this agent and a repository of any size, and both were structural rather than a matter of model quality.
+
+**Whole-file replacement.** `apply_replace` rewrote the entire file, so changing one line of a two-thousand-line file meant re-emitting two thousand lines. Every task measured in M5 and M6 was a file of tens of lines, and that was not a coincidence. `replace_text` now edits in place under the same hash guard, refusing an ambiguous match rather than choosing between occurrences. Measured against a 409-line file: read, replace, complete — three actions, one line changed, the other 408 untouched.
+
+**No retrieval.** The repository index existed and was never given to the agent, which had to discover the tree with `list_tree`. Passages ranked against the task are now supplied as an opening block with path, line range, hash, token cost and rationale. Measured on a 62-file workspace: the intended file ranked first at 114 against 16 for the runner-up, and the agent opened it as its first action without listing anything.
+
+Both were found by asking what the agent could not do rather than by a failing test, which is why neither had shown up in six evaluation campaigns: every corpus task was small enough that whole-file rewriting worked and small enough that listing the tree was enough.
+
 ### Current safety boundary
 
 `poorai run` executes for real. A non-dry run requires an explicit `--model` and a `--profile` pointing at a calibration artifact, and refuses to proceed unless that calibration still matches the model digest, deployment fingerprint, hardware compatibility key and harness revision in force. An artifact recording a refused calibration authorises nothing.

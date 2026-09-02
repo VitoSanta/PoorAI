@@ -681,6 +681,51 @@ async fn evaluate(
     }))
 }
 
+/// Share of the context budget spent on retrieved repository passages.
+///
+/// A fraction rather than a fixed count: the budget is what is scarce, and a
+/// count would spend a large one badly and overrun a small one.
+const RETRIEVAL_TOKEN_SHARE: usize = 6;
+/// Passages offered at most. Beyond this the agent is reading a digest of the
+/// repository rather than being pointed at it.
+const RETRIEVAL_MAX_EXCERPTS: usize = 5;
+
+/// Repository passages ranked against the task, as an opening block.
+///
+/// Without this an agent starts blind and must discover the repository with
+/// `list_tree`, which is workable for ten files and not for ten thousand. Every
+/// passage carries its path, line range, hash and the reason it was chosen, so
+/// the agent can edit from it and a reader can see why it was offered.
+fn retrieved_context(
+    root: &Path,
+    index: &poorai_repo::RepositoryIndex,
+    task: &str,
+    context_tokens: u32,
+) -> String {
+    let budget = context_tokens as usize / RETRIEVAL_TOKEN_SHARE;
+    let excerpts = poorai_repo::retrieve(root, index, task, RETRIEVAL_MAX_EXCERPTS, budget)
+        .unwrap_or_default();
+    if excerpts.is_empty() {
+        return String::new();
+    }
+    let mut block = String::from(
+        "Repository passages ranked against this task. They are a starting point, not a          complete view: the ranking is lexical, so read more if what you need is not here.\n\n",
+    );
+    for excerpt in &excerpts {
+        block.push_str(&format!(
+            "--- {} lines {}-{} (artifact_hash {}, {})\n{}\n\n",
+            excerpt.path,
+            excerpt.first_line,
+            excerpt.last_line,
+            excerpt.content_hash,
+            excerpt.rationale,
+            excerpt.content,
+        ));
+    }
+    block.push_str("--- end of retrieved passages\n\n");
+    block
+}
+
 /// Bump when any scoring or execution step changes; reports record it.
 const EVAL_HARNESS_REV: &str = "eval-harness-v2";
 
@@ -775,7 +820,20 @@ async fn evaluate_task(
             },
             poorai_domain::ChatMessage {
                 role: "user".into(),
-                content: task.statement.clone(),
+                // The evaluation prompts exactly as `poorai run` does, or it
+                // measures a different agent from the one a user gets.
+                content: format!(
+                    "{}{}",
+                    poorai_repo::index(&root)
+                        .map(|index| retrieved_context(
+                            &root,
+                            &index,
+                            &task.statement,
+                            execution.context_tokens
+                        ))
+                        .unwrap_or_default(),
+                    task.statement
+                ),
             },
         ],
     };
@@ -1588,7 +1646,11 @@ async fn prepare_profiled_run(
             },
             poorai_domain::ChatMessage {
                 role: "user".into(),
-                content: task.clone(),
+                content: format!(
+                    "{}{}",
+                    retrieved_context(&root, &index, &task, execution.context_tokens),
+                    task
+                ),
             },
         ],
     };
