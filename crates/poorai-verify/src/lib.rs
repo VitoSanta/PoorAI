@@ -215,6 +215,11 @@ pub fn required_executables(root: &std::path::Path) -> Vec<String> {
     if let Some(declared) = declared_checks(root) {
         executables.extend(declared.into_iter().map(|(executable, _)| executable));
     }
+    executables.extend(
+        ci_declared_checks(root)
+            .into_iter()
+            .map(|(executable, _)| executable),
+    );
     executables.sort();
     executables.dedup();
     executables
@@ -247,6 +252,113 @@ fn declared_checks(root: &std::path::Path) -> Option<Vec<(String, Vec<String>)>>
     )
 }
 
+/// Files where a project states how it verifies itself.
+///
+/// Continuous integration configuration is the strongest generic source there
+/// is: it is not a guess about the project, it is the commands the project
+/// runs to check itself, written by the people who wrote the project, and it
+/// exists for languages and frameworks nobody has heard of.
+const CI_CONFIGURATIONS: [&str; 8] = [
+    ".github/workflows",
+    ".gitlab-ci.yml",
+    ".circleci/config.yml",
+    "azure-pipelines.yml",
+    "Jenkinsfile",
+    ".travis.yml",
+    "bitbucket-pipelines.yml",
+    ".drone.yml",
+];
+
+/// Words that usually mark a verification step.
+///
+/// A preference, not a gate. Used to rank the steps a project declares, and
+/// deliberately not used to exclude the ones it does not match: `rebar3 ct`
+/// and `zig build test` are both verification, and a list of recognised words
+/// is the same closed world as a list of recognised languages, one level down.
+const VERIFICATION_WORDS: [&str; 8] = [
+    "test", "check", "verify", "lint", "spec", "ci", "audit", "assert",
+];
+
+/// Words that mean a step reaches outside the workspace, whatever else it does.
+const EXCLUDED_WORDS: [&str; 8] = [
+    "deploy", "publish", "push", "release", "upload", "docker", "curl", "ssh",
+];
+
+/// Verification commands a project's CI configuration states for itself.
+///
+/// Read as text rather than parsed per CI vendor: the shapes differ but a
+/// command line is a command line, and a parser per vendor would be the same
+/// closed list one level down.
+fn ci_declared_checks(root: &std::path::Path) -> Vec<(String, Vec<String>)> {
+    let mut found: Vec<(bool, String, Vec<String>)> = Vec::new();
+    for entry in CI_CONFIGURATIONS {
+        let path = root.join(entry);
+        let texts: Vec<String> = if path.is_dir() {
+            std::fs::read_dir(&path)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+                .collect()
+        } else {
+            std::fs::read_to_string(&path).into_iter().collect()
+        };
+        for text in texts {
+            for line in text.lines() {
+                let line = line.trim();
+                // A shell step in any of these formats is a line beginning with
+                // a list marker or a run key.
+                let command = line
+                    .strip_prefix("- run:")
+                    .or_else(|| line.strip_prefix("run:"))
+                    .or_else(|| line.strip_prefix("- "))
+                    .map(str::trim)
+                    .unwrap_or("");
+                if command.is_empty() || command.contains(['{', '}', '$']) {
+                    continue;
+                }
+                let lowered = command.to_lowercase();
+                // Excluded on effect, not on vocabulary: a step that deploys or
+                // publishes reaches outside the workspace whatever it is called.
+                if EXCLUDED_WORDS.iter().any(|w| lowered.contains(w)) {
+                    continue;
+                }
+                // A step that chains or redirects is a script, and running its
+                // first word through the tool boundary would not mean what the
+                // file says.
+                if command.contains("&&") || command.contains('|') || command.contains('>') {
+                    continue;
+                }
+                let mut words = command.split_whitespace();
+                let Some(executable) = words.next() else {
+                    continue;
+                };
+                let looks_like_verification =
+                    VERIFICATION_WORDS.iter().any(|w| lowered.contains(w));
+                found.push((
+                    looks_like_verification,
+                    executable.to_string(),
+                    words.map(str::to_string).collect::<Vec<_>>(),
+                ));
+            }
+        }
+    }
+    found.sort();
+    found.dedup();
+    // Steps that read as verification come first. Where none does, the rest
+    // still stand: a project whose vocabulary nobody here anticipated is the
+    // case this exists for.
+    let preferred: Vec<(String, Vec<String>)> = found
+        .iter()
+        .filter(|(looks, _, _)| *looks)
+        .map(|(_, e, a)| (e.clone(), a.clone()))
+        .collect();
+    if !preferred.is_empty() {
+        return preferred;
+    }
+    found.into_iter().map(|(_, e, a)| (e, a)).collect()
+}
+
 /// Selects only deterministic, locally available checks from repository manifests.
 pub fn discover_checks(
     root: &std::path::Path,
@@ -255,10 +367,15 @@ pub fn discover_checks(
     if !matches!(scope, "targeted" | "full") {
         return Err("scope must be targeted or full".into());
     }
-    // A repository's own declaration wins: it knows how it is verified and this
-    // registry only guesses.
+    // Ordered by how directly the source speaks for the repository. An explicit
+    // declaration is the repository saying it; CI configuration is the
+    // repository doing it; the registry is poorAI guessing from a file name.
     if let Some(declared) = declared_checks(root) {
         return Ok(declared);
+    }
+    let from_ci = ci_declared_checks(root);
+    if !from_ci.is_empty() {
+        return Ok(from_ci);
     }
     if let Some(manifest) = std::fs::read_to_string(root.join("package.json")).ok()
         && serde_json::from_str::<serde_json::Value>(&manifest)

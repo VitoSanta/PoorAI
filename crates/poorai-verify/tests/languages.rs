@@ -101,3 +101,106 @@ fn a_polyglot_repository_gets_every_toolchain_it_needs() {
         assert!(executables.contains(&expected.to_string()), "{expected}");
     }
 }
+
+// ------------------------------------------------ discovery beyond a list
+
+/// A registry is still a list somebody chose. CI configuration is not a guess
+/// about the project — it is the commands the project runs to check itself,
+/// written by its authors, and it exists for languages nobody here has heard
+/// of.
+#[test]
+fn a_project_is_verified_by_what_its_ci_says_even_in_an_unknown_language() {
+    let root = project(&[
+        ("src/main.zig", "pub fn main() void {}"),
+        (
+            ".github/workflows/ci.yml",
+            "jobs:\n  build:\n    steps:\n      - run: zig build test\n",
+        ),
+    ]);
+    let checks = discover_checks(root.path(), "targeted").unwrap();
+    assert_eq!(
+        checks,
+        vec![("zig".to_string(), vec!["build".into(), "test".into()])]
+    );
+    // And its toolchain is permitted, or the check could not run.
+    assert!(required_executables(root.path()).contains(&"zig".to_string()));
+}
+
+#[test]
+fn other_ci_vendors_are_read_the_same_way() {
+    for (path, body, executable) in [
+        (".gitlab-ci.yml", "script:\n  - mix test\n", "mix"),
+        (".circleci/config.yml", "      - run: sbt test\n", "sbt"),
+        // A verb nobody here anticipated: common-test, not "test".
+        (".travis.yml", "script:\n  - rebar3 ct\n", "rebar3"),
+    ] {
+        let root = project(&[(path, body)]);
+        let checks = discover_checks(root.path(), "targeted").unwrap();
+        assert_eq!(
+            checks.first().map(|(e, _)| e.as_str()),
+            Some(executable),
+            "{path} did not yield {executable}"
+        );
+    }
+}
+
+/// A deploy step is not a verification step, and running one would do
+/// something the repository never asked a checker to do.
+#[test]
+fn deployment_and_publication_steps_are_not_checks() {
+    let root = project(&[(
+        ".github/workflows/ci.yml",
+        "steps:\n  - run: docker push registry/app\n  - run: npm publish\n  - run: ./deploy.sh test\n  - run: cargo test\n",
+    )]);
+    let checks = discover_checks(root.path(), "targeted").unwrap();
+    assert_eq!(
+        checks,
+        vec![("cargo".to_string(), vec!["test".to_string()])]
+    );
+}
+
+/// A step that chains or redirects is a script; running its first word through
+/// the tool boundary would not mean what the file says.
+#[test]
+fn chained_and_templated_steps_are_skipped() {
+    let root = project(&[(
+        ".github/workflows/ci.yml",
+        "steps:\n  - run: make setup && make test\n  - run: test ${{ matrix.os }}\n  - run: go test ./...\n",
+    )]);
+    let checks = discover_checks(root.path(), "targeted").unwrap();
+    assert_eq!(
+        checks,
+        vec![("go".to_string(), vec!["test".into(), "./...".into()])]
+    );
+}
+
+/// Ordered by how directly the source speaks for the repository: an explicit
+/// declaration is the repository saying it, CI is the repository doing it, and
+/// the registry is poorAI guessing from a file name.
+#[test]
+fn an_explicit_declaration_outranks_ci_which_outranks_the_registry() {
+    let ci = ".github/workflows/ci.yml";
+    let ci_body = "steps:\n  - run: just test\n";
+    let with_all = project(&[
+        ("Cargo.toml", "[package]"),
+        (ci, ci_body),
+        (
+            ".poorai/checks.json",
+            r#"{"checks":[{"executable":"nextest","args":["run"]}]}"#,
+        ),
+    ]);
+    assert_eq!(
+        discover_checks(with_all.path(), "targeted").unwrap()[0].0,
+        "nextest"
+    );
+    let with_ci = project(&[("Cargo.toml", "[package]"), (ci, ci_body)]);
+    assert_eq!(
+        discover_checks(with_ci.path(), "targeted").unwrap()[0].0,
+        "just"
+    );
+    let bare = project(&[("Cargo.toml", "[package]")]);
+    assert_eq!(
+        discover_checks(bare.path(), "targeted").unwrap()[0].0,
+        "cargo"
+    );
+}
