@@ -162,7 +162,6 @@ async fn a_denied_action_is_returned_to_the_model_rather_than_ending_the_run() {
         allow_commands: vec![],
         output_limit: 4096,
         timeout: Duration::from_secs(5),
-        network_enabled: false,
         sandbox: SandboxPolicy::Disabled,
         approvals: Vec::new(),
     };
@@ -219,7 +218,6 @@ async fn the_whole_run_is_recorded_under_one_identifier() {
         allow_commands: vec![],
         output_limit: 4096,
         timeout: Duration::from_secs(5),
-        network_enabled: false,
         sandbox: SandboxPolicy::Disabled,
         approvals: Vec::new(),
     };
@@ -272,7 +270,6 @@ async fn a_successful_edit_is_followed_by_the_narrow_check() {
         allow_commands: vec!["true".into()],
         output_limit: 4096,
         timeout: Duration::from_secs(10),
-        network_enabled: false,
         sandbox: SandboxPolicy::Disabled,
         approvals: Vec::new(),
     };
@@ -322,7 +319,6 @@ async fn a_denied_edit_does_not_trigger_a_check() {
         allow_commands: vec!["true".into()],
         output_limit: 4096,
         timeout: Duration::from_secs(10),
-        network_enabled: false,
         sandbox: SandboxPolicy::Disabled,
         approvals: Vec::new(),
     };

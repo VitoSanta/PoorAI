@@ -11,7 +11,6 @@ fn policy(root: &Path) -> ToolPolicy {
         allow_commands: vec!["sh".into(), "git".into(), "cargo".into(), "echo".into()],
         output_limit: 8192,
         timeout: Duration::from_secs(20),
-        network_enabled: false,
         sandbox: SandboxPolicy::Preferred,
         approvals: Vec::new(),
     }
@@ -265,28 +264,46 @@ fn the_system_temp_directory_stays_unwritable_inside_the_sandbox() {
     assert!(!target.exists(), "system temp directory was writable");
 }
 
-#[cfg(target_os = "macos")]
+/// Package managers keep caches and config under HOME, so the child's HOME
+/// points into its workspace. That keeps downloads inside the boundary and
+/// makes a run hermetic; the real home is a different directory and stays
+/// unwritable.
 #[test]
-fn the_home_directory_stays_unwritable_inside_the_sandbox() {
+fn a_child_process_gets_its_home_inside_the_workspace() {
     let root = tempfile::tempdir().unwrap();
     let policy = policy(root.path());
     let result = block_on(run_command(
         &policy,
         "sh",
+        &["-c".to_string(), "printf %s \"$HOME\"".to_string()],
+    ))
+    .unwrap();
+    let reported = PathBuf::from(result.stdout.trim());
+    assert!(reported.starts_with(root.path().canonicalize().unwrap()));
+    assert_ne!(reported, PathBuf::from(std::env::var("HOME").unwrap()));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn the_real_home_directory_stays_unwritable_inside_the_sandbox() {
+    let root = tempfile::tempdir().unwrap();
+    let policy = policy(root.path());
+    // Resolved here rather than read from $HOME inside the child, which now
+    // points into the workspace.
+    let target = PathBuf::from(std::env::var("HOME").unwrap()).join("poorai-should-not-exist.txt");
+    let _ = fs::remove_file(&target);
+    let result = block_on(run_command(
+        &policy,
+        "sh",
         &[
             "-c".to_string(),
-            "echo pwned > \"$HOME/poorai-should-not-exist.txt\"".to_string(),
+            format!("echo pwned > {}", target.display()),
         ],
     ))
     .unwrap();
     assert!(result.sandboxed);
     assert_ne!(result.exit_code, Some(0));
-    let home = std::env::var("HOME").unwrap();
-    assert!(
-        !Path::new(&home)
-            .join("poorai-should-not-exist.txt")
-            .exists()
-    );
+    assert!(!target.exists(), "the real home directory was writable");
 }
 
 #[test]
@@ -308,4 +325,92 @@ fn a_required_sandbox_fails_closed_when_unavailable() {
     policy.root = root.path().join("missing");
     let denied = block_on(run_command(&policy, "echo", &["hi".to_string()]));
     assert!(denied.is_err());
+}
+
+// ------------------------------------------------------- network access
+
+/// The project's own policy gates network activation on approval rather than
+/// forbidding it. Dependency resolution needs the network; so does
+/// exfiltration, and an unattended agent reading an untrusted repository is
+/// the case the grant exists to make deliberate.
+#[test]
+fn the_network_is_closed_until_it_is_granted() {
+    let root = tempfile::tempdir().unwrap();
+    let mut policy = policy(root.path());
+    assert!(!policy.network_allowed());
+    policy.approvals = vec![Approval::NetworkAccess];
+    assert!(policy.network_allowed());
+    // A different grant does not open it.
+    policy.approvals = vec![Approval::DependencyChange, Approval::Publish];
+    assert!(!policy.network_allowed());
+}
+
+#[test]
+fn an_ungranted_run_cannot_name_a_url_in_a_command() {
+    let root = tempfile::tempdir().unwrap();
+    let policy = policy(root.path());
+    assert!(
+        block_on(run_command(
+            &policy,
+            "echo",
+            &["https://example.com".to_string()]
+        ))
+        .is_err()
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn the_sandbox_opens_egress_only_with_the_grant() {
+    let root = tempfile::tempdir().unwrap();
+    let fetch = |policy: &ToolPolicy| {
+        block_on(run_command(
+            policy,
+            "sh",
+            &[
+                "-c".to_string(),
+                r#"s=htt; curl -s --max-time 10 -o /dev/null "${s}ps://example.com""#.to_string(),
+            ],
+        ))
+        .unwrap()
+    };
+    let denied = fetch(&policy(root.path()));
+    assert!(denied.sandboxed);
+    assert_ne!(denied.exit_code, Some(0), "egress without a grant");
+
+    let mut granted_policy = policy(root.path());
+    granted_policy.approvals = vec![Approval::NetworkAccess];
+    let granted = fetch(&granted_policy);
+    assert!(granted.sandboxed);
+    assert_eq!(
+        granted.exit_code,
+        Some(0),
+        "granted egress was still blocked: {}",
+        granted.stderr
+    );
+}
+
+/// A network grant must not become a filesystem grant.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_network_grant_does_not_widen_the_filesystem_boundary() {
+    let root = tempfile::tempdir().unwrap();
+    let mut policy = policy(root.path());
+    policy.approvals = vec![Approval::NetworkAccess];
+    let target = std::env::temp_dir()
+        .canonicalize()
+        .unwrap()
+        .join("poorai-network-grant-probe.txt");
+    let _ = fs::remove_file(&target);
+    let result = block_on(run_command(
+        &policy,
+        "sh",
+        &[
+            "-c".to_string(),
+            format!("echo pwned > {}", target.display()),
+        ],
+    ))
+    .unwrap();
+    assert!(result.sandboxed);
+    assert!(!target.exists());
 }

@@ -18,7 +18,6 @@ fn policy(root: &Path, allow: Vec<String>) -> ToolPolicy {
         allow_commands: allow,
         output_limit: 8192,
         timeout: Duration::from_secs(20),
-        network_enabled: false,
         sandbox: SandboxPolicy::Disabled,
         approvals: Vec::new(),
     }

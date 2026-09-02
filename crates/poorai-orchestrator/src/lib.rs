@@ -1405,7 +1405,6 @@ mod tests {
             allow_commands: vec![],
             output_limit: 128,
             timeout: Duration::from_secs(1),
-            network_enabled: false,
             sandbox: poorai_tools::SandboxPolicy::Disabled,
             approvals: Vec::new(),
         };
@@ -1428,7 +1427,6 @@ mod tests {
             allow_commands: vec!["cargo".into()],
             output_limit: 1024,
             timeout: Duration::from_secs(10),
-            network_enabled: false,
             sandbox: poorai_tools::SandboxPolicy::Disabled,
             approvals: Vec::new(),
         };
@@ -1461,7 +1459,6 @@ mod tests {
             allow_commands: vec!["sh".into()],
             output_limit: 1024,
             timeout: Duration::from_secs(10),
-            network_enabled: false,
             sandbox: poorai_tools::SandboxPolicy::Disabled,
             approvals: Vec::new(),
         };

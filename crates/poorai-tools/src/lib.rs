@@ -104,6 +104,9 @@ pub enum Approval {
     HistoryRewrite,
     /// Publishing a package or pushing to a remote.
     Publish,
+    /// Reaching the network at all, for the workspace and for any process it
+    /// runs. Dependency resolution needs it; so does exfiltration.
+    NetworkAccess,
 }
 
 /// Dependency manifests and lockfiles. Editing one changes what the build
@@ -174,7 +177,6 @@ pub struct ToolPolicy {
     pub allow_commands: Vec<String>,
     pub output_limit: usize,
     pub timeout: Duration,
-    pub network_enabled: bool,
     pub sandbox: SandboxPolicy,
     /// Approvals the user has explicitly granted for this run.
     pub approvals: Vec<Approval>,
@@ -196,7 +198,6 @@ impl PolicyProfile {
             allow_commands,
             output_limit: 64 * 1024,
             timeout: Duration::from_secs(120),
-            network_enabled: false,
             sandbox: SandboxPolicy::Preferred,
             // Nothing beyond the workspace is authorised until a user says so.
             approvals: Vec::new(),
@@ -238,6 +239,14 @@ impl ToolPolicy {
         }
         Ok(checked)
     }
+    /// Whether this run may reach the network.
+    ///
+    /// Derived from the grant rather than stored separately: a policy with the
+    /// network open and no approval recorded would be a boundary nobody
+    /// authorised, and the audit would not show who did.
+    pub fn network_allowed(&self) -> bool {
+        self.approvals.contains(&Approval::NetworkAccess)
+    }
     /// Denies unless the user granted this approval for the run.
     pub fn require(&self, approval: Approval) -> Result<(), ToolError> {
         if self.approvals.contains(&approval) {
@@ -264,7 +273,7 @@ impl ToolPolicy {
         if root.contains('"') || root.contains('\\') {
             return None;
         }
-        let network = if self.network_enabled {
+        let network = if self.network_allowed() {
             ""
         } else {
             "(deny network*)"
@@ -501,12 +510,14 @@ pub async fn run_command(
             "command {executable} is not allowlisted"
         )));
     }
-    if !policy.network_enabled
+    if !policy.network_allowed()
         && args
             .iter()
             .any(|a| a.contains("http://") || a.contains("https://"))
     {
-        return Err(ToolError::Denied("network is disabled by policy".into()));
+        return Err(ToolError::Denied(
+            "network access requires an explicit grant".into(),
+        ));
     }
     if let Some(approval) = command_approval(executable, args) {
         policy.require(approval)?;
@@ -558,6 +569,13 @@ pub async fn run_command(
             .env("TMPDIR", &scratch)
             .env("TMP", &scratch)
             .env("TEMP", &scratch)
+            // Package managers keep caches and config under HOME. Pointing it
+            // into the workspace keeps them inside the boundary instead of
+            // widening it, and makes a run hermetic: nothing it downloads
+            // persists into the next one, and nothing in the real home
+            // directory is read. npm reports the denial as a permissions bug
+            // in its own cache, which is worth knowing when diagnosing one.
+            .env("HOME", &scratch)
             .output(),
     )
     .await
@@ -590,7 +608,6 @@ mod tests {
             allow_commands: vec![],
             output_limit: 1,
             timeout: Duration::from_secs(1),
-            network_enabled: false,
             sandbox: SandboxPolicy::Disabled,
             approvals: Vec::new(),
         };
@@ -603,7 +620,6 @@ mod tests {
             allow_commands: vec![],
             output_limit: 1,
             timeout: Duration::ZERO,
-            network_enabled: false,
             sandbox: SandboxPolicy::Disabled,
             approvals: Vec::new(),
         };
@@ -619,7 +635,6 @@ mod tests {
             allow_commands: vec![],
             output_limit: 100,
             timeout: Duration::ZERO,
-            network_enabled: false,
             sandbox: SandboxPolicy::Disabled,
             approvals: Vec::new(),
         };
@@ -636,7 +651,6 @@ mod tests {
             allow_commands: vec![],
             output_limit: 100,
             timeout: Duration::ZERO,
-            network_enabled: false,
             sandbox: SandboxPolicy::Disabled,
             approvals: Vec::new(),
         };
@@ -661,7 +675,6 @@ mod tests {
             allow_commands: vec![],
             output_limit: 100,
             timeout: Duration::ZERO,
-            network_enabled: false,
             sandbox: SandboxPolicy::Disabled,
             approvals: Vec::new(),
         };
@@ -680,7 +693,6 @@ mod tests {
             allow_commands: vec![],
             output_limit: 100,
             timeout: Duration::ZERO,
-            network_enabled: false,
             sandbox: SandboxPolicy::Disabled,
             approvals: Vec::new(),
         };
@@ -690,7 +702,7 @@ mod tests {
     #[test]
     fn development_profile_still_denies_network() {
         let policy = PolicyProfile::Development.build(PathBuf::from("/tmp"));
-        assert!(!policy.network_enabled);
+        assert!(!policy.network_allowed());
         assert!(policy.allow_commands.contains(&"cargo".into()));
     }
 }

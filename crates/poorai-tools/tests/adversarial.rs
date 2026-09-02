@@ -14,7 +14,6 @@ fn policy(root: &Path) -> ToolPolicy {
         allow_commands: vec!["echo".into()],
         output_limit: 4096,
         timeout: Duration::from_secs(5),
-        network_enabled: false,
         sandbox: SandboxPolicy::Disabled,
         approvals: Vec::new(),
     }
@@ -275,5 +274,5 @@ fn injected_instructions_in_a_file_are_returned_as_inert_content() {
 fn the_safe_profile_allows_no_commands_at_all() {
     let policy = PolicyProfile::Safe.build(PathBuf::from("/tmp"));
     assert!(policy.allow_commands.is_empty());
-    assert!(!policy.network_enabled);
+    assert!(!policy.network_allowed());
 }

@@ -82,6 +82,7 @@ enum ApprovalArg {
     DependencyChange,
     HistoryRewrite,
     Publish,
+    NetworkAccess,
 }
 impl From<ApprovalArg> for poorai_tools::Approval {
     fn from(value: ApprovalArg) -> Self {
@@ -89,6 +90,7 @@ impl From<ApprovalArg> for poorai_tools::Approval {
             ApprovalArg::DependencyChange => Self::DependencyChange,
             ApprovalArg::HistoryRewrite => Self::HistoryRewrite,
             ApprovalArg::Publish => Self::Publish,
+            ApprovalArg::NetworkAccess => Self::NetworkAccess,
         }
     }
 }
@@ -556,7 +558,6 @@ async fn probe_edit_once(
         allow_commands: vec![],
         output_limit: 64 * 1024,
         timeout: Duration::from_secs(10),
-        network_enabled: false,
         sandbox: poorai_tools::SandboxPolicy::Disabled,
         approvals: Vec::new(),
     };
@@ -730,7 +731,6 @@ async fn evaluate_task(
         allow_commands: vec!["cargo".into()],
         output_limit: 64 * 1024,
         timeout: Duration::from_secs(120),
-        network_enabled: false,
         sandbox: poorai_tools::SandboxPolicy::Preferred,
         // The suite grants nothing. A task that needs a grant to pass would be
         // measuring the grant, not the agent.
@@ -1501,7 +1501,6 @@ async fn prepare_profiled_run(
         allow_commands: vec!["cargo".into()],
         output_limit: 64 * 1024,
         timeout: Duration::from_secs(120),
-        network_enabled: false,
         sandbox: poorai_tools::SandboxPolicy::Preferred,
         // Only what the user named on the command line.
         approvals,
@@ -1545,7 +1544,7 @@ async fn prepare_profiled_run(
                 "approvals_granted": policy.approvals,
                 "sandbox_policy": policy.sandbox,
                 "allow_commands": policy.allow_commands,
-                "network_enabled": policy.network_enabled,
+                "network_enabled": policy.network_allowed(),
             }),
         )
         .map_err(|e| SafeError {
@@ -1669,7 +1668,6 @@ async fn verify(run_id: Option<String>, scope: String) -> Result<serde_json::Val
         allow_commands: vec!["cargo".into()],
         output_limit: 64 * 1024,
         timeout: Duration::from_secs(120),
-        network_enabled: false,
         sandbox: poorai_tools::SandboxPolicy::Preferred,
         // No approval is granted by default; the CLI has no flag to grant one
         // until a run can actually ask the user for it.
