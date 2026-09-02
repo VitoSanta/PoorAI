@@ -875,7 +875,7 @@ fn retrieved_context(
 }
 
 /// Bump when any scoring or execution step changes; reports record it.
-const EVAL_HARNESS_REV: &str = "eval-harness-v2";
+const EVAL_HARNESS_REV: &str = concat!("eval-", env!("POORAI_HARNESS_REV"));
 
 /// Runs one task and scores it.
 #[allow(clippy::too_many_arguments)]
@@ -1458,7 +1458,7 @@ async fn inspect(
     Ok(serde_json::json!({"inspection":inspection,"artifact":artifact,"probed":probe}))
 }
 /// Bump when any measurement step changes; stored profiles invalidate on it.
-const CALIBRATION_HARNESS_REV: &str = "calibration-harness-v3";
+const CALIBRATION_HARNESS_REV: &str = concat!("calibration-", env!("POORAI_HARNESS_REV"));
 
 /// Reads a calibration profile from a `poorai calibrate` artifact.
 ///
