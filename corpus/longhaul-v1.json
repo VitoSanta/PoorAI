@@ -1,0 +1,89 @@
+{
+  "name": "longhaul-v1",
+  "tasks": [
+    {
+      "allowed_files": [
+        "src/money.rs",
+        "src/service_01.rs",
+        "src/service_02.rs",
+        "src/service_03.rs",
+        "src/service_04.rs",
+        "src/service_05.rs",
+        "src/service_06.rs",
+        "src/service_07.rs",
+        "src/service_08.rs",
+        "src/service_09.rs",
+        "src/service_10.rs",
+        "src/service_11.rs",
+        "src/service_12.rs"
+      ],
+      "files": {
+        "Cargo.toml": "[package]\nname = \"longhaul\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        "src/lib.rs": "pub mod service_01;\npub mod service_02;\npub mod service_03;\npub mod service_04;\npub mod service_05;\npub mod service_06;\npub mod service_07;\npub mod service_08;\npub mod service_09;\npub mod service_10;\npub mod service_11;\npub mod service_12;\npub mod noise_01;\npub mod noise_02;\npub mod noise_03;\npub mod noise_04;\npub mod noise_05;\npub mod noise_06;\npub mod noise_07;\npub mod noise_08;\npub mod noise_09;\npub mod noise_10;\npub mod noise_11;\npub mod noise_12;\npub mod noise_13;\npub mod noise_14;\npub mod noise_15;\npub mod noise_16;\npub mod noise_17;\npub mod noise_18;\npub mod noise_19;\npub mod noise_20;\npub mod noise_21;\npub mod noise_22;\npub mod noise_23;\npub mod noise_24;\npub mod money;\n",
+        "src/money.rs": "pub fn calc(base: i32, factor: i32) -> i32 {\n    base * factor\n}\n",
+        "src/noise_01.rs": "pub fn noise_01_f1() -> i32 { 1 }\npub fn noise_01_f2() -> i32 { 2 }\npub fn noise_01_f3() -> i32 { 3 }\n",
+        "src/noise_02.rs": "pub fn noise_02_f1() -> i32 { 2 }\npub fn noise_02_f2() -> i32 { 4 }\npub fn noise_02_f3() -> i32 { 6 }\n",
+        "src/noise_03.rs": "pub fn noise_03_f1() -> i32 { 3 }\npub fn noise_03_f2() -> i32 { 6 }\npub fn noise_03_f3() -> i32 { 9 }\n",
+        "src/noise_04.rs": "pub fn noise_04_f1() -> i32 { 4 }\npub fn noise_04_f2() -> i32 { 8 }\npub fn noise_04_f3() -> i32 { 12 }\n",
+        "src/noise_05.rs": "pub fn noise_05_f1() -> i32 { 5 }\npub fn noise_05_f2() -> i32 { 10 }\npub fn noise_05_f3() -> i32 { 15 }\n",
+        "src/noise_06.rs": "pub fn noise_06_f1() -> i32 { 6 }\npub fn noise_06_f2() -> i32 { 12 }\npub fn noise_06_f3() -> i32 { 18 }\n",
+        "src/noise_07.rs": "pub fn noise_07_f1() -> i32 { 7 }\npub fn noise_07_f2() -> i32 { 14 }\npub fn noise_07_f3() -> i32 { 21 }\n",
+        "src/noise_08.rs": "pub fn noise_08_f1() -> i32 { 8 }\npub fn noise_08_f2() -> i32 { 16 }\npub fn noise_08_f3() -> i32 { 24 }\n",
+        "src/noise_09.rs": "pub fn noise_09_f1() -> i32 { 9 }\npub fn noise_09_f2() -> i32 { 18 }\npub fn noise_09_f3() -> i32 { 27 }\n",
+        "src/noise_10.rs": "pub fn noise_10_f1() -> i32 { 10 }\npub fn noise_10_f2() -> i32 { 20 }\npub fn noise_10_f3() -> i32 { 30 }\n",
+        "src/noise_11.rs": "pub fn noise_11_f1() -> i32 { 11 }\npub fn noise_11_f2() -> i32 { 22 }\npub fn noise_11_f3() -> i32 { 33 }\n",
+        "src/noise_12.rs": "pub fn noise_12_f1() -> i32 { 12 }\npub fn noise_12_f2() -> i32 { 24 }\npub fn noise_12_f3() -> i32 { 36 }\n",
+        "src/noise_13.rs": "pub fn noise_13_f1() -> i32 { 13 }\npub fn noise_13_f2() -> i32 { 26 }\npub fn noise_13_f3() -> i32 { 39 }\n",
+        "src/noise_14.rs": "pub fn noise_14_f1() -> i32 { 14 }\npub fn noise_14_f2() -> i32 { 28 }\npub fn noise_14_f3() -> i32 { 42 }\n",
+        "src/noise_15.rs": "pub fn noise_15_f1() -> i32 { 15 }\npub fn noise_15_f2() -> i32 { 30 }\npub fn noise_15_f3() -> i32 { 45 }\n",
+        "src/noise_16.rs": "pub fn noise_16_f1() -> i32 { 16 }\npub fn noise_16_f2() -> i32 { 32 }\npub fn noise_16_f3() -> i32 { 48 }\n",
+        "src/noise_17.rs": "pub fn noise_17_f1() -> i32 { 17 }\npub fn noise_17_f2() -> i32 { 34 }\npub fn noise_17_f3() -> i32 { 51 }\n",
+        "src/noise_18.rs": "pub fn noise_18_f1() -> i32 { 18 }\npub fn noise_18_f2() -> i32 { 36 }\npub fn noise_18_f3() -> i32 { 54 }\n",
+        "src/noise_19.rs": "pub fn noise_19_f1() -> i32 { 19 }\npub fn noise_19_f2() -> i32 { 38 }\npub fn noise_19_f3() -> i32 { 57 }\n",
+        "src/noise_20.rs": "pub fn noise_20_f1() -> i32 { 20 }\npub fn noise_20_f2() -> i32 { 40 }\npub fn noise_20_f3() -> i32 { 60 }\n",
+        "src/noise_21.rs": "pub fn noise_21_f1() -> i32 { 21 }\npub fn noise_21_f2() -> i32 { 42 }\npub fn noise_21_f3() -> i32 { 63 }\n",
+        "src/noise_22.rs": "pub fn noise_22_f1() -> i32 { 22 }\npub fn noise_22_f2() -> i32 { 44 }\npub fn noise_22_f3() -> i32 { 66 }\n",
+        "src/noise_23.rs": "pub fn noise_23_f1() -> i32 { 23 }\npub fn noise_23_f2() -> i32 { 46 }\npub fn noise_23_f3() -> i32 { 69 }\n",
+        "src/noise_24.rs": "pub fn noise_24_f1() -> i32 { 24 }\npub fn noise_24_f2() -> i32 { 48 }\npub fn noise_24_f3() -> i32 { 72 }\n",
+        "src/service_01.rs": "use crate::money::calc;\n\npub fn charge_01(base: i32) -> i32 {\n    calc(base, 1)\n}\n",
+        "src/service_02.rs": "use crate::money::calc;\n\npub fn charge_02(base: i32) -> i32 {\n    calc(base, 2)\n}\n",
+        "src/service_03.rs": "use crate::money::calc;\n\npub fn charge_03(base: i32) -> i32 {\n    calc(base, 3)\n}\n",
+        "src/service_04.rs": "use crate::money::calc;\n\npub fn charge_04(base: i32) -> i32 {\n    calc(base, 4)\n}\n",
+        "src/service_05.rs": "use crate::money::calc;\n\npub fn charge_05(base: i32) -> i32 {\n    calc(base, 5)\n}\n",
+        "src/service_06.rs": "use crate::money::calc;\n\npub fn charge_06(base: i32) -> i32 {\n    calc(base, 6)\n}\n",
+        "src/service_07.rs": "use crate::money::calc;\n\npub fn charge_07(base: i32) -> i32 {\n    calc(base, 7)\n}\n",
+        "src/service_08.rs": "use crate::money::calc;\n\npub fn charge_08(base: i32) -> i32 {\n    calc(base, 8)\n}\n",
+        "src/service_09.rs": "use crate::money::calc;\n\npub fn charge_09(base: i32) -> i32 {\n    calc(base, 9)\n}\n",
+        "src/service_10.rs": "use crate::money::calc;\n\npub fn charge_10(base: i32) -> i32 {\n    calc(base, 10)\n}\n",
+        "src/service_11.rs": "use crate::money::calc;\n\npub fn charge_11(base: i32) -> i32 {\n    calc(base, 11)\n}\n",
+        "src/service_12.rs": "use crate::money::calc;\n\npub fn charge_12(base: i32) -> i32 {\n    calc(base, 12)\n}\n"
+      },
+      "hidden_files": {
+        "tests/hidden.rs": "#[test]\nfn every_caller_uses_the_new_name() {\n    assert_eq!(longhaul::money::apply_rate(10, 3), 30);\n    assert_eq!(longhaul::service_01::charge_01(10), 10);\n    assert_eq!(longhaul::service_02::charge_02(10), 20);\n    assert_eq!(longhaul::service_03::charge_03(10), 30);\n    assert_eq!(longhaul::service_04::charge_04(10), 40);\n    assert_eq!(longhaul::service_05::charge_05(10), 50);\n    assert_eq!(longhaul::service_06::charge_06(10), 60);\n    assert_eq!(longhaul::service_07::charge_07(10), 70);\n    assert_eq!(longhaul::service_08::charge_08(10), 80);\n    assert_eq!(longhaul::service_09::charge_09(10), 90);\n    assert_eq!(longhaul::service_10::charge_10(10), 100);\n    assert_eq!(longhaul::service_11::charge_11(10), 110);\n    assert_eq!(longhaul::service_12::charge_12(10), 120);\n}\n"
+      },
+      "hidden_verifier": {
+        "args": [
+          "test",
+          "--quiet",
+          "--test",
+          "hidden"
+        ],
+        "executable": "cargo"
+      },
+      "id": "rename-across-twelve-callers",
+      "kind": "multi_file",
+      "max_actions": 60,
+      "provenance": "authored for poorAI 2026-09-02; a rename reaching twelve call sites, sized so the history must be compacted",
+      "statement": "Rename the function calc in src/money.rs to apply_rate, and update every call site in the repository so everything still compiles. Do not change any behaviour.",
+      "time_budget_secs": 2400,
+      "visible_verifier": {
+        "args": [
+          "test",
+          "--quiet",
+          "--lib"
+        ],
+        "executable": "cargo"
+      }
+    }
+  ]
+}

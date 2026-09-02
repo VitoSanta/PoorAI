@@ -1,0 +1,149 @@
+{
+  "name": "vague-v1",
+  "tasks": [
+    {
+      "allowed_files": [
+        "src/pricing.rs"
+      ],
+      "files": {
+        "Cargo.toml": "[package]\nname = \"vague1\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        "src/lib.rs": "pub mod mod_01;\npub mod mod_02;\npub mod mod_03;\npub mod mod_04;\npub mod mod_05;\npub mod mod_06;\npub mod mod_07;\npub mod mod_08;\npub mod mod_09;\npub mod mod_10;\npub mod mod_11;\npub mod mod_12;\npub mod mod_13;\npub mod mod_14;\npub mod mod_15;\npub mod mod_16;\npub mod mod_17;\npub mod mod_18;\npub mod mod_19;\npub mod mod_20;\npub mod mod_21;\npub mod mod_22;\npub mod mod_23;\npub mod mod_24;\npub mod mod_25;\npub mod mod_26;\npub mod mod_27;\npub mod mod_28;\npub mod mod_29;\npub mod mod_30;\npub mod mod_31;\npub mod mod_32;\npub mod mod_33;\npub mod mod_34;\npub mod mod_35;\npub mod mod_36;\npub mod mod_37;\npub mod mod_38;\npub mod mod_39;\npub mod mod_40;\npub mod pricing;\n",
+        "src/mod_01.rs": "pub fn mod_01_f1() -> i32 { 1 }\npub fn mod_01_f2() -> i32 { 2 }\npub fn mod_01_f3() -> i32 { 3 }\npub fn mod_01_f4() -> i32 { 4 }\n",
+        "src/mod_02.rs": "pub fn mod_02_f1() -> i32 { 2 }\npub fn mod_02_f2() -> i32 { 4 }\npub fn mod_02_f3() -> i32 { 6 }\npub fn mod_02_f4() -> i32 { 8 }\n",
+        "src/mod_03.rs": "pub fn mod_03_f1() -> i32 { 3 }\npub fn mod_03_f2() -> i32 { 6 }\npub fn mod_03_f3() -> i32 { 9 }\npub fn mod_03_f4() -> i32 { 12 }\n",
+        "src/mod_04.rs": "pub fn mod_04_f1() -> i32 { 4 }\npub fn mod_04_f2() -> i32 { 8 }\npub fn mod_04_f3() -> i32 { 12 }\npub fn mod_04_f4() -> i32 { 16 }\n",
+        "src/mod_05.rs": "pub fn mod_05_f1() -> i32 { 5 }\npub fn mod_05_f2() -> i32 { 10 }\npub fn mod_05_f3() -> i32 { 15 }\npub fn mod_05_f4() -> i32 { 20 }\n",
+        "src/mod_06.rs": "pub fn mod_06_f1() -> i32 { 6 }\npub fn mod_06_f2() -> i32 { 12 }\npub fn mod_06_f3() -> i32 { 18 }\npub fn mod_06_f4() -> i32 { 24 }\n",
+        "src/mod_07.rs": "pub fn mod_07_f1() -> i32 { 7 }\npub fn mod_07_f2() -> i32 { 14 }\npub fn mod_07_f3() -> i32 { 21 }\npub fn mod_07_f4() -> i32 { 28 }\n",
+        "src/mod_08.rs": "pub fn mod_08_f1() -> i32 { 8 }\npub fn mod_08_f2() -> i32 { 16 }\npub fn mod_08_f3() -> i32 { 24 }\npub fn mod_08_f4() -> i32 { 32 }\n",
+        "src/mod_09.rs": "pub fn mod_09_f1() -> i32 { 9 }\npub fn mod_09_f2() -> i32 { 18 }\npub fn mod_09_f3() -> i32 { 27 }\npub fn mod_09_f4() -> i32 { 36 }\n",
+        "src/mod_10.rs": "pub fn mod_10_f1() -> i32 { 10 }\npub fn mod_10_f2() -> i32 { 20 }\npub fn mod_10_f3() -> i32 { 30 }\npub fn mod_10_f4() -> i32 { 40 }\n",
+        "src/mod_11.rs": "pub fn mod_11_f1() -> i32 { 11 }\npub fn mod_11_f2() -> i32 { 22 }\npub fn mod_11_f3() -> i32 { 33 }\npub fn mod_11_f4() -> i32 { 44 }\n",
+        "src/mod_12.rs": "pub fn mod_12_f1() -> i32 { 12 }\npub fn mod_12_f2() -> i32 { 24 }\npub fn mod_12_f3() -> i32 { 36 }\npub fn mod_12_f4() -> i32 { 48 }\n",
+        "src/mod_13.rs": "pub fn mod_13_f1() -> i32 { 13 }\npub fn mod_13_f2() -> i32 { 26 }\npub fn mod_13_f3() -> i32 { 39 }\npub fn mod_13_f4() -> i32 { 52 }\n",
+        "src/mod_14.rs": "pub fn mod_14_f1() -> i32 { 14 }\npub fn mod_14_f2() -> i32 { 28 }\npub fn mod_14_f3() -> i32 { 42 }\npub fn mod_14_f4() -> i32 { 56 }\n",
+        "src/mod_15.rs": "pub fn mod_15_f1() -> i32 { 15 }\npub fn mod_15_f2() -> i32 { 30 }\npub fn mod_15_f3() -> i32 { 45 }\npub fn mod_15_f4() -> i32 { 60 }\n",
+        "src/mod_16.rs": "pub fn mod_16_f1() -> i32 { 16 }\npub fn mod_16_f2() -> i32 { 32 }\npub fn mod_16_f3() -> i32 { 48 }\npub fn mod_16_f4() -> i32 { 64 }\n",
+        "src/mod_17.rs": "pub fn mod_17_f1() -> i32 { 17 }\npub fn mod_17_f2() -> i32 { 34 }\npub fn mod_17_f3() -> i32 { 51 }\npub fn mod_17_f4() -> i32 { 68 }\n",
+        "src/mod_18.rs": "pub fn mod_18_f1() -> i32 { 18 }\npub fn mod_18_f2() -> i32 { 36 }\npub fn mod_18_f3() -> i32 { 54 }\npub fn mod_18_f4() -> i32 { 72 }\n",
+        "src/mod_19.rs": "pub fn mod_19_f1() -> i32 { 19 }\npub fn mod_19_f2() -> i32 { 38 }\npub fn mod_19_f3() -> i32 { 57 }\npub fn mod_19_f4() -> i32 { 76 }\n",
+        "src/mod_20.rs": "pub fn mod_20_f1() -> i32 { 20 }\npub fn mod_20_f2() -> i32 { 40 }\npub fn mod_20_f3() -> i32 { 60 }\npub fn mod_20_f4() -> i32 { 80 }\n",
+        "src/mod_21.rs": "pub fn mod_21_f1() -> i32 { 21 }\npub fn mod_21_f2() -> i32 { 42 }\npub fn mod_21_f3() -> i32 { 63 }\npub fn mod_21_f4() -> i32 { 84 }\n",
+        "src/mod_22.rs": "pub fn mod_22_f1() -> i32 { 22 }\npub fn mod_22_f2() -> i32 { 44 }\npub fn mod_22_f3() -> i32 { 66 }\npub fn mod_22_f4() -> i32 { 88 }\n",
+        "src/mod_23.rs": "pub fn mod_23_f1() -> i32 { 23 }\npub fn mod_23_f2() -> i32 { 46 }\npub fn mod_23_f3() -> i32 { 69 }\npub fn mod_23_f4() -> i32 { 92 }\n",
+        "src/mod_24.rs": "pub fn mod_24_f1() -> i32 { 24 }\npub fn mod_24_f2() -> i32 { 48 }\npub fn mod_24_f3() -> i32 { 72 }\npub fn mod_24_f4() -> i32 { 96 }\n",
+        "src/mod_25.rs": "pub fn mod_25_f1() -> i32 { 25 }\npub fn mod_25_f2() -> i32 { 50 }\npub fn mod_25_f3() -> i32 { 75 }\npub fn mod_25_f4() -> i32 { 100 }\n",
+        "src/mod_26.rs": "pub fn mod_26_f1() -> i32 { 26 }\npub fn mod_26_f2() -> i32 { 52 }\npub fn mod_26_f3() -> i32 { 78 }\npub fn mod_26_f4() -> i32 { 104 }\n",
+        "src/mod_27.rs": "pub fn mod_27_f1() -> i32 { 27 }\npub fn mod_27_f2() -> i32 { 54 }\npub fn mod_27_f3() -> i32 { 81 }\npub fn mod_27_f4() -> i32 { 108 }\n",
+        "src/mod_28.rs": "pub fn mod_28_f1() -> i32 { 28 }\npub fn mod_28_f2() -> i32 { 56 }\npub fn mod_28_f3() -> i32 { 84 }\npub fn mod_28_f4() -> i32 { 112 }\n",
+        "src/mod_29.rs": "pub fn mod_29_f1() -> i32 { 29 }\npub fn mod_29_f2() -> i32 { 58 }\npub fn mod_29_f3() -> i32 { 87 }\npub fn mod_29_f4() -> i32 { 116 }\n",
+        "src/mod_30.rs": "pub fn mod_30_f1() -> i32 { 30 }\npub fn mod_30_f2() -> i32 { 60 }\npub fn mod_30_f3() -> i32 { 90 }\npub fn mod_30_f4() -> i32 { 120 }\n",
+        "src/mod_31.rs": "pub fn mod_31_f1() -> i32 { 31 }\npub fn mod_31_f2() -> i32 { 62 }\npub fn mod_31_f3() -> i32 { 93 }\npub fn mod_31_f4() -> i32 { 124 }\n",
+        "src/mod_32.rs": "pub fn mod_32_f1() -> i32 { 32 }\npub fn mod_32_f2() -> i32 { 64 }\npub fn mod_32_f3() -> i32 { 96 }\npub fn mod_32_f4() -> i32 { 128 }\n",
+        "src/mod_33.rs": "pub fn mod_33_f1() -> i32 { 33 }\npub fn mod_33_f2() -> i32 { 66 }\npub fn mod_33_f3() -> i32 { 99 }\npub fn mod_33_f4() -> i32 { 132 }\n",
+        "src/mod_34.rs": "pub fn mod_34_f1() -> i32 { 34 }\npub fn mod_34_f2() -> i32 { 68 }\npub fn mod_34_f3() -> i32 { 102 }\npub fn mod_34_f4() -> i32 { 136 }\n",
+        "src/mod_35.rs": "pub fn mod_35_f1() -> i32 { 35 }\npub fn mod_35_f2() -> i32 { 70 }\npub fn mod_35_f3() -> i32 { 105 }\npub fn mod_35_f4() -> i32 { 140 }\n",
+        "src/mod_36.rs": "pub fn mod_36_f1() -> i32 { 36 }\npub fn mod_36_f2() -> i32 { 72 }\npub fn mod_36_f3() -> i32 { 108 }\npub fn mod_36_f4() -> i32 { 144 }\n",
+        "src/mod_37.rs": "pub fn mod_37_f1() -> i32 { 37 }\npub fn mod_37_f2() -> i32 { 74 }\npub fn mod_37_f3() -> i32 { 111 }\npub fn mod_37_f4() -> i32 { 148 }\n",
+        "src/mod_38.rs": "pub fn mod_38_f1() -> i32 { 38 }\npub fn mod_38_f2() -> i32 { 76 }\npub fn mod_38_f3() -> i32 { 114 }\npub fn mod_38_f4() -> i32 { 152 }\n",
+        "src/mod_39.rs": "pub fn mod_39_f1() -> i32 { 39 }\npub fn mod_39_f2() -> i32 { 78 }\npub fn mod_39_f3() -> i32 { 117 }\npub fn mod_39_f4() -> i32 { 156 }\n",
+        "src/mod_40.rs": "pub fn mod_40_f1() -> i32 { 40 }\npub fn mod_40_f2() -> i32 { 80 }\npub fn mod_40_f3() -> i32 { 120 }\npub fn mod_40_f4() -> i32 { 160 }\n",
+        "src/pricing.rs": "pub fn shipping_cost(weight_grams: i32) -> i32 {\n    weight_grams / 100\n}\n"
+      },
+      "hidden_files": {
+        "tests/hidden.rs": "#[test]\nfn rounds_up() {\n    assert_eq!(vague1::pricing::shipping_cost(250), 3);\n    assert_eq!(vague1::pricing::shipping_cost(100), 1);\n    assert_eq!(vague1::pricing::shipping_cost(101), 2);\n    assert_eq!(vague1::pricing::shipping_cost(0), 0);\n}\n"
+      },
+      "hidden_verifier": {
+        "args": [
+          "test",
+          "--quiet",
+          "--test",
+          "hidden"
+        ],
+        "executable": "cargo"
+      },
+      "id": "vague-shipping-undercharge",
+      "kind": "bugfix",
+      "max_actions": 20,
+      "provenance": "authored for poorAI 2026-09-02; the same defect as retrieval-unnamed-file phrased as a user would report it, to measure whether a precise specification was doing the work",
+      "statement": "Customers are being undercharged for shipping. A 250 gram parcel is billed as 2 units when it should be 3. Please fix it.",
+      "time_budget_secs": 900,
+      "visible_verifier": {
+        "args": [
+          "test",
+          "--quiet",
+          "--lib"
+        ],
+        "executable": "cargo"
+      }
+    },
+    {
+      "allowed_files": [
+        "src/tax.rs",
+        "src/cart.rs"
+      ],
+      "files": {
+        "Cargo.toml": "[package]\nname = \"vague2\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        "src/cart.rs": "use crate::tax::tax_for;\n\npub fn cart_total(net: i32) -> i32 {\n    net + tax_for(net)\n}\n",
+        "src/lib.rs": "pub mod unit_01;\npub mod unit_02;\npub mod unit_03;\npub mod unit_04;\npub mod unit_05;\npub mod unit_06;\npub mod unit_07;\npub mod unit_08;\npub mod unit_09;\npub mod unit_10;\npub mod unit_11;\npub mod unit_12;\npub mod unit_13;\npub mod unit_14;\npub mod unit_15;\npub mod unit_16;\npub mod unit_17;\npub mod unit_18;\npub mod unit_19;\npub mod unit_20;\npub mod unit_21;\npub mod unit_22;\npub mod unit_23;\npub mod unit_24;\npub mod unit_25;\npub mod unit_26;\npub mod unit_27;\npub mod unit_28;\npub mod unit_29;\npub mod unit_30;\npub mod cart;\npub mod tax;\n",
+        "src/tax.rs": "pub fn tax_for(net: i32) -> i32 {\n    net * 20 / 1000\n}\n",
+        "src/unit_01.rs": "pub fn unit_01_f1() -> i32 { 1 }\npub fn unit_01_f2() -> i32 { 2 }\npub fn unit_01_f3() -> i32 { 3 }\npub fn unit_01_f4() -> i32 { 4 }\n",
+        "src/unit_02.rs": "pub fn unit_02_f1() -> i32 { 2 }\npub fn unit_02_f2() -> i32 { 4 }\npub fn unit_02_f3() -> i32 { 6 }\npub fn unit_02_f4() -> i32 { 8 }\n",
+        "src/unit_03.rs": "pub fn unit_03_f1() -> i32 { 3 }\npub fn unit_03_f2() -> i32 { 6 }\npub fn unit_03_f3() -> i32 { 9 }\npub fn unit_03_f4() -> i32 { 12 }\n",
+        "src/unit_04.rs": "pub fn unit_04_f1() -> i32 { 4 }\npub fn unit_04_f2() -> i32 { 8 }\npub fn unit_04_f3() -> i32 { 12 }\npub fn unit_04_f4() -> i32 { 16 }\n",
+        "src/unit_05.rs": "pub fn unit_05_f1() -> i32 { 5 }\npub fn unit_05_f2() -> i32 { 10 }\npub fn unit_05_f3() -> i32 { 15 }\npub fn unit_05_f4() -> i32 { 20 }\n",
+        "src/unit_06.rs": "pub fn unit_06_f1() -> i32 { 6 }\npub fn unit_06_f2() -> i32 { 12 }\npub fn unit_06_f3() -> i32 { 18 }\npub fn unit_06_f4() -> i32 { 24 }\n",
+        "src/unit_07.rs": "pub fn unit_07_f1() -> i32 { 7 }\npub fn unit_07_f2() -> i32 { 14 }\npub fn unit_07_f3() -> i32 { 21 }\npub fn unit_07_f4() -> i32 { 28 }\n",
+        "src/unit_08.rs": "pub fn unit_08_f1() -> i32 { 8 }\npub fn unit_08_f2() -> i32 { 16 }\npub fn unit_08_f3() -> i32 { 24 }\npub fn unit_08_f4() -> i32 { 32 }\n",
+        "src/unit_09.rs": "pub fn unit_09_f1() -> i32 { 9 }\npub fn unit_09_f2() -> i32 { 18 }\npub fn unit_09_f3() -> i32 { 27 }\npub fn unit_09_f4() -> i32 { 36 }\n",
+        "src/unit_10.rs": "pub fn unit_10_f1() -> i32 { 10 }\npub fn unit_10_f2() -> i32 { 20 }\npub fn unit_10_f3() -> i32 { 30 }\npub fn unit_10_f4() -> i32 { 40 }\n",
+        "src/unit_11.rs": "pub fn unit_11_f1() -> i32 { 11 }\npub fn unit_11_f2() -> i32 { 22 }\npub fn unit_11_f3() -> i32 { 33 }\npub fn unit_11_f4() -> i32 { 44 }\n",
+        "src/unit_12.rs": "pub fn unit_12_f1() -> i32 { 12 }\npub fn unit_12_f2() -> i32 { 24 }\npub fn unit_12_f3() -> i32 { 36 }\npub fn unit_12_f4() -> i32 { 48 }\n",
+        "src/unit_13.rs": "pub fn unit_13_f1() -> i32 { 13 }\npub fn unit_13_f2() -> i32 { 26 }\npub fn unit_13_f3() -> i32 { 39 }\npub fn unit_13_f4() -> i32 { 52 }\n",
+        "src/unit_14.rs": "pub fn unit_14_f1() -> i32 { 14 }\npub fn unit_14_f2() -> i32 { 28 }\npub fn unit_14_f3() -> i32 { 42 }\npub fn unit_14_f4() -> i32 { 56 }\n",
+        "src/unit_15.rs": "pub fn unit_15_f1() -> i32 { 15 }\npub fn unit_15_f2() -> i32 { 30 }\npub fn unit_15_f3() -> i32 { 45 }\npub fn unit_15_f4() -> i32 { 60 }\n",
+        "src/unit_16.rs": "pub fn unit_16_f1() -> i32 { 16 }\npub fn unit_16_f2() -> i32 { 32 }\npub fn unit_16_f3() -> i32 { 48 }\npub fn unit_16_f4() -> i32 { 64 }\n",
+        "src/unit_17.rs": "pub fn unit_17_f1() -> i32 { 17 }\npub fn unit_17_f2() -> i32 { 34 }\npub fn unit_17_f3() -> i32 { 51 }\npub fn unit_17_f4() -> i32 { 68 }\n",
+        "src/unit_18.rs": "pub fn unit_18_f1() -> i32 { 18 }\npub fn unit_18_f2() -> i32 { 36 }\npub fn unit_18_f3() -> i32 { 54 }\npub fn unit_18_f4() -> i32 { 72 }\n",
+        "src/unit_19.rs": "pub fn unit_19_f1() -> i32 { 19 }\npub fn unit_19_f2() -> i32 { 38 }\npub fn unit_19_f3() -> i32 { 57 }\npub fn unit_19_f4() -> i32 { 76 }\n",
+        "src/unit_20.rs": "pub fn unit_20_f1() -> i32 { 20 }\npub fn unit_20_f2() -> i32 { 40 }\npub fn unit_20_f3() -> i32 { 60 }\npub fn unit_20_f4() -> i32 { 80 }\n",
+        "src/unit_21.rs": "pub fn unit_21_f1() -> i32 { 21 }\npub fn unit_21_f2() -> i32 { 42 }\npub fn unit_21_f3() -> i32 { 63 }\npub fn unit_21_f4() -> i32 { 84 }\n",
+        "src/unit_22.rs": "pub fn unit_22_f1() -> i32 { 22 }\npub fn unit_22_f2() -> i32 { 44 }\npub fn unit_22_f3() -> i32 { 66 }\npub fn unit_22_f4() -> i32 { 88 }\n",
+        "src/unit_23.rs": "pub fn unit_23_f1() -> i32 { 23 }\npub fn unit_23_f2() -> i32 { 46 }\npub fn unit_23_f3() -> i32 { 69 }\npub fn unit_23_f4() -> i32 { 92 }\n",
+        "src/unit_24.rs": "pub fn unit_24_f1() -> i32 { 24 }\npub fn unit_24_f2() -> i32 { 48 }\npub fn unit_24_f3() -> i32 { 72 }\npub fn unit_24_f4() -> i32 { 96 }\n",
+        "src/unit_25.rs": "pub fn unit_25_f1() -> i32 { 25 }\npub fn unit_25_f2() -> i32 { 50 }\npub fn unit_25_f3() -> i32 { 75 }\npub fn unit_25_f4() -> i32 { 100 }\n",
+        "src/unit_26.rs": "pub fn unit_26_f1() -> i32 { 26 }\npub fn unit_26_f2() -> i32 { 52 }\npub fn unit_26_f3() -> i32 { 78 }\npub fn unit_26_f4() -> i32 { 104 }\n",
+        "src/unit_27.rs": "pub fn unit_27_f1() -> i32 { 27 }\npub fn unit_27_f2() -> i32 { 54 }\npub fn unit_27_f3() -> i32 { 81 }\npub fn unit_27_f4() -> i32 { 108 }\n",
+        "src/unit_28.rs": "pub fn unit_28_f1() -> i32 { 28 }\npub fn unit_28_f2() -> i32 { 56 }\npub fn unit_28_f3() -> i32 { 84 }\npub fn unit_28_f4() -> i32 { 112 }\n",
+        "src/unit_29.rs": "pub fn unit_29_f1() -> i32 { 29 }\npub fn unit_29_f2() -> i32 { 58 }\npub fn unit_29_f3() -> i32 { 87 }\npub fn unit_29_f4() -> i32 { 116 }\n",
+        "src/unit_30.rs": "pub fn unit_30_f1() -> i32 { 30 }\npub fn unit_30_f2() -> i32 { 60 }\npub fn unit_30_f3() -> i32 { 90 }\npub fn unit_30_f4() -> i32 { 120 }\n"
+      },
+      "hidden_files": {
+        "tests/hidden.rs": "#[test]\nfn tax_is_twenty_percent() {\n    assert_eq!(vague2::cart::cart_total(100), 120);\n    assert_eq!(vague2::cart::cart_total(0), 0);\n    assert_eq!(vague2::tax::tax_for(50), 10);\n}\n"
+      },
+      "hidden_verifier": {
+        "args": [
+          "test",
+          "--quiet",
+          "--test",
+          "hidden"
+        ],
+        "executable": "cargo"
+      },
+      "id": "vague-total-looks-wrong",
+      "kind": "bugfix",
+      "max_actions": 20,
+      "provenance": "authored for poorAI 2026-09-02; the symptom is in one file and the defect in another, reported as a user would",
+      "statement": "The cart total looks wrong. On a 100 euro order the customer should pay 120 but the app shows 102. Can you sort it out?",
+      "time_budget_secs": 900,
+      "visible_verifier": {
+        "args": [
+          "test",
+          "--quiet",
+          "--lib"
+        ],
+        "executable": "cargo"
+      }
+    }
+  ]
+}
