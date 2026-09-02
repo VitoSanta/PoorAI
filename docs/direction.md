@@ -42,6 +42,12 @@ The honest present tense: poorAI repairs bugs and builds a single application fr
 4. **Verification for systems, not files.** A multi-service target is checked by standing it up and exercising it, which the generation suite already does for one process and nothing does for several.
 5. **Usability.** Named sessions with their repository, branch, accumulated diff and status — the half of M6 untouched. Worth building on top of resumable sessions and worthless without them.
 
+## Routing is declined, not deferred
+
+ADR-011 deferred automatic model routing until comparable data existed. It does now, and the answer is no: every proxy tried in this project has failed on contact, the product's context requirement disqualifies the deployment routing would have selected for generation, and the measured gains are an order of magnitude larger in the harness than in model choice.
+
+What replaces it is escalation within a deployment — noticing from the audit that a task is proving hard and spending more on it — which needs no classifier and no second model resident.
+
 ## The language violation
 
 MASTER_SPEC requirement 6 says verification must be *appropriate to the repository*, and `repository-intelligence.md` requires the index to record *language/build manifests*. Both mean any repository. Three places assume otherwise:
