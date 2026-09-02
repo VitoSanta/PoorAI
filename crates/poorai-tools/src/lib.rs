@@ -73,6 +73,18 @@ pub enum ActionProposal {
     FetchUrl {
         url: String,
     },
+    /// Marks a plan step finished.
+    ///
+    /// The deployment says which step it has finished; the harness never infers
+    /// it. Inferring would mean the harness deciding the task had progressed,
+    /// which is the harness doing the work and would make the measurement
+    /// meaningless. This performs nothing in the workspace -- it records a
+    /// claim, and the claim is judged against the checks like any other.
+    RecordProgress {
+        step: usize,
+        #[serde(default)]
+        note: Option<String>,
+    },
 }
 impl ActionProposal {
     pub fn validate(&self) -> Result<(), ToolError> {

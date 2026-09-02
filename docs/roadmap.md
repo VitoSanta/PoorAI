@@ -288,7 +288,15 @@ Exhausting the budget over a repository whose checks are passing is reported as 
 
 The number 8 remains undefended for real repositories. Successful runs on `m5-frozen-v1` use at most 5 actions, but the corpus tasks are single-file, and a two-file session task needed 6 productive actions — so the corpus cannot defend a budget for work larger than itself. Revisit it with the external-repository corpus, which is the first evidence that will bear on it.
 
-**4. Decomposition that is executed.** A plan today is context and not authority — nothing runs it. Note that `context.compacted` never fires at 262144 tokens, so the constraint on long work is not memory but the absence of structure to carry it.
+**4. Decomposition that is executed.** *Closed.* A plan was pushed once as a message and never consulted again, and compaction dropped it entirely — so on a long task the decomposition disappeared exactly when it began to matter. The plan is now loop state: it survives compaction, the outstanding steps are repeated in the status of every turn, and it is reconciled when completion is declared.
+
+Progress is the deployment's own claim, through a `record_progress` capability that touches nothing in the workspace. The harness never infers that a step is done — inferring would be the harness deciding the task had progressed, which is the harness doing the work. A claim on a step the plan does not have is a mistake rather than progress, and is not counted.
+
+Reconciliation is recorded, not enforced. A plan is explicitly not binding and can be wrong, so a completion declared with steps outstanding is a fact worth preserving in `plan.reconciled` rather than a reason to refuse the completion.
+
+Three mutants confirm it: dropping the outstanding steps from the status, accepting a claim beyond the plan, and letting compaction discard the plan, each break a fixture. The third found a real gap — the first pass had no fixture covering compaction at all.
+
+The earlier note that `context.compacted` never fires at 262144 tokens still stands: the constraint on long work was never memory.
 
 **5. Verification of systems rather than files.** The generation suite already starts one process and exercises it; several services is an extension of something that works.
 

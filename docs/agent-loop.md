@@ -38,6 +38,12 @@ This is the measured failure shape of every budget-exhausted run recorded here: 
 
 ## Planning
 
+A plan is loop state, not a message. Pushed once into the history it is context and nothing consults it again; worse, compaction drops it, which on a long task removes the decomposition exactly when it starts to matter. Held as state it survives compaction, its outstanding steps appear in the status of every turn, and it is reconciled against `plan.reconciled` when completion is declared.
+
+Progress is claimed by the deployment through `record_progress`, which records a claim and changes nothing in the workspace. The harness never infers that a step is finished: inferring would be the harness deciding the task had progressed. A claim naming a step the plan does not have is a mistake and is not counted.
+
+The reconciliation is recorded rather than enforced. A plan is not binding and can turn out to be wrong, so completing with steps outstanding is preserved as a fact and never refused on the plan's account.
+
 A run may begin with one turn spent asking for a plan, opt-in per deployment strategy. The plan is **context, not authority**: nothing in the loop enforces it, no step grants permission, and verification is unchanged. If it turns out wrong the deployment is told to depart from it.
 
 It is bounded to eight steps, because a longer list is a script rather than a plan, and it costs a turn — which is why it is opt-in and has to be measured against the default rather than assumed to help. A deployment asked for a plan that answers in prose produced none, and that is recorded as a fact about the deployment rather than treated as an error.
