@@ -65,10 +65,19 @@ pub fn discover_checks(
         }
         return Ok(vec![("cargo".into(), args)]);
     }
-    Err(
-        "no supported deterministic verifier discovered; declare repository checks explicitly"
-            .into(),
-    )
+    if let Some(manifest) = std::fs::read_to_string(root.join("package.json")).ok()
+        && serde_json::from_str::<serde_json::Value>(&manifest)
+            .ok()
+            .and_then(|m| m.get("scripts")?.get("test").cloned())
+            .is_some()
+    {
+        return Ok(vec![("npm".into(), vec!["test".into(), "--silent".into()])]);
+    }
+    // A repository with no verifier we recognise is not an error: it has no
+    // deterministic checks, which the caller records rather than refuses. A
+    // run against it simply cannot claim verification, and completion is
+    // judged on nothing rather than on something invented.
+    Ok(Vec::new())
 }
 pub async fn baseline(
     policy: &ToolPolicy,

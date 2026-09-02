@@ -52,6 +52,10 @@ pub enum ActionProposal {
         expected_hash: String,
         replacement: String,
     },
+    WriteFile {
+        path: String,
+        content: String,
+    },
     RunCommand {
         executable: String,
         args: Vec<String>,
@@ -63,7 +67,11 @@ impl ActionProposal {
             Self::Complete { rationale } if rationale.is_empty() => {
                 Err(ToolError::Denied("completion rationale is required".into()))
             }
-            Self::ReadFile { path } | Self::ApplyReplace { path, .. } if path.is_empty() => {
+            Self::ReadFile { path }
+            | Self::ApplyReplace { path, .. }
+            | Self::WriteFile { path, .. }
+                if path.is_empty() =>
+            {
                 Err(ToolError::Denied("action path is empty".into()))
             }
             Self::Search { query, max_matches } if query.is_empty() || *max_matches == 0 => Err(
@@ -223,16 +231,32 @@ impl ToolPolicy {
                 .canonicalize()
                 .map_err(|_| ToolError::Denied("unable to resolve target".into()))?
         } else {
-            let parent = result
-                .parent()
-                .ok_or_else(|| ToolError::Denied("target has no parent".into()))?
+            // The target does not exist yet, and neither may several of its
+            // parents: creating `src/app.js` in an empty workspace has no `src`
+            // to canonicalise. Resolve the deepest ancestor that does exist,
+            // which is where any symlink could redirect the path, and rebuild
+            // the rest onto it. `..` and absolute paths were already refused,
+            // so the remainder cannot climb back out.
+            let mut existing = result.as_path();
+            let mut trailing = Vec::new();
+            while !existing.exists() {
+                trailing.push(
+                    existing
+                        .file_name()
+                        .ok_or_else(|| ToolError::Denied("target has no file name".into()))?
+                        .to_owned(),
+                );
+                existing = existing
+                    .parent()
+                    .ok_or_else(|| ToolError::Denied("target has no parent".into()))?;
+            }
+            let mut resolved = existing
                 .canonicalize()
                 .map_err(|_| ToolError::Denied("target parent is unavailable".into()))?;
-            parent.join(
-                result
-                    .file_name()
-                    .ok_or_else(|| ToolError::Denied("target has no file name".into()))?,
-            )
+            for component in trailing.iter().rev() {
+                resolved.push(component);
+            }
+            resolved
         };
         if !checked.starts_with(&root) {
             return Err(ToolError::Denied("path escapes workspace root".into()));
@@ -405,6 +429,44 @@ pub fn apply_replace(
         path: relative.display().to_string(),
         previous_hash,
         new_hash: hash_bytes(replacement.as_bytes()),
+    })
+}
+
+/// Creates a new file. Refuses to overwrite an existing one.
+///
+/// Creation and modification are separate capabilities on purpose: an edit
+/// must carry the hash of what it replaces, and a create has nothing to hash.
+/// Letting one tool do both would mean a blind overwrite is always one missing
+/// argument away.
+pub fn write_file(
+    policy: &ToolPolicy,
+    relative: &Path,
+    content: &str,
+) -> Result<ApplyResult, ToolError> {
+    if let Some(approval) = edit_approval(relative) {
+        policy.require(approval)?;
+    }
+    let path = policy.resolve(relative)?;
+    if path.exists() {
+        return Err(ToolError::Denied(
+            "file exists; read it and use apply_replace with its hash".into(),
+        ));
+    }
+    if content.len() > policy.output_limit {
+        return Err(ToolError::Denied(
+            "content exceeds policy size limit".into(),
+        ));
+    }
+    // Parent directories are created only inside the workspace, since `resolve`
+    // has already refused anything that escapes it.
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, content.as_bytes())?;
+    Ok(ApplyResult {
+        path: relative.display().to_string(),
+        previous_hash: String::new(),
+        new_hash: hash_bytes(content.as_bytes()),
     })
 }
 

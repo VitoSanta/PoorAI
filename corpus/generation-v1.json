@@ -4,7 +4,8 @@
     {
       "allowed_files": [],
       "approvals": [
-        "network_access"
+        "network_access",
+        "dependency_change"
       ],
       "files": {
         "SPEC.md": "# HTTP API specification\n\nBuild an HTTP JSON API. It must start with `node server.js` and listen on the\nport in the `PORT` environment variable, defaulting to 3000.\n\nAll responses are JSON with `content-type: application/json`.\n\n## Endpoints\n\n`GET /health`\n  200 with body `{\"status\": \"ok\"}`\n\n`GET /todos`\n  200 with a JSON array of every todo. Empty array when there are none.\n\n`POST /todos`\n  Body: `{\"title\": \"<string>\"}`\n  201 with the created todo: `{\"id\": <number>, \"title\": \"<string>\", \"done\": false}`\n  Ids are numbers and are unique.\n\n`GET /todos/:id`\n  200 with that todo, or 404 with body `{\"error\": \"not found\"}`\n\n`POST /todos/:id/done`\n  200 with the todo, now `\"done\": true`. The change persists for later reads.\n  404 with `{\"error\": \"not found\"}` if the id does not exist.\n\nTodos are kept in memory. No database, no persistence across restarts.\n"

@@ -271,6 +271,11 @@ async fn attempt_action(
             .map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string()),
+        ActionProposal::WriteFile { path, content } => serde_json::to_value(
+            poorai_tools::write_file(policy, std::path::Path::new(path), content)
+                .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string()),
         ActionProposal::RunCommand { executable, args } => serde_json::to_value(
             poorai_tools::run_command(policy, executable, args)
                 .await
@@ -405,24 +410,35 @@ pub async fn run_action_loop<P: ModelProvider>(
                 .await
                 .map_err(|e| e.to_string())?;
             let comparison = poorai_verify::compare(&before, &after);
-            let verified = after
-                .checks
-                .iter()
-                .all(|check| check.result.exit_code == Some(0))
+            // With no deterministic checks there is nothing to verify, and a
+            // completion cannot claim to have been verified by nothing. The run
+            // still ends -- looping until the budget runs out would report a
+            // missing verifier as the deployment's failure.
+            let verifiable = !after.checks.is_empty();
+            let verified = verifiable
+                && after
+                    .checks
+                    .iter()
+                    .all(|check| check.result.exit_code == Some(0))
                 && comparison.regression_free;
             store
                 .append(
                     Some(run_id),
                     "verification.result",
-                    serde_json::json!({"after":after,"comparison":comparison,"verified":verified}),
+                    serde_json::json!({
+                        "after": after,
+                        "comparison": comparison,
+                        "verified": verified,
+                        "verifiable": verifiable,
+                    }),
                 )
                 .map_err(|e| e.to_string())?;
-            if verified {
+            if verified || !verifiable {
                 store
                     .append(
                         Some(run_id),
                         "task.complete",
-                        serde_json::json!({"step":step}),
+                        serde_json::json!({"step": step, "verified": verified}),
                     )
                     .map_err(|e| e.to_string())?;
                 return Ok(TaskRunResult {
@@ -455,7 +471,10 @@ pub async fn run_action_loop<P: ModelProvider>(
             });
             continue;
         }
-        let edited = matches!(action, ActionProposal::ApplyReplace { .. });
+        let edited = matches!(
+            action,
+            ActionProposal::ApplyReplace { .. } | ActionProposal::WriteFile { .. }
+        );
         // A denial is a tool result, not the end of the run. Aborting here
         // discards work already done -- a stale-hash refusal literally says
         // "reread before editing", which the deployment can act on. The action
@@ -521,7 +540,8 @@ pub const AGENT_SYSTEM_PROMPT: &str = concat!(
     "You are working inside a repository. Take exactly one action per turn by calling one of ",
     "the provided tools. Edits are hash-guarded: read a file and pass the artifact_hash it ",
     "returns as expected_hash, and re-read a file after editing it because its hash has ",
-    "changed. After an edit you are told whether the repository's checks pass. If they pass ",
+    "changed. To create a file that does not exist yet, use write_file. ",
+    "After an edit you are told whether the repository's checks pass. If they pass ",
     "and the task is done, call complete. If they fail, fix what failed. Do not call complete ",
     "while the checks are failing.",
 );
@@ -578,6 +598,15 @@ pub fn action_tool_schema() -> serde_json::Value {
                 "replacement": {"type": "string"},
             }),
             &["path", "expected_hash", "replacement"],
+        ),
+        function(
+            "write_file",
+            "Create a new file. Fails if it already exists; use apply_replace to change one.",
+            serde_json::json!({
+                "path": {"type": "string"},
+                "content": {"type": "string"},
+            }),
+            &["path", "content"],
         ),
         function(
             "run_command",

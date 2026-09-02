@@ -28,6 +28,7 @@ fn the_schema_offers_exactly_the_typed_capabilities() {
             "search",
             "list_tree",
             "apply_replace",
+            "write_file",
             "run_command",
             "complete"
         ]
@@ -191,7 +192,10 @@ async fn a_denied_action_is_returned_to_the_model_rather_than_ending_the_run() {
         poorai_orchestrator::run_action_loop(&store, &provider, run_id, request, &policy, &[], 6)
             .await
             .unwrap();
-    assert!(result.verified);
+    // No checks were supplied, so nothing could be verified -- but the run
+    // still finished rather than looping until its budget ran out, and the
+    // edit that followed the refusal landed.
+    assert!(!result.verified);
     assert_eq!(
         std::fs::read_to_string(root.path().join("code.rs")).unwrap(),
         "fixed"
@@ -374,6 +378,9 @@ fn the_system_prompt_states_when_to_complete_and_when_not_to() {
     // The hash guard is the most common denial in practice, so the prompt says
     // what to do about it rather than leaving it to be discovered per run.
     assert!(prompt.contains("re-read a file after editing it"));
+    // Creation and modification are different tools; a deployment told only
+    // about the second cannot build anything that does not exist.
+    assert!(prompt.contains("use write_file"));
 }
 
 /// The prompt is assembled from fragments; a missing space between two of them

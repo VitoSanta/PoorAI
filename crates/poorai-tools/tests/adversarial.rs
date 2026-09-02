@@ -276,3 +276,86 @@ fn the_safe_profile_allows_no_commands_at_all() {
     assert!(policy.allow_commands.is_empty());
     assert!(!policy.network_allowed());
 }
+
+// ------------------------------------------------------------ file creation
+
+/// Creation and modification are separate tools. An edit carries the hash of
+/// what it replaces; a create has nothing to hash, so letting one tool do both
+/// would put a blind overwrite one missing argument away.
+#[test]
+fn write_file_creates_but_refuses_to_overwrite() {
+    let root = tempfile::tempdir().unwrap();
+    let policy = policy(root.path());
+    assert!(write_file(&policy, Path::new("src/app.js"), "const a = 1;\n").is_ok());
+    assert_eq!(
+        fs::read_to_string(root.path().join("src/app.js")).unwrap(),
+        "const a = 1;\n"
+    );
+    let refused = write_file(&policy, Path::new("src/app.js"), "clobbered");
+    assert!(refused.is_err());
+    assert_eq!(
+        fs::read_to_string(root.path().join("src/app.js")).unwrap(),
+        "const a = 1;\n"
+    );
+}
+
+#[test]
+fn write_file_cannot_create_outside_the_workspace() {
+    let root = tempfile::tempdir().unwrap();
+    let policy = policy(root.path());
+    for escaping in ["../escaped.js", "/tmp/escaped.js", "a/../../escaped.js"] {
+        assert!(
+            write_file(&policy, Path::new(escaping), "x").is_err(),
+            "created: {escaping}"
+        );
+    }
+}
+
+/// Creating a dependency manifest is a dependency change, whether the file
+/// existed before or not.
+#[test]
+fn creating_a_manifest_still_requires_approval() {
+    let root = tempfile::tempdir().unwrap();
+    let mut policy = policy(root.path());
+    assert!(write_file(&policy, Path::new("package.json"), "{}").is_err());
+    assert!(!root.path().join("package.json").exists());
+    policy.approvals = vec![Approval::DependencyChange];
+    assert!(write_file(&policy, Path::new("package.json"), "{}").is_ok());
+}
+
+#[test]
+fn write_file_respects_the_size_limit() {
+    let root = tempfile::tempdir().unwrap();
+    let mut policy = policy(root.path());
+    policy.output_limit = 32;
+    assert!(write_file(&policy, Path::new("big.js"), &"x".repeat(64)).is_err());
+    assert!(!root.path().join("big.js").exists());
+}
+
+/// A file may be created several directories deep in an empty workspace, and
+/// the escape check still applies to every one of those directories.
+#[test]
+fn creation_resolves_paths_whose_parents_do_not_exist_yet() {
+    let root = tempfile::tempdir().unwrap();
+    let policy = policy(root.path());
+    assert!(policy.resolve(Path::new("a/b/c/deep.js")).is_ok());
+    assert!(write_file(&policy, Path::new("a/b/c/deep.js"), "x").is_ok());
+    assert_eq!(
+        fs::read_to_string(root.path().join("a/b/c/deep.js")).unwrap(),
+        "x"
+    );
+    // Still refused, however deep.
+    assert!(policy.resolve(Path::new("a/b/../../../escape.js")).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn creation_cannot_follow_a_symlinked_parent_out_of_the_workspace() {
+    use std::os::unix::fs::symlink;
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    symlink(outside.path(), root.path().join("link")).unwrap();
+    let policy = policy(root.path());
+    assert!(write_file(&policy, Path::new("link/planted.js"), "x").is_err());
+    assert!(!outside.path().join("planted.js").exists());
+}
