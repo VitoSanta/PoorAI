@@ -98,6 +98,13 @@ struct TagModel {
     digest: String,
     #[serde(default)]
     size: Option<u64>,
+    /// Bytes resident on the accelerator. Equal to `size` when the whole model
+    /// is there; smaller means part of it is being served from the CPU, which
+    /// changes what a latency measurement is measuring.
+    #[serde(default)]
+    size_vram: Option<u64>,
+    #[serde(default)]
+    context_length: Option<u64>,
 }
 #[derive(Serialize)]
 struct ChatRequest<'a> {
@@ -303,10 +310,35 @@ impl ModelProvider for OllamaProvider {
             .map_err(|_| ProviderError::Protocol {
                 safe_context: "malformed Ollama runtime response".into(),
             })?;
+        // Residency is recorded rather than assumed: a deployment partly served
+        // from the CPU is a different machine from one wholly on the
+        // accelerator, and a calibration that cannot tell them apart is
+        // measuring two things under one name.
+        let resident: Vec<serde_json::Value> = tags
+            .models
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "name": m.name,
+                    "size_bytes": m.size,
+                    "vram_bytes": m.size_vram,
+                    "context_length": m.context_length,
+                    "fully_on_accelerator": match (m.size, m.size_vram) {
+                        (Some(size), Some(vram)) => Some(vram >= size),
+                        // Absent fields are unknown, not false.
+                        _ => None,
+                    },
+                })
+            })
+            .collect();
         Ok(BackendState {
             observed_at: Utc::now(),
-            loaded_models: tags.models.into_iter().map(|m| m.name).collect(),
-            state: serde_json::json!({"source":"ollama:/api/ps", "unknown_fields":"not inferred"}),
+            loaded_models: tags.models.iter().map(|m| m.name.clone()).collect(),
+            state: serde_json::json!({
+                "source": "ollama:/api/ps",
+                "loaded": resident,
+                "unknown_fields": "not inferred",
+            }),
         })
     }
     async fn chat(&self, request: ModelRequest) -> Result<ModelStream, ProviderError> {

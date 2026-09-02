@@ -188,3 +188,33 @@ fn the_ledger_carries_hashes_and_refusals_from_the_audit() {
     assert!(ledger.contains("do not repeat"));
     assert!(ledger.contains("stale file hash"));
 }
+
+/// A tier the backend had to serve partly from the CPU is a different machine
+/// from one wholly on the accelerator, so it is not a stable point on this one
+/// however good its latency looked.
+#[test]
+fn a_tier_served_partly_from_the_cpu_is_not_a_stable_point() {
+    let sample = |on_gpu: Option<bool>| poorai_orchestrator::CalibrationSample {
+        context_tokens: 131_072,
+        repetition: 1,
+        ok: true,
+        error: None,
+        first_token_ms: 40.0,
+        total_ms: 100.0,
+        chunks: 10,
+        generation_tokens_per_second: 70.0,
+        rate_source: "backend_reported_tokens",
+        metrics: None,
+        memory_pressure: poorai_domain::Observation::Unknown {
+            reason: "test".into(),
+        },
+        backend_state: None,
+        fully_on_accelerator: on_gpu,
+    };
+    // The field carries three states, and the absent one is unknown rather
+    // than a failure: a backend that does not report residency has not
+    // reported an offload.
+    assert_eq!(sample(Some(true)).fully_on_accelerator, Some(true));
+    assert_eq!(sample(Some(false)).fully_on_accelerator, Some(false));
+    assert_eq!(sample(None).fully_on_accelerator, None);
+}

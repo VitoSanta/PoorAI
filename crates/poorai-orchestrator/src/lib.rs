@@ -1177,6 +1177,10 @@ pub struct CalibrationSample {
     pub metrics: Option<poorai_domain::GenerationMetrics>,
     pub memory_pressure: poorai_domain::Observation,
     pub backend_state: Option<serde_json::Value>,
+    /// Whether the deployment was wholly on the accelerator for this sample.
+    /// `None` where the backend did not say, which is unknown rather than an
+    /// offload.
+    pub fully_on_accelerator: Option<bool>,
 }
 
 /// Runs one sample: full stream, first-token latency and generation rate.
@@ -1203,6 +1207,16 @@ async fn calibration_sample<P: ModelProvider>(
     let backend_state = provider.runtime_state().await.ok().map(
         |state| serde_json::json!({"loaded_models": state.loaded_models, "state": state.state}),
     );
+    // A tier served partly from the CPU is a different measurement from one
+    // wholly on the accelerator, whatever its latency says.
+    let fully_on_accelerator = backend_state.as_ref().and_then(|state| {
+        state["state"]["loaded"]
+            .as_array()?
+            .iter()
+            .find(|m| m["name"] == deployment.model_ref.as_str())?
+            .get("fully_on_accelerator")?
+            .as_bool()
+    });
     let memory_pressure = host.memory_pressure().await;
     let started = Instant::now();
     let mut first_token_ms = 0.0;
@@ -1265,6 +1279,7 @@ async fn calibration_sample<P: ModelProvider>(
         metrics,
         memory_pressure,
         backend_state,
+        fully_on_accelerator,
     }
 }
 
@@ -1377,7 +1392,15 @@ pub async fn calibrate<P: ModelProvider>(
         let measured_cold = tier
             .iter()
             .any(|sample| sample_ran_warm(sample) == Some(false));
+        // A tier the backend had to offload is not a tier this machine can
+        // serve, whatever its latency looked like.
+        let offloaded = tier
+            .iter()
+            .any(|sample| sample.fully_on_accelerator == Some(false));
         let mut reasons = Vec::new();
+        if offloaded {
+            reasons.push("cpu_offload");
+        }
         if point.success_rate < thresholds.min_success_rate {
             reasons.push("success_rate");
         }
@@ -1726,6 +1749,7 @@ mod tests {
                 reason: "test".into(),
             },
             backend_state: None,
+            fully_on_accelerator: None,
         };
         // Measured on this machine: ~1.7s reloading, ~11ms warm.
         assert_eq!(
