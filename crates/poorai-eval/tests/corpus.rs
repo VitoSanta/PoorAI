@@ -51,6 +51,7 @@ fn outcome(kind: TaskKind) -> TaskOutcome {
         error: None,
         violation: None,
         answer_matched: None,
+        provider_failure: false,
     }
 }
 
@@ -456,4 +457,31 @@ fn generation_is_scored_on_the_hidden_verifier_not_the_declaration() {
     o.hidden_verifier_passed = true;
     o.out_of_scope_changes = vec!["SPEC.md".into()];
     assert!(!o.resolved());
+}
+
+/// A backend that dropped the stream says nothing about whether the deployment
+/// could have done the task. Scoring it as a failure reports infrastructure as
+/// capability.
+#[test]
+fn a_provider_failure_is_excluded_from_the_rates_and_counted_on_its_own() {
+    let mut resolved_run = outcome(TaskKind::Bugfix);
+    resolved_run.declared_complete = true;
+    resolved_run.hidden_verifier_passed = true;
+    let mut dropped = outcome(TaskKind::Bugfix);
+    dropped.provider_failure = true;
+    dropped.declared_complete = false;
+    dropped.hidden_verifier_passed = false;
+    let report = report_of(vec![resolved_run, dropped]);
+    let metrics = report.metrics();
+    let resolved = metrics
+        .iter()
+        .find(|m| m.name == "resolved_task_rate")
+        .unwrap();
+    // One of one measured, not one of two.
+    assert_eq!((resolved.successes, resolved.total), (1, 1));
+    let failures = metrics
+        .iter()
+        .find(|m| m.name == "provider_failures")
+        .unwrap();
+    assert_eq!((failures.successes, failures.total), (1, 2));
 }

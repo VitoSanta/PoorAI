@@ -710,6 +710,7 @@ async fn evaluate_task(
         error: None,
         violation: None,
         answer_matched: None,
+        provider_failure: false,
     };
     let Ok(workspace) = tempfile::tempdir() else {
         outcome.error = Some("could not create a task workspace".into());
@@ -809,7 +810,12 @@ async fn evaluate_task(
             outcome.error = Some("task time budget exceeded".into());
         }
         Ok(Ok(result)) => outcome.declared_complete = result.verified,
-        Ok(Err(error)) => outcome.error = Some(error),
+        Ok(Err(error)) => {
+            // A backend that dropped the stream says nothing about whether the
+            // deployment could have done the task.
+            outcome.provider_failure = error.contains("provider ");
+            outcome.error = Some(error);
+        }
     }
     let events = store.events_for_run(run_id).unwrap_or_default();
     for event in &events {
