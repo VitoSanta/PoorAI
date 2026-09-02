@@ -202,6 +202,7 @@ fn gated_run(answers: Vec<ApprovalDecision>) -> (Store, poorai_domain::Id, Strin
             &[],
             5,
             &prompt,
+            false,
         ),
     );
     let after = std::fs::read_to_string(root.path().join("Cargo.toml")).unwrap();

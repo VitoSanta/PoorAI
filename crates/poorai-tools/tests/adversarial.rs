@@ -475,3 +475,46 @@ fn a_window_past_the_end_of_the_file_is_refused() {
     assert!(read_file_window(&policy, Path::new("a.rs"), Some(99), None).is_err());
     assert!(read_file_window(&policy, Path::new("a.rs"), Some(2), None).is_ok());
 }
+
+// ------------------------------------------------------------------ fetch
+
+/// A fetch is network access, so it needs the same grant as any other.
+#[test]
+fn fetching_needs_the_network_grant() {
+    let root = tempfile::tempdir().unwrap();
+    let policy = policy(root.path());
+    let refused = block_on_tools(fetch_url(&policy, "https://example.com"));
+    assert!(refused.is_err());
+    assert_eq!(
+        required_approval(&ActionProposal::FetchUrl {
+            url: "https://example.com".into()
+        })
+        .map(|(a, _)| a),
+        Some(Approval::NetworkAccess)
+    );
+}
+
+/// A scheme other than http or https reaches the filesystem or a local
+/// service without crossing the network the grant was given for.
+#[test]
+fn only_http_and_https_are_fetchable() {
+    let root = tempfile::tempdir().unwrap();
+    let mut policy = policy(root.path());
+    policy.approvals = vec![Approval::NetworkAccess];
+    for url in [
+        "file:///etc/passwd",
+        "ftp://example.com/x",
+        "data:text/plain,hello",
+        "not a url",
+        "/etc/passwd",
+    ] {
+        assert!(
+            block_on_tools(fetch_url(&policy, url)).is_err(),
+            "fetched: {url}"
+        );
+    }
+}
+
+fn block_on_tools<F: std::future::Future>(f: F) -> F::Output {
+    tokio::runtime::Runtime::new().unwrap().block_on(f)
+}

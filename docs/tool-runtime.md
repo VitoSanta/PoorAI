@@ -13,9 +13,12 @@ Tools are typed capabilities. Requests carry root-relative paths and limits; res
 | `WriteFile` | Creates a file | Refuses to overwrite; approval gate on manifests |
 | `ApplyReplace` | Rewrites a whole file | Hash guard; refuses binaries and oversized content |
 | `RunCommand` | Runs one allowlisted command | Sandbox, timeout, output cap, no network without a grant |
+| `FetchUrl` | Fetches one http or https URL as text | Requires the network grant; refuses other schemes and redirects |
 | `Complete` | Declares the task done | Accepted only if deterministic verification then passes |
 
-`Search` is literal and repository-scoped. There is no web access and no structural or semantic search.
+`Search` is literal and repository-scoped. There is no structural or semantic search.
+
+`FetchUrl` is a **fetch, not a search**: there is no index and no query, so a caller must already know the address. Naming it search would promise something it does not do. Redirects are refused rather than followed, because a redirect can change scheme or host after the scheme check and would make that check advisory rather than binding. A fetched page is untrusted input in the strongest sense — a remote party wrote it — so it is bounded, redacted and hashed exactly like a file read, and it grants nothing: a page instructing the agent to run a command is prose, and the command still has to pass policy.
 
 ## Reading and editing at scale
 

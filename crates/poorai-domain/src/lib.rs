@@ -86,6 +86,10 @@ pub struct ModelStrategy {
     /// Repository passages offered at the start.
     #[serde(default)]
     pub retrieval_excerpts: Option<usize>,
+    /// Ask for a plan before acting. Costs a turn, so it is opt-in and must be
+    /// measured against the default rather than assumed to help.
+    #[serde(default)]
+    pub plan_first: bool,
     /// Why this strategy exists, and what measurement prompted it.
     pub rationale: String,
 }

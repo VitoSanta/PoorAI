@@ -31,6 +31,7 @@ fn the_schema_offers_exactly_the_typed_capabilities() {
             "apply_replace",
             "write_file",
             "run_command",
+            "fetch_url",
             "complete"
         ]
     );

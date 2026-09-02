@@ -70,6 +70,9 @@ pub enum ActionProposal {
         executable: String,
         args: Vec<String>,
     },
+    FetchUrl {
+        url: String,
+    },
 }
 impl ActionProposal {
     pub fn validate(&self) -> Result<(), ToolError> {
@@ -93,6 +96,9 @@ impl ActionProposal {
             }
             Self::ReplaceText { find, .. } if find.is_empty() => {
                 Err(ToolError::Denied("find text is required".into()))
+            }
+            Self::FetchUrl { url } if url.is_empty() => {
+                Err(ToolError::Denied("url is required".into()))
             }
             Self::RunCommand { executable, .. } if executable.is_empty() => {
                 Err(ToolError::Denied("executable is required".into()))
@@ -191,6 +197,7 @@ pub fn command_approval(executable: &str, args: &[String]) -> Option<Approval> {
 /// discovering its own gate at the moment it would have acted.
 pub fn required_approval(action: &ActionProposal) -> Option<(Approval, String)> {
     match action {
+        ActionProposal::FetchUrl { url } => Some((Approval::NetworkAccess, format!("fetch {url}"))),
         ActionProposal::RunCommand { executable, args } => command_approval(executable, args)
             .map(|approval| (approval, format!("run `{executable} {}`", args.join(" ")))),
         ActionProposal::ApplyReplace { path, .. } | ActionProposal::WriteFile { path, .. } => {
@@ -536,6 +543,72 @@ pub fn replace_text(
         path: relative.display().to_string(),
         previous_hash,
         new_hash: hash_bytes(updated.as_bytes()),
+    })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FetchResult {
+    pub url: String,
+    pub status: u16,
+    pub content: String,
+    pub truncated: bool,
+    pub redacted: bool,
+    pub artifact_hash: String,
+}
+
+/// Schemes a fetch may use. Anything else can reach the filesystem or a local
+/// service without crossing the network the grant was given for.
+const FETCH_SCHEMES: [&str; 2] = ["http", "https"];
+
+/// Fetches one URL as text.
+///
+/// This is a fetch, not a search: there is no index and no query, so a caller
+/// must already know the address. Naming it search would promise something it
+/// does not do.
+///
+/// The result is untrusted input in the strongest sense — a remote party wrote
+/// it — so it is bounded, redacted and hashed exactly like a file read, and it
+/// grants nothing: a page saying to run a command is prose, and the command
+/// still has to pass policy.
+pub async fn fetch_url(policy: &ToolPolicy, url: &str) -> Result<FetchResult, ToolError> {
+    policy.require(Approval::NetworkAccess)?;
+    let parsed = url::Url::parse(url)
+        .map_err(|_| ToolError::Denied("url is not a valid absolute URL".into()))?;
+    if !FETCH_SCHEMES.contains(&parsed.scheme()) {
+        return Err(ToolError::Denied(format!(
+            "scheme {} is not fetchable; only http and https are",
+            parsed.scheme()
+        )));
+    }
+    let client = reqwest::Client::builder()
+        .timeout(policy.timeout)
+        // A redirect can change scheme or host after the check above, so the
+        // check would be advisory rather than binding.
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| ToolError::Denied("could not build a fetch client".into()))?;
+    let response = client.get(parsed.clone()).send().await.map_err(|error| {
+        if error.is_timeout() {
+            ToolError::Timeout
+        } else {
+            ToolError::Denied("fetch failed".into())
+        }
+    })?;
+    let status = response.status().as_u16();
+    let body = response
+        .text()
+        .await
+        .map_err(|_| ToolError::Denied("response was not readable text".into()))?;
+    let truncated = body.len() > policy.output_limit;
+    let bounded: String = body.chars().take(policy.output_limit).collect();
+    let (content, redacted) = policy.redact(&bounded);
+    Ok(FetchResult {
+        url: parsed.to_string(),
+        status,
+        artifact_hash: hash_bytes(body.as_bytes()),
+        content,
+        truncated,
+        redacted,
     })
 }
 

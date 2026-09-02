@@ -479,6 +479,7 @@ fn a_strategy_applies_only_to_the_deployment_it_names() {
         prompt_suffix: " extra".into(),
         max_actions: Some(12),
         retrieval_excerpts: Some(8),
+        plan_first: false,
         rationale: "measured".into(),
     };
     let declared = vec![strategy("muse-glimmer:30b-mlx"), strategy("ornith-1.5:35b")];
@@ -503,6 +504,7 @@ fn a_strategy_round_trips_and_keeps_its_rationale() {
         prompt_suffix: " suffix".into(),
         max_actions: None,
         retrieval_excerpts: None,
+        plan_first: false,
         rationale: "why this exists".into(),
     };
     let decoded: ModelStrategy =

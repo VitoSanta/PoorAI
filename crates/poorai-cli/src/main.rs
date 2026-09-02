@@ -1765,6 +1765,7 @@ async fn prepare_profiled_run(
             .try_into()
             .unwrap_or(1),
         &TerminalApproval,
+        strategy.is_some_and(|s| s.plan_first),
     )
     .await
     .map_err(|e| SafeError {

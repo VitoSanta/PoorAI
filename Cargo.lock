@@ -1035,11 +1035,13 @@ version = "0.1.0"
 dependencies = [
  "poorai-domain",
  "regex",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
+ "url",
 ]
 
 [[package]]
