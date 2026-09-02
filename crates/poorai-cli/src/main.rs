@@ -620,7 +620,7 @@ async fn evaluate(
     // which is what every measurement so far was taken under.
     let declared = load_strategies(Path::new(STRATEGY_FILE));
     let strategy = poorai_domain::ModelStrategy::select(&declared, &deployment.model_ref).cloned();
-    let profiles = load_model_profiles(Path::new(MODEL_PROFILE_FILE));
+    let profiles = load_model_profiles(Path::new(MODEL_PROFILE_FILE))?;
     let profile = poorai_domain::ModelProfile::select(&profiles, &deployment.model_ref);
     // What the backend will actually receive, and where each value came from.
     let resolved_sampling = resolved_sampling_for(profile);
@@ -753,16 +753,34 @@ fn reasoning_options(
 /// Where declared model profiles live, relative to the working directory.
 const MODEL_PROFILE_FILE: &str = "strategies/models.json";
 
-fn load_model_profiles(path: &Path) -> Vec<poorai_domain::ModelProfile> {
+fn load_model_profiles(path: &Path) -> Result<Vec<poorai_domain::ModelProfile>, SafeError> {
     #[derive(serde::Deserialize)]
     struct File {
         profiles: Vec<poorai_domain::ModelProfile>,
     }
-    std::fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<File>(&bytes).ok())
-        .map(|file| file.profiles)
-        .unwrap_or_default()
+    // Absent is a decision: run on backend defaults. Present and unreadable is
+    // a mistake, and returning an empty list for it would apply nothing while
+    // looking exactly like the decision -- a configuration that silently does
+    // not take effect.
+    let Ok(bytes) = std::fs::read(path) else {
+        return Ok(Vec::new());
+    };
+    let file: File = serde_json::from_slice(&bytes).map_err(|e| SafeError {
+        category: "invalid_input",
+        context: format!("{} is present but unreadable: {e}", path.display()),
+    })?;
+    for profile in &file.profiles {
+        if !profile.context.is_coherent() {
+            return Err(SafeError {
+                category: "invalid_input",
+                context: format!(
+                    "{} declares contradictory context sizes",
+                    profile.model_selector
+                ),
+            });
+        }
+    }
+    Ok(file.profiles)
 }
 
 /// The sampling parameters in force, with their origins.
@@ -1753,7 +1771,7 @@ async fn prepare_profiled_run(
     // cannot say which tree an edit was made against.
     let declared = load_strategies(Path::new(STRATEGY_FILE));
     let strategy = poorai_domain::ModelStrategy::select(&declared, &deployment.model_ref);
-    let model_profiles = load_model_profiles(Path::new(MODEL_PROFILE_FILE));
+    let model_profiles = load_model_profiles(Path::new(MODEL_PROFILE_FILE))?;
     let model_profile = poorai_domain::ModelProfile::select(&model_profiles, &deployment.model_ref);
     let index = poorai_repo::index(&root).map_err(|e| SafeError {
         category: "invalid_input",
@@ -2441,7 +2459,21 @@ mod profile_tests {
     use super::*;
 
     fn declared() -> Vec<poorai_domain::ModelProfile> {
-        load_model_profiles(Path::new("../../strategies/models.json"))
+        // An absolute path, because a relative one resolves against the crate
+        // directory here and against the working directory in a run -- and a
+        // missing file loads as "no profiles", which would make this whole
+        // module pass against nothing.
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../strategies/models.json");
+        let profiles = match load_model_profiles(&path) {
+            Ok(profiles) => profiles,
+            Err(error) => panic!("profiles are unreadable: {}", error.context),
+        };
+        assert!(
+            !profiles.is_empty(),
+            "no profiles were loaded from {path:?}"
+        );
+        profiles
     }
 
     /// The case this file exists for. The packaged Modelfile declares nothing,

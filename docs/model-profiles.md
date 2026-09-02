@@ -68,6 +68,28 @@ qwen is the only one that degrades monotonically. Its 32K figure has a standard 
 
 Context defaults now carry `context_source`, so a size measured on this machine does not read like one copied from a specification.
 
+### The context requirement
+
+This agent targets large repositories, so **262144 tokens is a qualification threshold, not a preference**. A deployment that cannot serve it does not qualify for the use case however it scores on a corpus, and one that can is allocated its full ceiling by default. The throughput cost is accepted: a faster deployment that cannot see the repository is not useful here.
+
+| Deployment | Ceiling | Qualifies |
+|---|---|---|
+| qwen3.8:27b-mlx | 262144 | yes |
+| ornith-1.5:35b | 262144 | yes |
+| nemotron-3.5-lightning:30b-mlx | 262144 | yes |
+| gemma4:31b-mlx | 262144 | yes |
+| granite4.2:30b-q6_K | 131072 | no |
+| gpt-oss:20b | 131072 | no |
+| muse-glimmer:30b-mlx | 131072 | no |
+
+**This costs the best generator.** gpt-oss:20b built a working application in six actions and 1.2 minutes, the fastest of any deployment measured, and its tag tops out at half the required context. Under this requirement it is out, and that is a consequence of the requirement rather than of its performance.
+
+**And it keeps a deployment that does nothing.** gemma4 clears the threshold on context and resolved zero of fifteen edit tasks. Meeting the context requirement is necessary and plainly not sufficient.
+
+The intersection of "can serve 262144" and "does the work" is currently three deployments: qwen, ornith and nemotron.
+
+qwen keeps its recorded price rather than having it erased by the decision: it is the only deployment whose throughput falls monotonically with context, 27.3 tok/s at 32K against 18.3 at 262K, and its 32K figure is the least reliable point in the series. The choice was made against that cost, and a decision that hides its own price cannot be revisited.
+
 ## Withdrawn deployments
 
 **granite4.2:30b-q6_K — speed.** Measured at 7.4 tokens per second in M2 against 70 for the fastest deployment, and on the `realistic-v1` corpus it took 36.1 minutes per seed where ornith took 1.5 and qwen 7.5 — twenty-four times the slowest of the others. It had already failed the generation suite by exceeding a 900-second per-turn bound without producing one turn. An agent too slow to wait for is unusable in the same way an inaccurate one is, and the cost is paid on every campaign it appears in.

@@ -35,34 +35,43 @@ fn every_profile_is_coherent_and_explains_itself() {
     }
 }
 
-/// A context default measured on this machine is a different claim from one
-/// copied out of a specification, and the two must not read alike.
+/// The product targets large repositories, so a deployment that cannot serve
+/// the required context does not qualify however it scores. That is a
+/// selection criterion, not a tuning knob, and it is visible in the data.
 #[test]
-fn a_measured_context_default_says_so() {
+fn every_qualifying_deployment_is_allocated_the_full_ceiling() {
+    const REQUIRED: u32 = 262_144;
     let profiles = declared();
-    let measured: Vec<&str> = profiles
-        .iter()
-        .filter(|p| p.context_source == ParameterSource::HardwareCalibration)
-        .map(|p| p.model_selector.as_str())
-        .collect();
-    // The four deployments a ladder was actually run against.
-    assert_eq!(measured.len(), 4);
-    for selector in ["ornith-1.5:35b", "qwen3.8:27b-mlx", "gpt-oss:20b"] {
-        assert!(measured.contains(&selector), "{selector} was measured");
+    for profile in &profiles {
+        if profile.context.maximum >= REQUIRED {
+            assert_eq!(
+                profile.context.default, profile.context.maximum,
+                "{} qualifies but is allocated less than it can serve",
+                profile.model_selector
+            );
+            assert_eq!(profile.context.minimum, REQUIRED);
+            assert_eq!(profile.context_source, ParameterSource::PoorAiOverride);
+        } else {
+            // Below the requirement, and the profile does not pretend
+            // otherwise by raising a ceiling the tag cannot serve.
+            assert!(profile.context.default <= profile.context.maximum);
+        }
     }
-    // A measured profile carries the numbers, not just the claim.
-    let ornith = ModelProfile::select(&profiles, "ornith-1.5:35b").unwrap();
-    assert!(ornith.provenance.contains("tok/s"));
-    assert_eq!(ornith.context.default, ornith.context.maximum);
+    let qualifying = profiles
+        .iter()
+        .filter(|p| p.context.maximum >= REQUIRED)
+        .count();
+    assert_eq!(qualifying, 4);
 }
 
-/// The one context choice with a measured price says what the price is.
+/// The throughput cost of the choice stays recorded even though the choice was
+/// made against it: a decision that hides its own price cannot be revisited.
 #[test]
-fn the_contested_default_records_its_cost() {
+fn the_deployment_that_pays_for_context_still_records_the_price() {
     let profiles = declared();
     let qwen = ModelProfile::select(&profiles, "qwen3.8:27b-mlx").unwrap();
+    assert_eq!(qwen.context.default, 262_144);
     assert!(qwen.provenance.contains("monotonically"));
     assert!(qwen.provenance.contains("least reliable"));
-    // Not taken to the ceiling, unlike the deployment where it costs nothing.
-    assert!(qwen.context.default < qwen.context.maximum);
+    assert!(qwen.provenance.contains("product requirement"));
 }

@@ -1,15 +1,15 @@
 {
-  "note": "Sampling values carry their origin. official_model_card means the vendor published it; ollama_model means the packaged Modelfile declared it; backend_default means nothing set it and the backend decides. A run reporting a value without its origin cannot be compared with another run. Context defaults carry context_source: hardware_calibration means the value was set from a ladder measured on this machine, with every tier verified fully GPU resident.",
+  "note": "Sampling values carry their origin. official_model_card means the vendor published it; ollama_model means the packaged Modelfile declared it; backend_default means nothing set it and the backend decides. A run reporting a value without its origin cannot be compared with another run. Context defaults carry context_source: hardware_calibration means the value was set from a ladder measured on this machine, with every tier verified fully GPU resident. Product requirement: this agent targets large repositories, so a deployment that cannot serve 262144 tokens does not qualify for the use case regardless of how it scores. Deployments that can are allocated the full ceiling by default; throughput cost is accepted, because a faster model that cannot see the repository is not useful here.",
   "profiles": [
     {
       "context": {
-        "default": 131072,
+        "default": 262144,
         "maximum": 262144,
-        "minimum": 65536
+        "minimum": 262144
       },
-      "context_source": "hardware_calibration",
+      "context_source": "poor_ai_override",
       "model_selector": "qwen3.8:27b-mlx",
-      "provenance": "Vendor thinking-mode recommendation, which the packaged Modelfile already matches exactly. Not changed by poorAI. Measured: the only deployment whose throughput falls monotonically with context \u2014 27.3 tok/s at 32K, 20.9 at 65K, 19.4 at 131K, 18.3 at 262K, fully GPU resident throughout. The 32K figure has a standard deviation of 47.3 against 2.7 at 262K and is the least reliable point in the series, so the real cost is likely smaller than 33 percent. 131072 is kept as the default pending a task that shows how much context is actually needed; it is the one context choice here that has a measured price.",
+      "provenance": "Vendor thinking-mode recommendation, which the packaged Modelfile already matches exactly. Not changed by poorAI. Measured: the only deployment whose throughput falls monotonically with context \u2014 27.3 tok/s at 32K, 20.9 at 65K, 19.4 at 131K, 18.3 at 262K, fully GPU resident throughout. The 32K figure has a standard deviation of 47.3 against 2.7 at 262K and is the least reliable point in the series, so the real cost is likely smaller than 33 percent. 131072 is kept as the default pending a task that shows how much context is actually needed; it is the one context choice here that has a measured price. Default raised to the ceiling by product requirement: large repositories are the target, so context takes precedence over throughput.",
       "reasoning": {
         "enabled": true,
         "kind": "think"
@@ -46,11 +46,11 @@
       "context": {
         "default": 262144,
         "maximum": 262144,
-        "minimum": 65536
+        "minimum": 262144
       },
-      "context_source": "hardware_calibration",
+      "context_source": "poor_ai_override",
       "model_selector": "ornith-1.5:35b",
-      "provenance": "The packaged Modelfile declares nothing, so this deployment was running on backend defaults (0.8/40/0.9) while its own card recommends 0.6/0.95/20 for use. Every measurement recorded before this profile existed was taken under the backend defaults, not the recommendation. Measured on this machine: 70.6 tok/s at 32K and 71.5 at 262K, first token 63 ms at both, fully GPU resident throughout. The largest context costs nothing here, so there is no reason to allocate less.",
+      "provenance": "The packaged Modelfile declares nothing, so this deployment was running on backend defaults (0.8/40/0.9) while its own card recommends 0.6/0.95/20 for use. Every measurement recorded before this profile existed was taken under the backend defaults, not the recommendation. Measured on this machine: 70.6 tok/s at 32K and 71.5 at 262K, first token 63 ms at both, fully GPU resident throughout. The largest context costs nothing here, so there is no reason to allocate less. Default raised to the ceiling by product requirement: large repositories are the target, so context takes precedence over throughput.",
       "reasoning": null,
       "sampling": {
         "temperature": {
@@ -91,13 +91,13 @@
     },
     {
       "context": {
-        "default": 131072,
+        "default": 262144,
         "maximum": 262144,
-        "minimum": 65536
+        "minimum": 262144
       },
-      "context_source": "hardware_calibration",
+      "context_source": "poor_ai_override",
       "model_selector": "nemotron-3.5-lightning:30b-mlx",
-      "provenance": "Vendor recommendation. Context maximum is the MLX tag's 256K, not the 1M the upstream model declares -- the tag is what is served. Measured: 80.9 tok/s at 32K falling to 71.3 at 65K and then flat at 72.3 and 72.4 through 262K. The 10 percent is paid leaving 32K and not again, so the larger context is free once it is paid. 131072 rather than 262144 because nothing has yet asked for more.",
+      "provenance": "Vendor recommendation. Context maximum is the MLX tag's 256K, not the 1M the upstream model declares -- the tag is what is served. Measured: 80.9 tok/s at 32K falling to 71.3 at 65K and then flat at 72.3 and 72.4 through 262K. The 10 percent is paid leaving 32K and not again, so the larger context is free once it is paid. 131072 rather than 262144 because nothing has yet asked for more. Default raised to the ceiling by product requirement: large repositories are the target, so context takes precedence over throughput.",
       "reasoning": null,
       "sampling": {
         "temperature": {
@@ -135,12 +135,13 @@
     },
     {
       "context": {
-        "default": 131072,
+        "default": 262144,
         "maximum": 262144,
-        "minimum": 65536
+        "minimum": 262144
       },
+      "context_source": "poor_ai_override",
       "model_selector": "gemma4:31b-mlx",
-      "provenance": "Vendor recommendation for all use cases, which the packaged Modelfile already matches.",
+      "provenance": "Vendor recommendation for all use cases, which the packaged Modelfile already matches. Default raised to the ceiling by product requirement: large repositories are the target, so context takes precedence over throughput.",
       "reasoning": null,
       "sampling": {
         "temperature": {
