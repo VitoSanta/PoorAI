@@ -329,6 +329,37 @@ async fn main() {
     };
     std::process::exit(code);
 }
+/// Where the workspace stands in version control, as far as it can be read.
+///
+/// Reported rather than assumed: a workspace need not be a git checkout, and a
+/// session that says nothing about the branch is honest where one that invents
+/// `main` is not. Every field is absent when it cannot be read.
+fn version_control_state(root: &Path) -> serde_json::Value {
+    let read = |args: &[&str]| -> Option<String> {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        (!text.is_empty()).then_some(text)
+    };
+    let mut state = serde_json::Map::new();
+    if let Some(branch) = read(&["rev-parse", "--abbrev-ref", "HEAD"]) {
+        state.insert("branch".into(), branch.into());
+    }
+    if let Some(head) = read(&["rev-parse", "HEAD"]) {
+        state.insert("head".into(), head.into());
+    }
+    if let Some(status) = read(&["status", "--porcelain"]) {
+        state.insert("uncommitted_files".into(), status.lines().count().into());
+    }
+    serde_json::Value::Object(state)
+}
+
 /// Opens the workspace store without creating a run.
 fn open_store() -> Result<(std::path::PathBuf, poorai_store::Store), SafeError> {
     let root = std::env::current_dir()
@@ -359,6 +390,11 @@ fn list_sessions() -> Result<serde_json::Value, SafeError> {
                 "root": s.root,
                 "runs": s.runs.len(),
                 "last_opened_at": s.last_opened_at,
+                "last_task": store
+                    .latest_payload(*s.runs.last().expect("a session has a run"), "run.started")
+                    .ok()
+                    .flatten()
+                    .and_then(|p| p["task"].as_str().map(str::to_string)),
             }))
             .collect::<Vec<_>>(),
     }))
@@ -384,9 +420,25 @@ fn show_session(name: &str) -> Result<serde_json::Value, SafeError> {
             category: "internal",
             context: e,
         })?;
+    // Where the session started, as recorded at the time, beside where the
+    // workspace stands now. A session resumed onto a different branch is a
+    // thing the user needs to see before they resume it, not after.
+    let opened_at = store
+        .events_for_run(runs[0])
+        .map_err(|e| SafeError {
+            category: "internal",
+            context: e.to_string(),
+        })?
+        .into_iter()
+        .find(|event| event.event_type == "session.opened")
+        .map(|event| event.payload["version_control"].clone())
+        .unwrap_or(serde_json::Value::Null);
+    let now = version_control_state(&root);
     Ok(serde_json::json!({
         "name": name,
         "runs": runs.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+        "opened_on": opened_at,
+        "workspace_now": now,
         "ledger": ledger,
     }))
 }
@@ -1948,6 +2000,7 @@ async fn prepare_profiled_run(
                     "name": name,
                     "root": root.display().to_string(),
                     "continues_runs": carried.as_ref().map(|(count, _)| *count).unwrap_or(0),
+                    "version_control": version_control_state(&root),
                 }),
             )
             .map_err(|e| SafeError {

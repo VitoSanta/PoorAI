@@ -292,7 +292,9 @@ The number 8 remains undefended for real repositories. Successful runs on `m5-fr
 
 **5. Verification of systems rather than files.** The generation suite already starts one process and exercises it; several services is an extension of something that works.
 
-**6. Usability.** Named sessions with their repository, branch, accumulated diff and status. Worth building on resumable sessions and worthless without them.
+**6. Usability.** *Partly closed.* `session list` names each session, its workspace, how many runs it has, when it was last opened and what it was last asked — enough to choose between sessions without opening each one. `session show` reports the branch and head the session was opened on beside where the workspace stands now, so a session about to be resumed onto a different branch is visible before the resume rather than after. A workspace outside version control reports no branch rather than inventing `main`; every version-control field is absent when it cannot be read.
+
+Still open: the accumulated diff. The ledger names the files a session changed and their current hashes, which answers *what* but not *how much*. A first-class terminal presentation is also untouched — everything above is `--json`.
 
 Also open from earlier measurement: the action budget of 8 is an undefended constant that binds outcomes, the trial count that constitutes a result is unstated, and the safety record is not falsified rather than met — zero violations in 24 runs bounds the rate at 0.138 and no finite number of clean runs proves it is zero.
 
