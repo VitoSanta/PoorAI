@@ -432,6 +432,14 @@ const MALFORMED_CALL_LIMIT: usize = 3;
 /// a deployment that is not reading the refusal, and more budget buys more of
 /// the same rather than progress.
 const REPEATED_REFUSAL_LIMIT: usize = 3;
+/// Turns allowed per action of budget.
+///
+/// The budget counts actions rather than turns, so a turn that performs nothing
+/// -- a malformed call -- must still be bounded, or a deployment that never
+/// emits a valid call would run until the provider timed out. Two is the
+/// smallest multiple that lets every action be preceded by one correction,
+/// which is the shape `MALFORMED_CALL_LIMIT` already assumes.
+const TURNS_PER_ACTION: u32 = 2;
 
 /// What an action targets, for spotting repetition.
 ///
@@ -813,7 +821,33 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
             serde_json::to_value(&before).map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
-    for step in 0..max_actions {
+    // The budget counts actions, not turns. A malformed call performs nothing
+    // and is already bounded by `MALFORMED_CALL_LIMIT`; charging it against the
+    // action budget spends the run's capacity to do work on the deployment's
+    // spelling. Measured: a run that had finished its task lost two of its
+    // eight actions to schema mistakes and had no turn left to declare
+    // completion, and was recorded as a failure over a repository whose checks
+    // were passing.
+    let mut step: u8 = 0;
+    let mut turns: u32 = 0;
+    while step < max_actions {
+        turns += 1;
+        if turns > u32::from(max_actions) * TURNS_PER_ACTION {
+            store
+                .append(
+                    Some(run_id),
+                    "task.failed",
+                    serde_json::json!({
+                        "reason": "turn ceiling reached",
+                        "actions_used": step,
+                        "turns": turns,
+                    }),
+                )
+                .map_err(|e| e.to_string())?;
+            return Err(format!(
+                "{turns} turns produced only {step} actions; the deployment is not emitting usable calls"
+            ));
+        }
         let reply = poorai_provider::collect_reply(
             provider
                 .chat(request.clone())
@@ -1077,6 +1111,9 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
         // Stated as facts, not as urging. The loop does not decide the task is
         // finished -- deciding that for the deployment would be the harness
         // solving the task and would make the measurement meaningless.
+        // Charged here, where an action has actually been performed, rather
+        // than once per turn.
+        step += 1;
         let remaining = max_actions.saturating_sub(step);
         if checks_passed_at.is_some() && !edited {
             idle_since_pass += 1;
@@ -1101,14 +1138,34 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
             compact_history(store, run_id, &mut request, step)?;
         }
     }
+    // "Budget exhausted" over a repository whose checks are passing and whose
+    // files were changed is a different fact from one over a repository still
+    // broken, and the audit knows which. Reporting both the same way hides a
+    // finished task inside a failure. Completion is still not declared on the
+    // deployment's behalf -- that would be the harness solving the task -- but
+    // the state it stopped in is reported truthfully.
+    let checks_passing = checks_passed_at.is_some();
     store
         .append(
             Some(run_id),
             "task.failed",
-            serde_json::json!({"reason":"action budget exhausted"}),
+            serde_json::json!({
+                "reason": "action budget exhausted",
+                "actions_used": step,
+                "turns": turns,
+                "checks_passing_at_exit": checks_passing,
+                "checks_passing_since_step": checks_passed_at,
+            }),
         )
         .map_err(|e| e.to_string())?;
-    Err("action budget exhausted before verified completion".into())
+    Err(if checks_passing {
+        format!(
+            "action budget of {max_actions} exhausted; repository checks were passing but \
+             completion was never declared"
+        )
+    } else {
+        format!("action budget of {max_actions} exhausted before verified completion")
+    })
 }
 
 /// The single system prompt used by every agent run, evaluation included.
