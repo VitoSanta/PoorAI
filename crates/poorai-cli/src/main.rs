@@ -1458,7 +1458,17 @@ async fn inspect(
     Ok(serde_json::json!({"inspection":inspection,"artifact":artifact,"probed":probe}))
 }
 /// Bump when any measurement step changes; stored profiles invalidate on it.
-const CALIBRATION_HARNESS_REV: &str = concat!("calibration-", env!("POORAI_HARNESS_REV"));
+/// Version of the calibration *protocol*, not of the code.
+///
+/// `calibration.md` invalidates a profile on a calibration harness change,
+/// meaning a change to how the measurement is taken -- warm-up, tier order,
+/// sample count, what is recorded. Deriving this from the commit made every
+/// unrelated code change invalidate hours of GPU measurement, which is why it
+/// is bumped deliberately: a person decides the protocol changed.
+///
+/// The evaluation revision is derived from the commit instead, because it
+/// describes what produced a report rather than how a measurement was taken.
+const CALIBRATION_HARNESS_REV: &str = "calibration-harness-v3";
 
 /// Reads a calibration profile from a `poorai calibrate` artifact.
 ///
