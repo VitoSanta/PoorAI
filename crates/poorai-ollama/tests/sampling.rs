@@ -87,3 +87,35 @@ async fn a_fractional_temperature_is_sent_as_a_fraction() {
     let body: serde_json::Value = serde_json::from_str(&rx.recv().unwrap()).unwrap();
     assert_eq!(body["options"]["temperature"], 0.7);
 }
+
+/// A client timeout during streaming arrives as a broken body rather than as a
+/// timeout error. Reporting it as a protocol fault blames the backend for a
+/// deployment that was only too slow, and an evaluation that excludes provider
+/// faults would then hide the slowness entirely.
+#[tokio::test]
+async fn a_streaming_timeout_is_reported_as_a_timeout() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buffer = [0u8; 4096];
+        let _ = stream.read(&mut buffer);
+        // Headers and one chunk, then silence: the body never completes.
+        let _ = stream.write_all(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\n\r\n",
+        );
+        let first =
+            "{\"message\":{\"role\":\"assistant\",\"content\":\"partial\"},\"done\":false}\n";
+        let _ = stream.write_all(format!("{:x}\r\n{first}\r\n", first.len()).as_bytes());
+        let _ = stream.flush();
+        std::thread::sleep(std::time::Duration::from_secs(5));
+    });
+    let endpoint = format!("http://{address}/");
+    let provider = OllamaProvider::new(&endpoint, Duration::from_millis(600)).unwrap();
+    let stream = provider.chat(request(&endpoint, None, None)).await.unwrap();
+    let outcome = poorai_provider::collect_reply(stream).await;
+    match outcome {
+        Err(poorai_provider::ProviderError::Timeout { .. }) => {}
+        other => panic!("expected a timeout, got {other:?}"),
+    }
+}

@@ -811,9 +811,11 @@ async fn evaluate_task(
         }
         Ok(Ok(result)) => outcome.declared_complete = result.verified,
         Ok(Err(error)) => {
-            // A backend that dropped the stream says nothing about whether the
-            // deployment could have done the task.
-            outcome.provider_failure = error.contains("provider ");
+            // A backend fault says nothing about whether the deployment could
+            // have done the task. A timeout does: a deployment that cannot
+            // answer within the bound has failed the task, and excluding that
+            // would hide slowness behind an infrastructure label.
+            outcome.provider_failure = error.contains("provider ") && !error.contains("timed out");
             outcome.error = Some(error);
         }
     }

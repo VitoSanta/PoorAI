@@ -193,6 +193,30 @@ A second prediction also failed: nemotron, marked unreliable at 2 of 3 on both t
 
 **gemma4 resolves nothing that requires an edit or an answer.** It passes only the two adversarial tasks, which are passed by not acting. Its 0.250 is therefore not a weak score on the suite; it is the score of a deployment that does not complete work on it, and reading the aggregate without the per-task column would hide that.
 
+### Generation — 2026-09-02
+
+A separate suite, `generation-v1`: one specification, the same prompt for every deployment, scored by a hidden verifier that starts the server and exercises every endpoint. Network and dependency-change granted, 30 actions, one trial each.
+
+| Deployment | Works | Actions | Minutes |
+|---|---|---|---|
+| gpt-oss:20b | **yes** | 6 | 1.2 |
+| nemotron-3.5-lightning:30b-mlx | **yes** | 9 | 1.5 |
+| qwen3.8:27b-mlx | **yes** | 4 | 2.2 |
+| ornith-1.5:35b | no — valid server, wrong contract | 13 | 5.1 |
+| gemma4:31b-mlx | no — created no file | 30 | 1.6 |
+| muse-glimmer:30b-mlx | no — created no file | 30 | 16.9 |
+| granite4.2:30b-q6_K | no — exceeded the 900 s turn bound | 1 | 15.1 |
+
+**Repair rank and generation rank do not agree.** The best repairer, at 13 of 15 edit tasks, produces a server that misses the contract. The second-worst, at 3 of 15, produces a working one in six actions and 1.2 minutes. This is the third time the same shape has appeared here: the M1 capability probe does not predict repair, and repair does not predict generation. Each level of measurement describes only itself, and a proxy has so far never survived contact with the thing it was standing in for.
+
+**Throughput bounds feasibility even though it does not predict quality.** granite is the slowest deployment calibrated in M2 at 7.4 tokens per second against gpt-oss at 60.3, and it could not produce a single turn of this task inside fifteen minutes while gpt-oss finished the whole thing in 1.2. The M2 entry above says throughput says nothing about whether a task is resolved, and that stands as a statement about quality — but it understated the case: under a time bound, a rate eight times slower is the difference between a result and none.
+
+**The first run of this suite measured the harness, not the deployments.** Six of seven created no file at all, because `apply_replace` reads a file before writing it and no tool could create one — the suite asked for an application to be built with no way to make a file. That uniformity across unrelated deployments was the signal; a plausible spread would have been believed.
+
+Two scoring defects were fixed alongside. A backend fault was being counted as the deployment failing the task, so granite's first attempt was recorded as an inability to generate. And a client timeout mid-stream arrived as a broken body, which the adapter reported as a protocol fault — so a deployment that was merely too slow was recorded as infrastructure failing. A timeout is now a task failure and a protocol fault is not, since excluding the former would hide slowness behind an infrastructure label.
+
+**The weakest part of this table is that it has one trial per deployment.** Repair trials on an unchanged corpus ranged from 0.500 to 0.875 for a single deployment, so a single generation trial cannot separate a capable deployment from a lucky one. These results are a first look, not a measurement of the kind the repair suite now carries.
+
 ### Current safety boundary
 
 `poorai run` executes for real. A non-dry run requires an explicit `--model` and a `--profile` pointing at a calibration artifact, and refuses to proceed unless that calibration still matches the model digest, deployment fingerprint, hardware compatibility key and harness revision in force. An artifact recording a refused calibration authorises nothing.

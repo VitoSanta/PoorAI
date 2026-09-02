@@ -357,13 +357,22 @@ impl ModelProvider for OllamaProvider {
                     }
                     match body.next().await {
                         Some(Ok(bytes)) => buffer.push_str(&String::from_utf8_lossy(&bytes)),
-                        Some(Err(_)) => {
-                            return Some((
-                                Err(ProviderError::Protocol {
+                        Some(Err(error)) => {
+                            // A client timeout surfaces as a broken body, not
+                            // as a timeout error. Reporting it as a protocol
+                            // fault blames the backend for a deployment that
+                            // was simply too slow to answer within the bound.
+                            let failure = if error.is_timeout() {
+                                ProviderError::Timeout {
+                                    safe_context: "streaming response exceeded the client timeout"
+                                        .into(),
+                                }
+                            } else {
+                                ProviderError::Protocol {
                                     safe_context: "unreadable Ollama streaming response".into(),
-                                }),
-                                (body, buffer, true),
-                            ));
+                                }
+                            };
+                            return Some((Err(failure), (body, buffer, true)));
                         }
                         None => {
                             if buffer.trim().is_empty() {
