@@ -121,6 +121,14 @@ pub struct ContextPolicy {
     pub maximum: u32,
 }
 
+impl ContextPolicy {
+    /// A policy whose sizes contradict each other would clamp to something
+    /// nobody chose.
+    pub fn is_coherent(&self) -> bool {
+        self.minimum <= self.default && self.default <= self.maximum
+    }
+}
+
 /// Everything about how one deployment should be driven.
 ///
 /// Separate from `ModelDefinition`, which is facts the backend reported, and
@@ -136,6 +144,10 @@ pub struct ModelProfile {
     pub sampling: BTreeMap<String, ResolvedParameter>,
     #[serde(default)]
     pub reasoning: Option<ReasoningControl>,
+    /// Where the context default came from. A size measured on this machine is
+    /// a different claim from one copied out of a specification.
+    #[serde(default = "declared_source")]
+    pub context_source: ParameterSource,
     /// Where these values came from, in words a reader can check.
     pub provenance: String,
 }
@@ -165,6 +177,10 @@ impl ModelProfile {
             .map(|(name, resolved)| (name.clone(), resolved.value.clone()))
             .collect()
     }
+}
+
+fn declared_source() -> ParameterSource {
+    ParameterSource::OfficialModelCard
 }
 
 /// Policy for one deployment, as opposed to facts about it.

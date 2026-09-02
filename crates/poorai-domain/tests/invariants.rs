@@ -533,6 +533,7 @@ fn profile(selector: &str, maximum: u32) -> ModelProfile {
             },
         )]),
         reasoning: None,
+        context_source: ParameterSource::OfficialModelCard,
         provenance: "vendor card".into(),
     }
 }
@@ -569,4 +570,19 @@ fn a_profile_applies_only_to_the_tag_it_names() {
     // Per tag, not per family: the same model under another tag can declare a
     // different limit.
     assert!(ModelProfile::select(&declared, "ornith-1.5:35b-mlx").is_none());
+}
+
+/// Sizes that contradict each other would clamp to something nobody chose.
+#[test]
+fn a_context_policy_must_be_ordered() {
+    let policy = |min, def, max| ContextPolicy {
+        minimum: min,
+        default: def,
+        maximum: max,
+    };
+    assert!(policy(65_536, 131_072, 262_144).is_coherent());
+    assert!(policy(131_072, 131_072, 131_072).is_coherent());
+    // A default below the minimum, or above the ceiling.
+    assert!(!policy(131_072, 65_536, 262_144).is_coherent());
+    assert!(!policy(65_536, 262_144, 131_072).is_coherent());
 }

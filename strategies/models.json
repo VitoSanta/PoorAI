@@ -1,5 +1,5 @@
 {
-  "note": "Sampling values carry their origin. official_model_card means the vendor published it; ollama_model means the packaged Modelfile declared it; backend_default means nothing set it and the backend decides. A run reporting a value without its origin cannot be compared with another run.",
+  "note": "Sampling values carry their origin. official_model_card means the vendor published it; ollama_model means the packaged Modelfile declared it; backend_default means nothing set it and the backend decides. A run reporting a value without its origin cannot be compared with another run. Context defaults carry context_source: hardware_calibration means the value was set from a ladder measured on this machine, with every tier verified fully GPU resident.",
   "profiles": [
     {
       "context": {
@@ -7,8 +7,9 @@
         "maximum": 262144,
         "minimum": 65536
       },
+      "context_source": "hardware_calibration",
       "model_selector": "qwen3.8:27b-mlx",
-      "provenance": "Vendor thinking-mode recommendation, which the packaged Modelfile already matches exactly. Not changed by poorAI.",
+      "provenance": "Vendor thinking-mode recommendation, which the packaged Modelfile already matches exactly. Not changed by poorAI. Measured: the only deployment whose throughput falls monotonically with context \u2014 27.3 tok/s at 32K, 20.9 at 65K, 19.4 at 131K, 18.3 at 262K, fully GPU resident throughout. The 32K figure has a standard deviation of 47.3 against 2.7 at 262K and is the least reliable point in the series, so the real cost is likely smaller than 33 percent. 131072 is kept as the default pending a task that shows how much context is actually needed; it is the one context choice here that has a measured price.",
       "reasoning": {
         "enabled": true,
         "kind": "think"
@@ -43,12 +44,13 @@
     },
     {
       "context": {
-        "default": 131072,
+        "default": 262144,
         "maximum": 262144,
         "minimum": 65536
       },
+      "context_source": "hardware_calibration",
       "model_selector": "ornith-1.5:35b",
-      "provenance": "The packaged Modelfile declares nothing, so this deployment was running on backend defaults (0.8/40/0.9) while its own card recommends 0.6/0.95/20 for use. Every measurement recorded before this profile existed was taken under the backend defaults, not the recommendation.",
+      "provenance": "The packaged Modelfile declares nothing, so this deployment was running on backend defaults (0.8/40/0.9) while its own card recommends 0.6/0.95/20 for use. Every measurement recorded before this profile existed was taken under the backend defaults, not the recommendation. Measured on this machine: 70.6 tok/s at 32K and 71.5 at 262K, first token 63 ms at both, fully GPU resident throughout. The largest context costs nothing here, so there is no reason to allocate less.",
       "reasoning": null,
       "sampling": {
         "temperature": {
@@ -93,8 +95,9 @@
         "maximum": 262144,
         "minimum": 65536
       },
+      "context_source": "hardware_calibration",
       "model_selector": "nemotron-3.5-lightning:30b-mlx",
-      "provenance": "Vendor recommendation. Context maximum is the MLX tag's 256K, not the 1M the upstream model declares -- the tag is what is served.",
+      "provenance": "Vendor recommendation. Context maximum is the MLX tag's 256K, not the 1M the upstream model declares -- the tag is what is served. Measured: 80.9 tok/s at 32K falling to 71.3 at 65K and then flat at 72.3 and 72.4 through 262K. The 10 percent is paid leaving 32K and not again, so the larger context is free once it is paid. 131072 rather than 262144 because nothing has yet asked for more.",
       "reasoning": null,
       "sampling": {
         "temperature": {
@@ -114,8 +117,9 @@
         "maximum": 131072,
         "minimum": 65536
       },
+      "context_source": "hardware_calibration",
       "model_selector": "gpt-oss:20b",
-      "provenance": "The packaged Modelfile sets temperature 1.0; the upstream config imposes no sampling recommendation, so nothing further is invented. Depth is controlled by reasoning_effort rather than by sampling.",
+      "provenance": "The packaged Modelfile sets temperature 1.0; the upstream config imposes no sampling recommendation, so nothing further is invented. Depth is controlled by reasoning_effort rather than by sampling. Measured: 75.6 tok/s at 32K and 75.8 at 131K, first token 97-98 ms throughout, fully GPU resident. The 66.7 recorded at 65K has a standard deviation of 10.1 and is noise rather than a trend.",
       "reasoning": {
         "kind": "backend_option",
         "name": "reasoning_effort",

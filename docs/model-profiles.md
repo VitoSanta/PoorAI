@@ -47,6 +47,27 @@ Worse, one deployment declares no parameters in its package, so it ran on the ba
 
 Measured on this machine: `num_ctx` changes the resident footprint on GGUF deployments — one grows from 21 GB at 8K to 25 GB at 131K — and does not move it at all on MLX ones, which matches the M1 finding that MLX deployments do not enforce the limit. All remain fully GPU-resident at every level tested.
 
+### Measured context ladder — 2026-09-02
+
+Four deployments, tiers 32K through their declared ceiling, three samples each, every tier verified fully GPU-resident.
+
+| Deployment | 32K | 65K | 131K | 262K | Cost of context |
+|---|---|---|---|---|---|
+| ornith-1.5:35b | 70.6 | 70.7 | 70.6 | **71.5** | none |
+| nemotron-3.5-lightning | 80.9 | 71.3 | 72.3 | **72.4** | −10%, all of it leaving 32K |
+| gpt-oss:20b | 75.6 | 66.7 | **75.8** | — | none |
+| qwen3.8:27b-mlx | 27.3 | 20.9 | 19.4 | **18.3** | −33%, monotonic |
+
+Tokens per second, backend-reported. No tier was refused and none was offloaded to the CPU at any size.
+
+**Context is close to free on three of four.** ornith runs at 262K exactly as at 32K. gpt-oss at 131K matches 32K; the 66.7 at 65K carries a standard deviation of 10.1 and is noise rather than a trend, which is worth saying because a table read quickly would show a dip that is not there. nemotron pays its 10% leaving 32K and nothing after, so the larger context is free once that is paid.
+
+qwen is the only one that degrades monotonically. Its 32K figure has a standard deviation of 47.3 against 2.7 at 262K, so it is the least reliable point in the series and the real cost is likely smaller than 33%.
+
+**A claim of mine is withdrawn.** I wrote that `num_ctx` might be inert on MLX deployments, because the resident footprint did not move with context there. Two MLX deployments degrade with context, so the parameter does something the footprint does not show. This is the second time in this session I have generalised across MLX and GGUF and been wrong; whatever divides these deployments, it is not the runtime.
+
+Context defaults now carry `context_source`, so a size measured on this machine does not read like one copied from a specification.
+
 ## Withdrawn deployments
 
 **granite4.2:30b-q6_K — speed.** Measured at 7.4 tokens per second in M2 against 70 for the fastest deployment, and on the `realistic-v1` corpus it took 36.1 minutes per seed where ornith took 1.5 and qwen 7.5 — twenty-four times the slowest of the others. It had already failed the generation suite by exceeding a 900-second per-turn bound without producing one turn. An agent too slow to wait for is unusable in the same way an inaccurate one is, and the cost is paid on every campaign it appears in.
