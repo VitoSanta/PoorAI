@@ -359,3 +359,119 @@ fn creation_cannot_follow_a_symlinked_parent_out_of_the_workspace() {
     assert!(write_file(&policy, Path::new("link/planted.js"), "x").is_err());
     assert!(!outside.path().join("planted.js").exists());
 }
+
+// ---------------------------------------------------------- partial edits
+
+/// Whole-file replacement cannot reach a real repository: changing one line of
+/// a two-thousand-line file would mean re-emitting the whole file.
+#[test]
+fn replace_text_changes_part_of_a_file_and_leaves_the_rest() {
+    let root = tempfile::tempdir().unwrap();
+    let original: String = (1..=2000).map(|i| format!("line {i}\n")).collect();
+    fs::write(root.path().join("big.rs"), &original).unwrap();
+    let policy = policy(root.path());
+    let hash = poorai_domain::hash_bytes(&original);
+    let result = replace_text(
+        &policy,
+        Path::new("big.rs"),
+        &hash,
+        "line 1500\n",
+        "CHANGED\n",
+    )
+    .unwrap();
+    let after = fs::read_to_string(root.path().join("big.rs")).unwrap();
+    assert!(after.contains("CHANGED"));
+    assert!(after.contains("line 1499") && after.contains("line 1501"));
+    assert_eq!(after.lines().count(), 2000);
+    assert_eq!(result.new_hash, poorai_domain::hash_bytes(&after));
+}
+
+/// Two matches mean the caller may not have meant the one that would change.
+#[test]
+fn an_ambiguous_match_is_refused_rather_than_guessed() {
+    let root = tempfile::tempdir().unwrap();
+    let original = "let x = 1;\nlet y = 2;\nlet x = 1;\n";
+    fs::write(root.path().join("a.rs"), original).unwrap();
+    let policy = policy(root.path());
+    let hash = poorai_domain::hash_bytes(original);
+    let refused = replace_text(
+        &policy,
+        Path::new("a.rs"),
+        &hash,
+        "let x = 1;",
+        "let x = 9;",
+    );
+    assert!(refused.is_err());
+    assert_eq!(
+        fs::read_to_string(root.path().join("a.rs")).unwrap(),
+        original
+    );
+    // Enough surrounding text to be unique succeeds.
+    assert!(
+        replace_text(
+            &policy,
+            Path::new("a.rs"),
+            &hash,
+            "let y = 2;\nlet x = 1;",
+            "let y = 2;\nlet x = 9;"
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn replace_text_refuses_text_that_is_not_there_and_a_stale_hash() {
+    let root = tempfile::tempdir().unwrap();
+    let original = "fn one() {}\n";
+    fs::write(root.path().join("a.rs"), original).unwrap();
+    let policy = policy(root.path());
+    let hash = poorai_domain::hash_bytes(original);
+    assert!(replace_text(&policy, Path::new("a.rs"), &hash, "absent", "x").is_err());
+    assert!(replace_text(&policy, Path::new("a.rs"), "stale", "fn one", "fn two").is_err());
+    assert_eq!(
+        fs::read_to_string(root.path().join("a.rs")).unwrap(),
+        original
+    );
+}
+
+#[test]
+fn a_partial_edit_still_needs_approval_on_a_manifest() {
+    let root = tempfile::tempdir().unwrap();
+    let original = "[package]\nname = \"x\"\n";
+    fs::write(root.path().join("Cargo.toml"), original).unwrap();
+    let mut policy = policy(root.path());
+    let hash = poorai_domain::hash_bytes(original);
+    assert!(replace_text(&policy, Path::new("Cargo.toml"), &hash, "\"x\"", "\"y\"").is_err());
+    policy.approvals = vec![Approval::DependencyChange];
+    assert!(replace_text(&policy, Path::new("Cargo.toml"), &hash, "\"x\"", "\"y\"").is_ok());
+}
+
+// ---------------------------------------------------------- windowed reads
+
+/// A file larger than the output bound used to be cut mid-way with nothing to
+/// say where the cut fell, so a caller could neither see the rest nor ask for
+/// it.
+#[test]
+fn a_window_of_a_large_file_can_be_read_and_reports_the_whole_length() {
+    let root = tempfile::tempdir().unwrap();
+    let original: String = (1..=2000).map(|i| format!("line {i}\n")).collect();
+    fs::write(root.path().join("big.rs"), &original).unwrap();
+    let policy = policy(root.path());
+    let window = read_file_window(&policy, Path::new("big.rs"), Some(1500), Some(3)).unwrap();
+    assert_eq!(window.content, "line 1500\nline 1501\nline 1502");
+    assert_eq!(window.total_lines, 2000);
+    assert_eq!(window.first_line, 1500);
+    assert!(window.truncated);
+    // The hash covers the whole file, so an edit guarded by it is still sound
+    // after a partial read.
+    assert_eq!(window.artifact_hash, poorai_domain::hash_bytes(&original));
+}
+
+#[test]
+fn a_window_past_the_end_of_the_file_is_refused() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("a.rs"), "one\ntwo\n").unwrap();
+    let policy = policy(root.path());
+    assert!(read_file_window(&policy, Path::new("a.rs"), Some(99), None).is_err());
+    assert!(read_file_window(&policy, Path::new("a.rs"), Some(2), None).is_ok());
+}

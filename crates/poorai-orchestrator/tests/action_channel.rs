@@ -25,6 +25,7 @@ fn the_schema_offers_exactly_the_typed_capabilities() {
         names,
         vec![
             "read_file",
+            "replace_text",
             "search",
             "list_tree",
             "apply_replace",
@@ -378,9 +379,12 @@ fn the_system_prompt_states_when_to_complete_and_when_not_to() {
     // The hash guard is the most common denial in practice, so the prompt says
     // what to do about it rather than leaving it to be discovered per run.
     assert!(prompt.contains("re-read a file after editing it"));
-    // Creation and modification are different tools; a deployment told only
-    // about the second cannot build anything that does not exist.
-    assert!(prompt.contains("use write_file"));
+    // Creation, partial edit and whole-file rewrite are different tools, and a
+    // deployment told about only one of them is limited to what that one can
+    // reach.
+    assert!(prompt.contains("write_file"));
+    assert!(prompt.contains("Change part of a file with replace_text"));
+    assert!(prompt.contains("only when most of it"));
 }
 
 /// The prompt is assembled from fragments; a missing space between two of them

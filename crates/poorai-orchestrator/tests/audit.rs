@@ -37,6 +37,8 @@ async fn a_denied_traversal_is_recorded_with_its_denial() {
     let run_id = poorai_domain::new_id();
     let action = ActionProposal::ReadFile {
         path: "../../etc/passwd".into(),
+        first_line: None,
+        max_lines: None,
     };
     let result =
         poorai_orchestrator::execute_action(&store, run_id, &policy(root.path()), action).await;
@@ -96,6 +98,8 @@ async fn an_allowed_action_is_recorded_with_its_outcome() {
     let run_id = poorai_domain::new_id();
     let action = ActionProposal::ReadFile {
         path: "code.rs".into(),
+        first_line: None,
+        max_lines: None,
     };
     assert!(
         poorai_orchestrator::execute_action(&store, run_id, &policy(root.path()), action)
@@ -139,12 +143,18 @@ async fn the_audit_chain_covers_denied_actions() {
     for action in [
         ActionProposal::ReadFile {
             path: "code.rs".into(),
+            first_line: None,
+            max_lines: None,
         },
         ActionProposal::ReadFile {
             path: "../escape".into(),
+            first_line: None,
+            max_lines: None,
         },
         ActionProposal::ReadFile {
             path: "code.rs".into(),
+            first_line: None,
+            max_lines: None,
         },
     ] {
         let _ =

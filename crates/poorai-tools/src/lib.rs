@@ -39,6 +39,10 @@ pub enum ActionProposal {
     },
     ReadFile {
         path: String,
+        #[serde(default)]
+        first_line: Option<usize>,
+        #[serde(default)]
+        max_lines: Option<usize>,
     },
     Search {
         query: String,
@@ -56,6 +60,12 @@ pub enum ActionProposal {
         path: String,
         content: String,
     },
+    ReplaceText {
+        path: String,
+        expected_hash: String,
+        find: String,
+        replace: String,
+    },
     RunCommand {
         executable: String,
         args: Vec<String>,
@@ -67,9 +77,10 @@ impl ActionProposal {
             Self::Complete { rationale } if rationale.is_empty() => {
                 Err(ToolError::Denied("completion rationale is required".into()))
             }
-            Self::ReadFile { path }
+            Self::ReadFile { path, .. }
             | Self::ApplyReplace { path, .. }
             | Self::WriteFile { path, .. }
+            | Self::ReplaceText { path, .. }
                 if path.is_empty() =>
             {
                 Err(ToolError::Denied("action path is empty".into()))
@@ -79,6 +90,9 @@ impl ActionProposal {
             ),
             Self::ListTree { max_entries } if *max_entries == 0 => {
                 Err(ToolError::Denied("tree limit is required".into()))
+            }
+            Self::ReplaceText { find, .. } if find.is_empty() => {
+                Err(ToolError::Denied("find text is required".into()))
             }
             Self::RunCommand { executable, .. } if executable.is_empty() => {
                 Err(ToolError::Denied("executable is required".into()))
@@ -331,8 +345,15 @@ pub struct FileReadResult {
     pub path: String,
     pub content: String,
     pub truncated: bool,
+    /// Hash of the whole file, not of the window returned. An edit is guarded
+    /// against the file as it is on disk, so a partial read still yields a
+    /// usable hash.
     pub artifact_hash: String,
     pub redacted: bool,
+    /// Lines in the whole file, so a caller can tell it has seen only part.
+    pub total_lines: usize,
+    /// One-based line the returned window starts at.
+    pub first_line: usize,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchMatch {
@@ -432,6 +453,66 @@ pub fn apply_replace(
     })
 }
 
+/// Replaces one exact occurrence of `find` with `replace`.
+///
+/// Whole-file replacement cannot reach a real repository: changing one line of
+/// a two-thousand-line file would mean re-emitting the whole file, which is
+/// impractical inside any context budget. This edits in place.
+///
+/// The match must be unique. Two occurrences mean the caller may not have
+/// meant the one that would be changed, and guessing which is exactly the kind
+/// of silent wrong edit the hash guard exists to prevent.
+pub fn replace_text(
+    policy: &ToolPolicy,
+    relative: &Path,
+    expected_hash: &str,
+    find: &str,
+    replace: &str,
+) -> Result<ApplyResult, ToolError> {
+    if let Some(approval) = edit_approval(relative) {
+        policy.require(approval)?;
+    }
+    if find.is_empty() {
+        return Err(ToolError::Denied("find text is empty".into()));
+    }
+    let path = policy.resolve(relative)?;
+    let existing = std::fs::read(&path)?;
+    if existing.iter().take(4096).any(|b| *b == 0) {
+        return Err(ToolError::Denied("binary edits are denied".into()));
+    }
+    let previous_hash = hash_bytes(&existing);
+    if previous_hash != expected_hash {
+        return Err(ToolError::Denied(
+            "stale file hash; reread before editing".into(),
+        ));
+    }
+    let text = String::from_utf8_lossy(&existing).to_string();
+    let occurrences = text.matches(find).count();
+    match occurrences {
+        0 => {
+            return Err(ToolError::Denied(
+                "find text does not appear in the file".into(),
+            ));
+        }
+        1 => {}
+        many => {
+            return Err(ToolError::Denied(format!(
+                "find text appears {many} times; include enough surrounding text to be unique"
+            )));
+        }
+    }
+    let updated = text.replacen(find, replace, 1);
+    if updated.len() > policy.output_limit.saturating_mul(16) {
+        return Err(ToolError::Denied("result exceeds policy size limit".into()));
+    }
+    std::fs::write(&path, updated.as_bytes())?;
+    Ok(ApplyResult {
+        path: relative.display().to_string(),
+        previous_hash,
+        new_hash: hash_bytes(updated.as_bytes()),
+    })
+}
+
 /// Creates a new file. Refuses to overwrite an existing one.
 ///
 /// Creation and modification are separate capabilities on purpose: an edit
@@ -472,6 +553,21 @@ pub fn write_file(
 
 /// Reads a root-relative text file with a policy-derived byte bound.
 pub fn read_file(policy: &ToolPolicy, relative: &Path) -> Result<FileReadResult, ToolError> {
+    read_file_window(policy, relative, None, None)
+}
+
+/// Reads a window of a file, one-based and inclusive of `first_line`.
+///
+/// A file larger than the output bound was previously truncated mid-way with
+/// nothing to say where the cut fell, so a caller could neither see the rest
+/// nor ask for it. A window can be asked for, and the result says how many
+/// lines the file has.
+pub fn read_file_window(
+    policy: &ToolPolicy,
+    relative: &Path,
+    first_line: Option<usize>,
+    max_lines: Option<usize>,
+) -> Result<FileReadResult, ToolError> {
     let path = policy.resolve(relative)?;
     let metadata = std::fs::metadata(&path)?;
     if !metadata.is_file() {
@@ -483,16 +579,37 @@ pub fn read_file(policy: &ToolPolicy, relative: &Path) -> Result<FileReadResult,
     if bytes.iter().take(4096).any(|b| *b == 0) {
         return Err(ToolError::Denied("binary file reads are denied".into()));
     }
-    let truncated = bytes.len() > policy.output_limit;
-    let content =
-        String::from_utf8_lossy(&bytes[..bytes.len().min(policy.output_limit)]).to_string();
+    let whole = String::from_utf8_lossy(&bytes);
+    let lines: Vec<&str> = whole.lines().collect();
+    let total_lines = lines.len();
+    let first = first_line.unwrap_or(1).max(1);
+    if total_lines > 0 && first > total_lines {
+        return Err(ToolError::Denied(format!(
+            "first_line {first} is past the end of a {total_lines}-line file"
+        )));
+    }
+    let window: Vec<&str> = lines
+        .iter()
+        .skip(first - 1)
+        .take(max_lines.unwrap_or(usize::MAX))
+        .copied()
+        .collect();
+    let selected = window.join("\n");
+    let bounded = selected.len() > policy.output_limit;
+    let content: String = if bounded {
+        selected.chars().take(policy.output_limit).collect()
+    } else {
+        selected
+    };
     let (content, redacted) = policy.redact(&content);
     Ok(FileReadResult {
         path: relative.display().to_string(),
         artifact_hash: hash_bytes(&bytes),
         content,
-        truncated,
+        truncated: bounded || first > 1 || window.len() < total_lines,
         redacted,
+        total_lines,
+        first_line: first,
     })
 }
 /// Searches only text files below the policy root and returns a bounded match list.

@@ -244,9 +244,18 @@ async fn attempt_action(
         ActionProposal::Complete { rationale } => {
             Ok(serde_json::json!({"complete":true,"rationale":rationale}))
         }
-        ActionProposal::ReadFile { path } => serde_json::to_value(
-            poorai_tools::read_file(policy, std::path::Path::new(path))
-                .map_err(|e| e.to_string())?,
+        ActionProposal::ReadFile {
+            path,
+            first_line,
+            max_lines,
+        } => serde_json::to_value(
+            poorai_tools::read_file_window(
+                policy,
+                std::path::Path::new(path),
+                *first_line,
+                *max_lines,
+            )
+            .map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string()),
         ActionProposal::Search { query, max_matches } => serde_json::to_value(
@@ -267,6 +276,22 @@ async fn attempt_action(
                 std::path::Path::new(path),
                 expected_hash,
                 replacement,
+            )
+            .map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string()),
+        ActionProposal::ReplaceText {
+            path,
+            expected_hash,
+            find,
+            replace,
+        } => serde_json::to_value(
+            poorai_tools::replace_text(
+                policy,
+                std::path::Path::new(path),
+                expected_hash,
+                find,
+                replace,
             )
             .map_err(|e| e.to_string())?,
         )
@@ -473,7 +498,9 @@ pub async fn run_action_loop<P: ModelProvider>(
         }
         let edited = matches!(
             action,
-            ActionProposal::ApplyReplace { .. } | ActionProposal::WriteFile { .. }
+            ActionProposal::ApplyReplace { .. }
+                | ActionProposal::WriteFile { .. }
+                | ActionProposal::ReplaceText { .. }
         );
         // A denial is a tool result, not the end of the run. Aborting here
         // discards work already done -- a stale-hash refusal literally says
@@ -540,10 +567,12 @@ pub const AGENT_SYSTEM_PROMPT: &str = concat!(
     "You are working inside a repository. Take exactly one action per turn by calling one of ",
     "the provided tools. Edits are hash-guarded: read a file and pass the artifact_hash it ",
     "returns as expected_hash, and re-read a file after editing it because its hash has ",
-    "changed. To create a file that does not exist yet, use write_file. ",
-    "After an edit you are told whether the repository's checks pass. If they pass ",
-    "and the task is done, call complete. If they fail, fix what failed. Do not call complete ",
-    "while the checks are failing.",
+    "changed. Change part of a file with replace_text, quoting enough surrounding text to ",
+    "match exactly once. Rewrite a whole file with apply_replace only when most of it ",
+    "changes, and create a file that does not exist yet with write_file. After an edit you ",
+    "are told whether the repository's checks pass. If they pass and the task is done, call ",
+    "complete. If they fail, fix what failed. Do not call complete while the checks are ",
+    "failing.",
 );
 
 /// The typed actions offered to a deployment as native tools.
@@ -570,9 +599,24 @@ pub fn action_tool_schema() -> serde_json::Value {
     serde_json::json!([
         function(
             "read_file",
-            "Read one workspace-relative text file.",
-            serde_json::json!({"path": {"type": "string"}}),
+            "Read a workspace-relative text file. Give first_line and max_lines to read a window of a large one; the result reports total_lines.",
+            serde_json::json!({
+                "path": {"type": "string"},
+                "first_line": {"type": "integer"},
+                "max_lines": {"type": "integer"},
+            }),
             &["path"],
+        ),
+        function(
+            "replace_text",
+            "Change part of a file: replace one exact, unique occurrence of find with replace. Preferred over apply_replace, which rewrites the whole file.",
+            serde_json::json!({
+                "path": {"type": "string"},
+                "expected_hash": {"type": "string"},
+                "find": {"type": "string"},
+                "replace": {"type": "string"},
+            }),
+            &["path", "expected_hash", "find", "replace"],
         ),
         function(
             "search",
