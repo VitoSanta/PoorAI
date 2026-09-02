@@ -15,3 +15,7 @@ The excerpt hash is the whole file's, not the fragment's, so an edit guarded by 
 Retrieval spends a fraction of the context budget rather than a fixed number of passages, and stops when the budget is spent rather than exceeding it. Ignored files are absent from the index and so cannot be retrieved — the secret-leak case, one layer further out.
 
 Not implemented: call and import graph proximity, test ownership, and ranking on recent tool evidence. Non-source files compete on the same footing as source, so a lockfile mentioning a common term can rank above an unrelated source file; measured on a sixty-two file workspace the intended file still led by 114 to 16.
+
+## Symbol extraction is Rust-only
+
+The index is specified to record language and build manifests, and symbol extraction currently matches `fn ` and `pub fn `. A Python, Go, Java or C# file therefore contributes no symbols, and retrieval loses its strongest ranking signal — a symbol definition outranks a path match by five to one — precisely on the repositories where the agent knows least.
