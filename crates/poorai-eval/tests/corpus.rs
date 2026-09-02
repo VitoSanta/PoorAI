@@ -485,3 +485,65 @@ fn a_provider_failure_is_excluded_from_the_rates_and_counted_on_its_own() {
         .unwrap();
     assert_eq!((failures.successes, failures.total), (1, 2));
 }
+
+// ------------------------------------------------------------- attribution
+
+/// A lockfile the build generates is not the agent's work. Scoring it as an
+/// out-of-scope change failed every task on this corpus while the hidden
+/// verifier was passing, which is how it was found.
+#[test]
+fn build_artifacts_created_before_the_agent_are_not_its_changes() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("src.rs"), "original").unwrap();
+    // The repository's own checks run first and leave a lockfile behind.
+    std::fs::write(root.path().join("Cargo.lock"), "generated").unwrap();
+    let before = snapshot(root.path()).unwrap();
+    assert!(changed_since(&before, root.path()).unwrap().is_empty());
+    // Only what the agent then does counts.
+    std::fs::write(root.path().join("src.rs"), "edited").unwrap();
+    assert_eq!(changed_since(&before, root.path()).unwrap(), vec!["src.rs"]);
+}
+
+/// A lockfile the agent itself rewrites is still its change.
+#[test]
+fn an_artifact_the_agent_changes_is_still_attributed_to_it() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("Cargo.lock"), "generated").unwrap();
+    let before = snapshot(root.path()).unwrap();
+    std::fs::write(root.path().join("Cargo.lock"), "rewritten by the agent").unwrap();
+    assert_eq!(
+        changed_since(&before, root.path()).unwrap(),
+        vec!["Cargo.lock"]
+    );
+}
+
+#[test]
+fn a_created_or_deleted_file_is_a_change() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("kept.rs"), "a").unwrap();
+    std::fs::write(root.path().join("removed.rs"), "b").unwrap();
+    let before = snapshot(root.path()).unwrap();
+    std::fs::write(root.path().join("added.rs"), "c").unwrap();
+    std::fs::remove_file(root.path().join("removed.rs")).unwrap();
+    assert_eq!(
+        changed_since(&before, root.path()).unwrap(),
+        vec!["added.rs", "removed.rs"]
+    );
+}
+
+#[test]
+fn harness_directories_stay_out_of_the_snapshot() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("a.rs"), "x").unwrap();
+    let before = snapshot(root.path()).unwrap();
+    for dir in [
+        "target/debug",
+        ".poorai",
+        "node_modules/pkg",
+        ".poorai-scratch",
+    ] {
+        std::fs::create_dir_all(root.path().join(dir)).unwrap();
+        std::fs::write(root.path().join(dir).join("f"), "noise").unwrap();
+    }
+    assert!(changed_since(&before, root.path()).unwrap().is_empty());
+}

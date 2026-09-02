@@ -844,6 +844,11 @@ async fn evaluate_task(
         }
     };
     let checks = poorai_verify::discover_checks(&root, "targeted").unwrap_or_default();
+    // Run the checks once before the agent starts, so anything the build
+    // generates — a lockfile, a compiled index — is part of the baseline
+    // rather than being scored as the agent's work.
+    outcome.visible_verifier_passed = run_verifier(&policy, &task.visible_verifier).await;
+    let before = poorai_eval::snapshot(&root).unwrap_or_default();
     let run_id = new_id();
     let request = poorai_domain::ModelRequest {
         deployment: deployment.clone(),
@@ -932,9 +937,8 @@ async fn evaluate_task(
             completion_rationale(&events).is_some_and(|rationale| rationale.contains(expected)),
         );
     }
-    outcome.changed_files = poorai_eval::changed_files(task, &root).unwrap_or_default();
+    outcome.changed_files = poorai_eval::changed_since(&before, &root).unwrap_or_default();
     outcome.out_of_scope_changes = poorai_eval::out_of_scope_changes(task, &outcome.changed_files);
-    outcome.visible_verifier_passed = run_verifier(&policy, &task.visible_verifier).await;
     // Hidden files land only now: the agent could not read, edit or anticipate
     // a check it never saw.
     if poorai_eval::materialise_hidden(task, &root).is_ok() {

@@ -226,6 +226,72 @@ const UNSCORED_DIRECTORIES: [&str; 6] = [
     "dist",
 ];
 
+/// Every scored file in the workspace, with its content hash.
+///
+/// Taken after the repository's own checks have run once, so build artifacts
+/// they generate — a lockfile, a compiled index — belong to the baseline
+/// rather than being attributed to the agent. Excluding such files by name
+/// would need a list per ecosystem and would be wrong the first time one was
+/// missing.
+pub fn snapshot(root: &Path) -> Result<BTreeMap<String, String>, EvalError> {
+    let mut files = BTreeMap::new();
+    collect_snapshot(root, root, &mut files)?;
+    Ok(files)
+}
+
+fn collect_snapshot(
+    root: &Path,
+    directory: &Path,
+    files: &mut BTreeMap<String, String>,
+) -> Result<(), EvalError> {
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if UNSCORED_DIRECTORIES.iter().any(|d| name == *d) {
+            continue;
+        }
+        let path = entry.path();
+        let metadata = std::fs::symlink_metadata(&path)?;
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        if metadata.is_dir() {
+            collect_snapshot(root, &path, files)?;
+        } else {
+            let relative = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .display()
+                .to_string();
+            files.insert(relative, hash_bytes(std::fs::read(&path)?));
+        }
+    }
+    Ok(())
+}
+
+/// Files that differ from a snapshot, modified or created.
+pub fn changed_since(
+    before: &BTreeMap<String, String>,
+    root: &Path,
+) -> Result<Vec<String>, EvalError> {
+    let now = snapshot(root)?;
+    let mut changed: Vec<String> = now
+        .iter()
+        .filter(|(path, hash)| before.get(*path) != Some(hash))
+        .map(|(path, _)| path.clone())
+        .collect();
+    // A file the agent deleted is a change too.
+    changed.extend(
+        before
+            .keys()
+            .filter(|path| !now.contains_key(*path))
+            .cloned(),
+    );
+    changed.sort();
+    changed.dedup();
+    Ok(changed)
+}
+
 pub fn changed_files(task: &Task, root: &Path) -> Result<Vec<String>, EvalError> {
     let mut changed = Vec::new();
     for (relative, original) in &task.files {
