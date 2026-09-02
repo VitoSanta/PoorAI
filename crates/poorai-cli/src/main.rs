@@ -623,6 +623,10 @@ async fn evaluate(
         category: "invalid_input",
         context: e,
     })?;
+    // A strategy is policy for one deployment; absent means the shared default,
+    // which is what every measurement so far was taken under.
+    let declared = load_strategies(Path::new(STRATEGY_FILE));
+    let strategy = poorai_domain::ModelStrategy::select(&declared, &deployment.model_ref).cloned();
     let mut outcomes = Vec::new();
     for task in &suite.tasks {
         outcomes.push(
@@ -633,6 +637,7 @@ async fn evaluate(
                 task,
                 seed,
                 temperature_milli,
+                strategy.as_ref(),
             )
             .await,
         );
@@ -719,6 +724,25 @@ impl poorai_orchestrator::ApprovalPrompt for TerminalApproval {
     }
 }
 
+/// Where declared strategies live, relative to the working directory.
+const STRATEGY_FILE: &str = "strategies/default.json";
+
+/// Loads declared per-deployment strategies, if a file is present.
+///
+/// Absent or unreadable means no strategy: every deployment then gets the
+/// shared default, which is what every measurement so far was taken under.
+fn load_strategies(path: &Path) -> Vec<poorai_domain::ModelStrategy> {
+    #[derive(serde::Deserialize)]
+    struct File {
+        strategies: Vec<poorai_domain::ModelStrategy>,
+    }
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<File>(&bytes).ok())
+        .map(|file| file.strategies)
+        .unwrap_or_default()
+}
+
 /// Share of the context budget spent on retrieved repository passages.
 ///
 /// A fraction rather than a fixed count: the budget is what is scarce, and a
@@ -739,10 +763,17 @@ fn retrieved_context(
     index: &poorai_repo::RepositoryIndex,
     task: &str,
     context_tokens: u32,
+    max_excerpts: Option<usize>,
 ) -> String {
     let budget = context_tokens as usize / RETRIEVAL_TOKEN_SHARE;
-    let excerpts = poorai_repo::retrieve(root, index, task, RETRIEVAL_MAX_EXCERPTS, budget)
-        .unwrap_or_default();
+    let excerpts = poorai_repo::retrieve(
+        root,
+        index,
+        task,
+        max_excerpts.unwrap_or(RETRIEVAL_MAX_EXCERPTS),
+        budget,
+    )
+    .unwrap_or_default();
     if excerpts.is_empty() {
         return String::new();
     }
@@ -775,6 +806,7 @@ async fn evaluate_task(
     task: &poorai_eval::Task,
     seed: u64,
     temperature_milli: Option<u64>,
+    strategy: Option<&poorai_domain::ModelStrategy>,
 ) -> poorai_eval::TaskOutcome {
     let mut outcome = poorai_eval::TaskOutcome {
         task_id: task.id.clone(),
@@ -859,7 +891,13 @@ async fn evaluate_task(
         messages: vec![
             poorai_domain::ChatMessage {
                 role: "system".into(),
-                content: poorai_orchestrator::AGENT_SYSTEM_PROMPT.into(),
+                content: format!(
+                    "{}{}",
+                    poorai_orchestrator::AGENT_SYSTEM_PROMPT,
+                    strategy
+                        .map(|s| s.prompt_suffix.as_str())
+                        .unwrap_or_default()
+                ),
             },
             poorai_domain::ChatMessage {
                 role: "user".into(),
@@ -872,7 +910,8 @@ async fn evaluate_task(
                             &root,
                             &index,
                             &task.statement,
-                            execution.context_tokens
+                            execution.context_tokens,
+                            strategy.and_then(|s| s.retrieval_excerpts),
                         ))
                         .unwrap_or_default(),
                     task.statement
@@ -884,13 +923,16 @@ async fn evaluate_task(
     // The task's own budget where it declares one: building several files
     // needs more turns than editing a line, and that is a property of the task
     // rather than of the deployment.
-    let max_actions = task.max_actions.unwrap_or_else(|| {
-        execution.budgets["max_actions"]
-            .as_u64()
-            .unwrap_or(8)
-            .try_into()
-            .unwrap_or(8u8)
-    });
+    let max_actions = task
+        .max_actions
+        .or(strategy.and_then(|s| s.max_actions))
+        .unwrap_or_else(|| {
+            execution.budgets["max_actions"]
+                .as_u64()
+                .unwrap_or(8)
+                .try_into()
+                .unwrap_or(8u8)
+        });
     let run = tokio::time::timeout(
         Duration::from_secs(task.time_budget_secs),
         poorai_orchestrator::run_action_loop(
@@ -1641,6 +1683,8 @@ async fn prepare_profiled_run(
         })?;
     // The run is anchored to a recorded repository state: without it the audit
     // cannot say which tree an edit was made against.
+    let declared = load_strategies(Path::new(STRATEGY_FILE));
+    let strategy = poorai_domain::ModelStrategy::select(&declared, &deployment.model_ref);
     let index = poorai_repo::index(&root).map_err(|e| SafeError {
         category: "invalid_input",
         context: e.to_string(),
@@ -1684,13 +1728,25 @@ async fn prepare_profiled_run(
         messages: vec![
             poorai_domain::ChatMessage {
                 role: "system".into(),
-                content: poorai_orchestrator::AGENT_SYSTEM_PROMPT.into(),
+                content: format!(
+                    "{}{}",
+                    poorai_orchestrator::AGENT_SYSTEM_PROMPT,
+                    strategy
+                        .map(|s| s.prompt_suffix.as_str())
+                        .unwrap_or_default()
+                ),
             },
             poorai_domain::ChatMessage {
                 role: "user".into(),
                 content: format!(
                     "{}{}",
-                    retrieved_context(&root, &index, &task, execution.context_tokens),
+                    retrieved_context(
+                        &root,
+                        &index,
+                        &task,
+                        execution.context_tokens,
+                        strategy.and_then(|s| s.retrieval_excerpts),
+                    ),
                     task
                 ),
             },

@@ -35,9 +35,13 @@ This is a product judgement resting on a measurement, not a capability finding: 
 
 Retaining a deployment that scores zero has one use — it is a floor, and a harness change that moves it is a change to the harness rather than a flattering model — so it is kept for occasional checks after structural changes rather than dropped entirely.
 
-## ModelStrategy is defined and unused
+## ModelStrategy, as implemented
 
-`ModelStrategy` exists in the domain and appears nowhere else in the codebase. Every deployment therefore receives the same prompt, the same tools and the same budgets, so the harness is structurally unable to adapt to one.
+A strategy is policy for one deployment: a suffix appended to the shared system prompt, an action budget, and a retrieval quota. It is selected by an exact match on the model reference, so a near miss gets the shared default rather than someone else's policy. Declared strategies live in `strategies/default.json`; an absent or unreadable file means every deployment gets the shared default, which is what every measurement so far was taken under.
+
+Every declared strategy carries a rationale naming the measurement that prompted it, and a strategy without one is an opinion with a schema.
+
+**Nothing here is evidence.** A strategy is a hypothesis until it is measured against the shared default on a frozen corpus, and the three currently declared have not been. They are written down so they can be tested, not because they are known to help.
 
 The measurements say the deployments differ in ways a strategy could address. One calls `list_tree` on all three trials of an edit probe instead of proposing an edit. One is the strongest repairer and writes a generated server that misses its contract. One is the weakest repairer and builds a working server in six actions. One emits a native tool call on two of three otherwise identical probes. And a single prompt change moved one deployment from 13 of 24 to 20 of 24 while leaving another unmoved at 17 — the same intervention, opposite effects.
 

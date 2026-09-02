@@ -1,0 +1,35 @@
+{
+  "note": "Each entry is a hypothesis drawn from a measurement, not a result. A strategy is worth keeping only once it has been measured against the shared default on a frozen corpus.",
+  "strategies": [
+    {
+      "schema_version": 1,
+      "id": "01a05e00-0000-7000-8000-000000000001",
+      "model_selector": "muse-glimmer:30b-mlx",
+      "role": "control",
+      "prompt_suffix": " Do not explore before acting: the passages you were given already contain what you need. Read a file only if you are about to change it.",
+      "max_actions": null,
+      "retrieval_excerpts": 8,
+      "rationale": "Called list_tree on all three trials of the M1 edit probe instead of proposing an edit, and spent thirty actions on the generation task without creating a file. It explores rather than acts."
+    },
+    {
+      "schema_version": 1,
+      "id": "01a05e00-0000-7000-8000-000000000002",
+      "model_selector": "nemotron-3.5-lightning:30b-mlx",
+      "role": "long-context control",
+      "prompt_suffix": "",
+      "max_actions": 12,
+      "retrieval_excerpts": null,
+      "rationale": "Emitted a native tool call on two of three otherwise identical probes, and scored 2 of 3 on edit as well. One turn in three is lost to intermittency, so a budget sized for a reliable deployment underfunds it."
+    },
+    {
+      "schema_version": 1,
+      "id": "01a05e00-0000-7000-8000-000000000003",
+      "model_selector": "ornith-1.5:35b",
+      "role": "repair specialist",
+      "prompt_suffix": " Before calling complete, re-read the task statement and check that every requirement in it is satisfied, not only the one you changed.",
+      "max_actions": null,
+      "retrieval_excerpts": null,
+      "rationale": "Strongest repairer at 13 of 15 edit tasks, and the only deployment that wrote a syntactically valid generated server which missed its specification. It edits well and reads specifications loosely."
+    }
+  ]
+}

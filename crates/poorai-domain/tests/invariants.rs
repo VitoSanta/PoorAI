@@ -466,3 +466,48 @@ proptest! {
         prop_assert_eq!(run.validate().is_ok(), complete);
     }
 }
+
+// -------------------------------------------------------------- strategies
+
+#[test]
+fn a_strategy_applies_only_to_the_deployment_it_names() {
+    let strategy = |selector: &str| ModelStrategy {
+        schema_version: SCHEMA_VERSION,
+        id: new_id(),
+        model_selector: selector.into(),
+        role: "control".into(),
+        prompt_suffix: " extra".into(),
+        max_actions: Some(12),
+        retrieval_excerpts: Some(8),
+        rationale: "measured".into(),
+    };
+    let declared = vec![strategy("muse-glimmer:30b-mlx"), strategy("ornith-1.5:35b")];
+    assert_eq!(
+        ModelStrategy::select(&declared, "ornith-1.5:35b").map(|s| s.model_selector.as_str()),
+        Some("ornith-1.5:35b")
+    );
+    // Selection is exact: a near miss gets the shared default, not someone
+    // else's policy.
+    assert!(ModelStrategy::select(&declared, "ornith-1.5:35b-mlx").is_none());
+    assert!(ModelStrategy::select(&declared, "qwen3.8:27b-mlx").is_none());
+    assert!(ModelStrategy::select(&[], "ornith-1.5:35b").is_none());
+}
+
+#[test]
+fn a_strategy_round_trips_and_keeps_its_rationale() {
+    let strategy = ModelStrategy {
+        schema_version: SCHEMA_VERSION,
+        id: new_id(),
+        model_selector: "m".into(),
+        role: "r".into(),
+        prompt_suffix: " suffix".into(),
+        max_actions: None,
+        retrieval_excerpts: None,
+        rationale: "why this exists".into(),
+    };
+    let decoded: ModelStrategy =
+        serde_json::from_str(&serde_json::to_string(&strategy).unwrap()).unwrap();
+    assert_eq!(strategy, decoded);
+    // A strategy without its reason is an opinion with a schema.
+    assert!(!decoded.rationale.is_empty());
+}

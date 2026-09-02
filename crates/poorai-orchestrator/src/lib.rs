@@ -414,6 +414,37 @@ impl ApprovalPrompt for DenyWithoutAsking {
     }
 }
 
+/// Identical repetitions of a refused action before the loop says so.
+///
+/// Two is a retry, which can be reasonable — a hash may have changed. Three is
+/// a deployment that is not reading the refusal, and more budget buys more of
+/// the same rather than progress.
+const REPEATED_REFUSAL_LIMIT: usize = 3;
+
+/// What an action targets, for spotting repetition.
+///
+/// Compared on the capability and its target rather than the whole proposal,
+/// so a second attempt with a corrected hash is not counted as a repeat while
+/// the same wrong edit proposed twice is.
+fn action_fingerprint(action: &ActionProposal) -> String {
+    match action {
+        ActionProposal::ReadFile {
+            path, first_line, ..
+        } => {
+            format!("read_file:{path}:{first_line:?}")
+        }
+        ActionProposal::Search { query, .. } => format!("search:{query}"),
+        ActionProposal::ListTree { .. } => "list_tree".into(),
+        ActionProposal::ApplyReplace { path, .. } => format!("apply_replace:{path}"),
+        ActionProposal::WriteFile { path, .. } => format!("write_file:{path}"),
+        ActionProposal::ReplaceText { path, find, .. } => format!("replace_text:{path}:{find}"),
+        ActionProposal::RunCommand { executable, args } => {
+            format!("run_command:{executable}:{}", args.join(" "))
+        }
+        ActionProposal::Complete { .. } => "complete".into(),
+    }
+}
+
 /// Characters per token. A documented estimate, not a count: exact counts are
 /// provider-specific and only available when a backend reports them.
 const CHARS_PER_TOKEN: usize = 4;
@@ -609,6 +640,7 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
 ) -> Result<TaskRunResult, String> {
     let mut policy = policy.clone();
     let mut once_granted: Option<poorai_tools::Approval> = None;
+    let mut refused_streak: Vec<String> = Vec::new();
     let before = poorai_verify::baseline(&policy, checks)
         .await
         .map_err(|e| e.to_string())?;
@@ -709,6 +741,27 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
             });
             continue;
         }
+        // A deployment repeating a refused action is not short of budget; it
+        // is not reading the refusal. Saying so plainly is the only thing that
+        // has not already been tried, and more actions would buy more repeats.
+        let fingerprint = action_fingerprint(&action);
+        if refused_streak.iter().filter(|f| **f == fingerprint).count() >= REPEATED_REFUSAL_LIMIT {
+            store
+                .append(
+                    Some(run_id),
+                    "loop.detected",
+                    serde_json::json!({"step": step, "action": fingerprint}),
+                )
+                .map_err(|e| e.to_string())?;
+            request.messages.push(poorai_domain::ChatMessage {
+                role: "tool".into(),
+                content: format!(
+                    "{{\"stop\":\"You have proposed this same action {REPEATED_REFUSAL_LIMIT}                      times and it has been refused every time. It will not succeed on another                      attempt. Read the refusal, then do something different: re-read the file to                      get its current hash, or call complete if the work is done.\"}}"
+                ),
+            });
+            refused_streak.clear();
+            continue;
+        }
         // Asked before the action runs: a refusal then costs nothing, and a
         // grant is recorded against the action it was given for rather than
         // against a category in the abstract.
@@ -755,6 +808,13 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
         // A one-time grant expires with the action it was given for.
         if let Some(approval) = once_granted.take() {
             policy.approvals.retain(|granted| *granted != approval);
+        }
+        if outcome.get("denied").is_some() {
+            refused_streak.push(fingerprint);
+        } else {
+            // Progress clears the streak: a refusal followed by a success is
+            // recovery, not a loop.
+            refused_streak.clear();
         }
         // "Make one hypothesis-linked correction, rerun the narrow check."
         // Without this the deployment has no way to learn whether its edit

@@ -61,16 +61,45 @@ pub enum Observation {
     Unknown { reason: String },
 }
 
+/// Policy for one deployment, as opposed to facts about it.
+///
+/// Measured differences between deployments are large and do not point the same
+/// way: one prompt change moved one deployment by seven tasks and another by
+/// none. A single-prompt harness cannot express that, so this is what a run
+/// consults instead of a constant.
+///
+/// A strategy is a hypothesis until it is measured against the default. Nothing
+/// here is evidence on its own.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelStrategy {
     pub schema_version: u32,
     pub id: Id,
+    /// Matched against the deployment's model reference, exactly.
     pub model_selector: String,
     pub role: String,
-    pub prompting: serde_json::Value,
-    pub reasoning: serde_json::Value,
-    pub tool_policy: String,
-    pub retrieval_policy: serde_json::Value,
+    /// Appended to the shared system prompt. Empty means the shared one alone.
+    #[serde(default)]
+    pub prompt_suffix: String,
+    /// Overrides the execution profile's action budget.
+    #[serde(default)]
+    pub max_actions: Option<u8>,
+    /// Repository passages offered at the start.
+    #[serde(default)]
+    pub retrieval_excerpts: Option<usize>,
+    /// Why this strategy exists, and what measurement prompted it.
+    pub rationale: String,
+}
+
+impl ModelStrategy {
+    /// The strategy for a deployment, if one is declared.
+    pub fn select<'a>(
+        strategies: &'a [ModelStrategy],
+        model_ref: &str,
+    ) -> Option<&'a ModelStrategy> {
+        strategies
+            .iter()
+            .find(|strategy| strategy.model_selector == model_ref)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

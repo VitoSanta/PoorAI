@@ -15,3 +15,11 @@ A model reply is the whole stream, never its first chunk — a reasoning deploym
 A policy denial is returned to the deployment as a tool result rather than ending the run: a refusal such as a stale edit hash is actionable, and discarding work already done because of one is a loss, not a safeguard. The action budget bounds the loop.
 
 Every event of a run shares the run's identifier, from opening provenance through to outcome.
+
+## Repetition
+
+A deployment proposing the same refused action three times is not short of budget; it is not reading the refusal, and more actions buy more repeats. The loop names it: the repetition is recorded as `loop.detected` and the deployment is told plainly that the action will not succeed and what to do instead.
+
+Two attempts are a retry, which can be reasonable — a hash may genuinely have changed. Three is a loop. Repetition is judged on the capability and its target rather than the whole proposal, so a second attempt with a corrected hash is not counted while the same wrong edit twice is, and any successful action clears the streak because a refusal followed by progress is recovery.
+
+This is the measured failure shape of every budget-exhausted run recorded here: the repository already fixed, the deployment still editing.
