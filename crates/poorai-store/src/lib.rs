@@ -21,6 +21,16 @@ pub struct EventRecord {
     pub previous_hash: Option<String>,
     pub event_hash: String,
 }
+/// One named session, reconstructed from the events that opened it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSummary {
+    pub name: String,
+    /// Workspace the session was opened against, as recorded at the time.
+    pub root: String,
+    /// Every run of this session, oldest first.
+    pub runs: Vec<Id>,
+    pub last_opened_at: chrono::DateTime<chrono::Utc>,
+}
 pub struct Store {
     connection: Connection,
 }
@@ -79,6 +89,62 @@ impl Store {
             }
             None => Ok(None),
         }
+    }
+    /// A session as it can be reconstructed: its name, the runs that carried
+    /// it in order, and when it was last touched.
+    ///
+    /// Sessions are derived from the event log rather than kept in a table
+    /// beside it. A projection maintained in parallel is a second source of
+    /// truth that can disagree with the first, and the log is the one with the
+    /// hash chain over it.
+    pub fn sessions(&self) -> Result<Vec<SessionSummary>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT payload, run_id, at FROM events WHERE event_type='session.opened' ORDER BY rowid",
+        )?;
+        let rows = statement.query_map([], |row| {
+            let payload: String = row.get(0)?;
+            Ok((
+                payload,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut sessions: Vec<SessionSummary> = Vec::new();
+        for row in rows {
+            let (payload, run_id, at) = row?;
+            let payload: serde_json::Value = serde_json::from_str(&payload)?;
+            let Some(name) = payload["name"].as_str() else {
+                continue;
+            };
+            let Some(run_id) = run_id.and_then(|value| uuid::Uuid::parse_str(&value).ok()) else {
+                continue;
+            };
+            let at = chrono::DateTime::parse_from_rfc3339(&at)
+                .map(|value| value.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| now());
+            match sessions.iter_mut().find(|s| s.name == name) {
+                Some(existing) => {
+                    existing.runs.push(run_id);
+                    existing.last_opened_at = at;
+                }
+                None => sessions.push(SessionSummary {
+                    name: name.to_string(),
+                    root: payload["root"].as_str().unwrap_or_default().to_string(),
+                    runs: vec![run_id],
+                    last_opened_at: at,
+                }),
+            }
+        }
+        Ok(sessions)
+    }
+    /// The runs of one session in order, empty if the name was never opened.
+    pub fn session_runs(&self, name: &str) -> Result<Vec<Id>, StoreError> {
+        Ok(self
+            .sessions()?
+            .into_iter()
+            .find(|session| session.name == name)
+            .map(|session| session.runs)
+            .unwrap_or_default())
     }
     pub fn events_for_run(&self, run_id: Id) -> Result<Vec<EventRecord>, StoreError> {
         let mut statement=self.connection.prepare("SELECT id,run_id,event_type,payload,at,previous_hash,event_hash FROM events WHERE run_id=?1 ORDER BY rowid")?;

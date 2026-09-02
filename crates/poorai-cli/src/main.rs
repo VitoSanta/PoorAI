@@ -67,14 +67,34 @@ enum Command {
         /// Provider timeout for one turn of the action loop.
         #[arg(long, default_value_t = 300)]
         turn_timeout_secs: u64,
+        /// Continue a named session. What its earlier runs established is
+        /// carried into this one, re-checked against the workspace as it is
+        /// now. An unknown name opens a new session under it.
+        #[arg(long)]
+        session: Option<String>,
     },
     Eval(Eval),
+    /// Named sessions, reconstructed from the event log.
+    Session(SessionArgs),
     Report {
         id: String,
         #[arg(long, default_value = "json")]
         format: String,
     },
 }
+#[derive(clap::Args)]
+struct SessionArgs {
+    #[command(subcommand)]
+    command: SessionCommand,
+}
+#[derive(clap::Subcommand)]
+enum SessionCommand {
+    /// Every session in this workspace, most recently opened last.
+    List,
+    /// What one session established, checked against the workspace now.
+    Show { name: String },
+}
+
 /// User-grantable approvals, named on the command line.
 #[derive(Clone, Copy, clap::ValueEnum)]
 #[value(rename_all = "kebab-case")]
@@ -258,18 +278,29 @@ async fn main() {
             dry_run,
             approve,
             turn_timeout_secs,
+            session,
         } => print(
             cli.json,
             run(
-                task,
-                model,
-                profile,
-                dry_run,
-                approve.into_iter().map(Into::into).collect(),
-                turn_timeout_secs,
+                RunOptions {
+                    task,
+                    model,
+                    profile,
+                    dry_run,
+                    approvals: approve.into_iter().map(Into::into).collect(),
+                    turn_timeout_secs,
+                    session,
+                },
                 &cli.ollama_endpoint,
             )
             .await,
+        ),
+        Command::Session(args) => print(
+            cli.json,
+            match args.command {
+                SessionCommand::List => list_sessions(),
+                SessionCommand::Show { name } => show_session(&name),
+            },
         ),
         Command::Verify { run_id, scope } => print(cli.json, verify(run_id, scope).await),
         Command::Eval(e) => match e.command {
@@ -298,6 +329,68 @@ async fn main() {
     };
     std::process::exit(code);
 }
+/// Opens the workspace store without creating a run.
+fn open_store() -> Result<(std::path::PathBuf, poorai_store::Store), SafeError> {
+    let root = std::env::current_dir()
+        .and_then(|dir| dir.canonicalize())
+        .map_err(|e| SafeError {
+            category: "internal",
+            context: e.to_string(),
+        })?;
+    let store =
+        poorai_store::Store::open(root.join(".poorai/state.sqlite")).map_err(|e| SafeError {
+            category: "internal",
+            context: e.to_string(),
+        })?;
+    Ok((root, store))
+}
+
+fn list_sessions() -> Result<serde_json::Value, SafeError> {
+    let (_, store) = open_store()?;
+    let sessions = store.sessions().map_err(|e| SafeError {
+        category: "internal",
+        context: e.to_string(),
+    })?;
+    Ok(serde_json::json!({
+        "sessions": sessions
+            .iter()
+            .map(|s| serde_json::json!({
+                "name": s.name,
+                "root": s.root,
+                "runs": s.runs.len(),
+                "last_opened_at": s.last_opened_at,
+            }))
+            .collect::<Vec<_>>(),
+    }))
+}
+
+fn show_session(name: &str) -> Result<serde_json::Value, SafeError> {
+    let (root, store) = open_store()?;
+    let runs = store.session_runs(name).map_err(|e| SafeError {
+        category: "internal",
+        context: e.to_string(),
+    })?;
+    if runs.is_empty() {
+        return Err(SafeError {
+            category: "invalid_input",
+            context: format!("no session named {name} in this workspace"),
+        });
+    }
+    // The same ledger the next run of this session would be given, so what is
+    // shown is what the deployment would see rather than a separate summary
+    // that could describe it differently.
+    let ledger =
+        poorai_orchestrator::session_ledger(&store, &runs, &root).map_err(|e| SafeError {
+            category: "internal",
+            context: e,
+        })?;
+    Ok(serde_json::json!({
+        "name": name,
+        "runs": runs.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+        "ledger": ledger,
+    }))
+}
+
 async fn doctor(endpoint: &str) -> Result<serde_json::Value, SafeError> {
     let hardware = probe_hardware().await;
     let provider = OllamaProvider::new(endpoint, Duration::from_secs(4)).map_err(provider_error)?;
@@ -1614,18 +1707,38 @@ async fn calibrate(
         "invalidation_keys": ["model_digest","deployment_fingerprint","compatibility_key","harness_rev"],
     }))
 }
-async fn run(
+/// What one invocation of `poorai run` was asked for.
+struct RunOptions {
     task: String,
     model: Option<String>,
     profile: Option<PathBuf>,
     dry_run: bool,
     approvals: Vec<poorai_tools::Approval>,
     turn_timeout_secs: u64,
-    endpoint: &str,
-) -> Result<serde_json::Value, SafeError> {
+    session: Option<String>,
+}
+
+async fn run(options: RunOptions, endpoint: &str) -> Result<serde_json::Value, SafeError> {
+    let RunOptions {
+        task,
+        model,
+        profile,
+        dry_run,
+        approvals,
+        turn_timeout_secs,
+        session,
+    } = options;
     if !dry_run {
-        return prepare_profiled_run(task, model, profile, approvals, turn_timeout_secs, endpoint)
-            .await;
+        return prepare_profiled_run(
+            task,
+            model,
+            profile,
+            approvals,
+            turn_timeout_secs,
+            session,
+            endpoint,
+        )
+        .await;
     }
     let root = std::env::current_dir()
         .map_err(|e| SafeError {
@@ -1690,6 +1803,7 @@ async fn prepare_profiled_run(
     profile: Option<PathBuf>,
     approvals: Vec<poorai_tools::Approval>,
     turn_timeout_secs: u64,
+    session: Option<String>,
     endpoint: &str,
 ) -> Result<serde_json::Value, SafeError> {
     let model = model.ok_or_else(|| SafeError {
@@ -1801,6 +1915,46 @@ async fn prepare_profiled_run(
         context: e.to_string(),
     })?;
     let run_id = new_id();
+    // Earlier runs of this session are read before the new one is recorded, so
+    // the ledger describes what came before rather than including this run.
+    let carried = match &session {
+        Some(name) => {
+            let runs = store.session_runs(name).map_err(|e| SafeError {
+                category: "internal",
+                context: e.to_string(),
+            })?;
+            if runs.is_empty() {
+                None
+            } else {
+                Some((
+                    runs.len(),
+                    poorai_orchestrator::session_ledger(&store, &runs, &root).map_err(|e| {
+                        SafeError {
+                            category: "internal",
+                            context: e,
+                        }
+                    })?,
+                ))
+            }
+        }
+        None => None,
+    };
+    if let Some(name) = &session {
+        store
+            .append(
+                Some(run_id),
+                "session.opened",
+                serde_json::json!({
+                    "name": name,
+                    "root": root.display().to_string(),
+                    "continues_runs": carried.as_ref().map(|(count, _)| *count).unwrap_or(0),
+                }),
+            )
+            .map_err(|e| SafeError {
+                category: "internal",
+                context: e.to_string(),
+            })?;
+    }
     store
         .append(
             Some(run_id),
@@ -1840,8 +1994,8 @@ async fn prepare_profiled_run(
             s.extend(reasoning_options(model_profile));
             s
         },
-        messages: vec![
-            poorai_domain::ChatMessage {
+        messages: [
+            Some(poorai_domain::ChatMessage {
                 role: "system".into(),
                 content: format!(
                     "{}{}{}",
@@ -1851,8 +2005,18 @@ async fn prepare_profiled_run(
                         .unwrap_or_default(),
                     reasoning_directive(model_profile),
                 ),
-            },
-            poorai_domain::ChatMessage {
+            }),
+            // Its own turn rather than a preamble glued to the task: what an
+            // earlier run established is context, and the task is the
+            // instruction. Merging them invites the second to be read as part
+            // of the first.
+            carried
+                .as_ref()
+                .map(|(_, ledger)| poorai_domain::ChatMessage {
+                    role: "tool".into(),
+                    content: ledger.clone(),
+                }),
+            Some(poorai_domain::ChatMessage {
                 role: "user".into(),
                 content: format!(
                     "{}{}",
@@ -1865,8 +2029,11 @@ async fn prepare_profiled_run(
                     ),
                     task
                 ),
-            },
-        ],
+            }),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
     };
     let result = poorai_orchestrator::run_action_loop_with_prompt(
         &store,
@@ -1891,6 +2058,8 @@ async fn prepare_profiled_run(
     Ok(serde_json::json!({
         "task": task,
         "run_id": run_id,
+        "session": session,
+        "continues_runs": carried.as_ref().map(|(count, _)| *count).unwrap_or(0),
         "execution_profile": execution,
         "runtime_snapshot": runtime,
         "artifact": artifact,

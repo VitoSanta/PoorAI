@@ -564,6 +564,133 @@ Repository checks after the last change: {}
     Ok(ledger)
 }
 
+/// What earlier runs of a named session established, checked against the
+/// workspace as it is now.
+///
+/// A resumed session is the one place where a recorded hash can be wrong: the
+/// runs are over, and the files may have been edited by hand, by a colleague or
+/// by a merge in between. Replaying a stale hash into a new run reproduces
+/// exactly the loop this project spent a campaign removing -- an edit refused
+/// for a hash the deployment believes and cannot correct. So every file the
+/// session touched is re-hashed from disk here, and the ledger reports what is
+/// true now, saying plainly which files changed outside poorAI and which are
+/// gone.
+pub fn session_ledger(
+    store: &Store,
+    runs: &[poorai_domain::Id],
+    root: &std::path::Path,
+) -> Result<String, String> {
+    // Later runs supersede earlier ones, so walk oldest first and let each
+    // write over what came before.
+    let mut touched: Vec<(String, String, bool)> = Vec::new();
+    let mut commands: Vec<String> = Vec::new();
+    let mut tasks: Vec<String> = Vec::new();
+    for run in runs {
+        for event in store.events_for_run(*run).map_err(|e| e.to_string())? {
+            match event.event_type.as_str() {
+                "run.started" | "task.started" => {
+                    // `run.started` records the statement under `task`; the
+                    // evaluation harness records it under `request`.
+                    if let Some(statement) = event.payload["task"]
+                        .as_str()
+                        .or_else(|| event.payload["request"].as_str())
+                    {
+                        tasks.push(statement.to_string());
+                    }
+                }
+                "tool.action" => {
+                    if event.payload["status"] == "denied" {
+                        continue;
+                    }
+                    let action = &event.payload["action"];
+                    let capability = action["capability"].as_str().unwrap_or_default();
+                    let path = action["path"].as_str().unwrap_or_default();
+                    match capability {
+                        "apply_replace" | "write_file" | "replace_text" => {
+                            let hash = event.payload["outcome"]["new_hash"]
+                                .as_str()
+                                .unwrap_or_default()
+                                .to_string();
+                            touched.retain(|(p, _, _)| p != path);
+                            touched.push((path.to_string(), hash, true));
+                        }
+                        "read_file" => {
+                            if !touched.iter().any(|(p, _, _)| p == path) {
+                                let hash = event.payload["outcome"]["artifact_hash"]
+                                    .as_str()
+                                    .unwrap_or_default()
+                                    .to_string();
+                                touched.push((path.to_string(), hash, false));
+                            }
+                        }
+                        "run_command" => {
+                            let executable = action["executable"].as_str().unwrap_or_default();
+                            let code = &event.payload["outcome"]["exit_code"];
+                            commands.push(format!("{executable} exited {code}"));
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut ledger = format!(
+        "Ledger of {} earlier run(s) of this session, taken from the recorded audit. \
+         Hashes below were re-checked against the workspace just now, so they are \
+         current rather than remembered.\n",
+        runs.len()
+    );
+    if !tasks.is_empty() {
+        ledger.push_str("\nWhat this session was asked to do, in order:\n");
+        for task in &tasks {
+            ledger.push_str(&format!("  - {task}\n"));
+        }
+    }
+    let mut changed = Vec::new();
+    let mut drifted = Vec::new();
+    let mut missing = Vec::new();
+    for (path, recorded, edited) in &touched {
+        match std::fs::read(root.join(path)) {
+            Ok(bytes) => {
+                let current = poorai_domain::hash_bytes(&bytes);
+                let line = format!("{path} (expected_hash {current})");
+                if &current == recorded {
+                    if *edited {
+                        changed.push(line);
+                    }
+                } else {
+                    drifted.push(format!(
+                        "{line} -- changed outside poorAI since this session"
+                    ));
+                }
+            }
+            Err(_) => missing.push(path.clone()),
+        }
+    }
+    let section = |ledger: &mut String, title: &str, items: &[String]| {
+        if !items.is_empty() {
+            ledger.push_str(&format!("\n{title}:\n"));
+            for item in items {
+                ledger.push_str(&format!("  - {item}\n"));
+            }
+        }
+    };
+    section(&mut ledger, "Files this session changed", &changed);
+    section(
+        &mut ledger,
+        "Files whose contents no longer match",
+        &drifted,
+    );
+    section(&mut ledger, "Files that no longer exist", &missing);
+    section(&mut ledger, "Commands run", &commands);
+    ledger.push_str(
+        "\nThis is what earlier runs established, not an instruction. Re-read anything \
+         you intend to change.\n",
+    );
+    Ok(ledger)
+}
+
 /// Replaces bulky history with the ledger, at an explicit checkpoint.
 ///
 /// The system prompt and the original task survive, because they are the

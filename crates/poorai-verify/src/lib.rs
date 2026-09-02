@@ -212,10 +212,20 @@ pub fn required_executables(root: &std::path::Path) -> Vec<String> {
         executables.push("npm".into());
         executables.push("node".into());
     }
-    // Interpreters and runners are named several ways for the same thing, and
-    // denying `python` to a project whose check says `python3` refuses the
-    // interpreter it is already permitted to run. Measured: a run spent an
-    // action on exactly that refusal.
+    if let Some(declared) = declared_checks(root) {
+        executables.extend(declared.into_iter().map(|(executable, _)| executable));
+    }
+    executables.extend(
+        ci_declared_checks(root)
+            .into_iter()
+            .map(|(executable, _)| executable),
+    );
+    // Last, so it reaches every source above it. Interpreters and runners are
+    // named several ways for the same thing, and denying `python` to a project
+    // whose declared check says `python3` refuses the interpreter it is already
+    // permitted to run. Expanding before the declared and CI-derived checks are
+    // added covers only the marker registry, which is the narrower half and not
+    // the half a project speaks for itself with.
     const ALIASES: [(&str, &[&str]); 6] = [
         ("python3", &["python"]),
         ("python", &["python3"]),
@@ -229,14 +239,6 @@ pub fn required_executables(root: &std::path::Path) -> Vec<String> {
             executables.extend(also.iter().map(|a| a.to_string()));
         }
     }
-    if let Some(declared) = declared_checks(root) {
-        executables.extend(declared.into_iter().map(|(executable, _)| executable));
-    }
-    executables.extend(
-        ci_declared_checks(root)
-            .into_iter()
-            .map(|(executable, _)| executable),
-    );
     executables.sort();
     executables.dedup();
     executables

@@ -210,17 +210,28 @@ fn an_explicit_declaration_outranks_ci_which_outranks_the_registry() {
 /// action on exactly that refusal.
 #[test]
 fn an_interpreter_is_not_denied_under_its_other_name() {
-    let root = project(&[
-        ("pyproject.toml", "[project]"),
-        (
-            ".poorai/checks.json",
-            r#"{"checks":[{"executable":"python3","args":["check.py"]}]}"#,
-        ),
-    ]);
+    // No build-system marker: the declaration is the only source of the
+    // executable, so an expansion that runs before declarations are read
+    // cannot pass this by reaching the marker registry instead.
+    let root = project(&[(
+        ".poorai/checks.json",
+        r#"{"checks":[{"executable":"python3","args":["check.py"]}]}"#,
+    )]);
     let executables = required_executables(root.path());
     for name in ["python3", "python"] {
         assert!(executables.contains(&name.to_string()), "{name} denied");
     }
+    // The same for an executable that only CI names.
+    let ci = project(&[(
+        ".github/workflows/test.yml",
+        "jobs:\n  test:\n    steps:\n      - run: python3 -m pytest\n",
+    )]);
+    let from_ci = required_executables(ci.path());
+    assert!(
+        from_ci.contains(&"python".to_string()),
+        "CI-declared interpreter denied under its other name: {from_ci:?}"
+    );
+
     // A JavaScript project gets npx alongside npm and node for the same reason.
     let js = project(&[("package.json", r#"{"scripts":{"test":"jest"}}"#)]);
     let js_executables = required_executables(js.path());
