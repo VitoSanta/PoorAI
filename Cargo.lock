@@ -1054,6 +1054,7 @@ dependencies = [
  "poorai-tools",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
 ]

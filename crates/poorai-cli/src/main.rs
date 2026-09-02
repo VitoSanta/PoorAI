@@ -926,7 +926,10 @@ async fn evaluate_task(
     }
     let policy = poorai_tools::ToolPolicy {
         root: root.clone(),
-        allow_commands: vec!["cargo".into(), "node".into(), "npm".into()],
+        // Derived from what the repository is. A fixed list decides in advance
+        // which languages the agent can work in, and a project whose own
+        // toolchain is denied cannot be verified at all.
+        allow_commands: poorai_verify::required_executables(&root),
         output_limit: 64 * 1024,
         timeout: Duration::from_secs(180),
         sandbox: poorai_tools::SandboxPolicy::Preferred,
@@ -1766,7 +1769,7 @@ async fn prepare_profiled_run(
     })?;
     let policy = poorai_tools::ToolPolicy {
         root: root.clone(),
-        allow_commands: vec!["cargo".into()],
+        allow_commands: poorai_verify::required_executables(&root),
         output_limit: 64 * 1024,
         timeout: Duration::from_secs(120),
         sandbox: poorai_tools::SandboxPolicy::Preferred,
@@ -1964,7 +1967,7 @@ async fn verify(run_id: Option<String>, scope: String) -> Result<serde_json::Val
     })?;
     let policy = poorai_tools::ToolPolicy {
         root: root.clone(),
-        allow_commands: vec!["cargo".into()],
+        allow_commands: poorai_verify::required_executables(&root),
         output_limit: 64 * 1024,
         timeout: Duration::from_secs(120),
         sandbox: poorai_tools::SandboxPolicy::Preferred,

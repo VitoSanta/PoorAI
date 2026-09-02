@@ -16,6 +16,10 @@ Retrieval spends a fraction of the context budget rather than a fixed number of 
 
 Not implemented: call and import graph proximity, test ownership, and ranking on recent tool evidence. Non-source files compete on the same footing as source, so a lockfile mentioning a common term can rank above an unrelated source file; measured on a sixty-two file workspace the intended file still led by 114 to 16.
 
-## Symbol extraction is Rust-only
+## Symbol extraction
 
-The index is specified to record language and build manifests, and symbol extraction currently matches `fn ` and `pub fn `. A Python, Go, Java or C# file therefore contributes no symbols, and retrieval loses its strongest ranking signal — a symbol definition outranks a path match by five to one — precisely on the repositories where the agent knows least.
+A symbol definition outranks a path match five to one in retrieval, so a language whose declarations are invisible loses the strongest ranking signal precisely where the agent knows the code least. Extraction previously matched `fn ` and `pub fn `, and a Python, Go, Java or C# file contributed nothing.
+
+It now recognises the shape `modifier* keyword Name`, which covers declarations across the languages a repository is likely to be written in without a parser for each: function, class, struct, interface, trait, protocol, record, actor, mixin and the rest. Comments and control flow are excluded, since a comment describing a function is not a declaration of it.
+
+This is deliberately shallow. It finds the name a task is likely to mention, not the program's structure, and it does not resolve imports, calls or test ownership — all of which this document specifies and none of which is implemented.

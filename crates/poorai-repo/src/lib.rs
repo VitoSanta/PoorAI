@@ -62,6 +62,109 @@ pub fn persist(index: &RepositoryIndex, state_dir: &Path) -> Result<std::path::P
 pub fn stale(index: &RepositoryIndex) -> Result<bool, RepoError> {
     Ok(self::index(&index.root)?.inventory_hash != index.inventory_hash)
 }
+/// Keywords that introduce a named declaration, across the languages a
+/// repository is likely to be written in.
+///
+/// A list of keywords rather than a parser per language: the point is to find
+/// the name a task is likely to mention, and the shape `keyword Name` is
+/// nearly universal. Getting this wrong is not cosmetic — a symbol definition
+/// outranks a path match five to one in retrieval, so a language whose
+/// declarations are invisible loses the strongest ranking signal exactly where
+/// the agent knows least.
+const DECLARATION_KEYWORDS: [&str; 22] = [
+    "fn",
+    "func",
+    "def",
+    "function",
+    "class",
+    "struct",
+    "enum",
+    "trait",
+    "interface",
+    "impl",
+    "type",
+    "record",
+    "object",
+    "module",
+    "package",
+    "protocol",
+    "extension",
+    "actor",
+    "mixin",
+    "sub",
+    "namespace",
+    "union",
+];
+
+/// Modifiers that may precede a declaration and are not the name.
+const DECLARATION_MODIFIERS: [&str; 18] = [
+    "pub",
+    "public",
+    "private",
+    "protected",
+    "internal",
+    "static",
+    "final",
+    "abstract",
+    "sealed",
+    "open",
+    "export",
+    "default",
+    "async",
+    "const",
+    "let",
+    "var",
+    "override",
+    "partial",
+];
+
+/// Names declared in a source file, whatever language it is written in.
+pub fn extract_symbols(text: &str) -> Vec<String> {
+    let mut symbols = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with("//") || line.starts_with('#') || line.starts_with('*') {
+            continue;
+        }
+        let mut words = line
+            .split(|c: char| c.is_whitespace() || c == '(' || c == '<' || c == ':' || c == '{')
+            .filter(|w| !w.is_empty());
+        // Skip the modifiers, then require a declaration keyword, then take the
+        // next word as the name.
+        let mut saw_keyword = false;
+        for word in words.by_ref() {
+            let bare = word.trim_end_matches(&['*', '&'][..]);
+            if DECLARATION_MODIFIERS.contains(&bare) {
+                continue;
+            }
+            if DECLARATION_KEYWORDS.contains(&bare) {
+                saw_keyword = true;
+            }
+            break;
+        }
+        if !saw_keyword {
+            continue;
+        }
+        if let Some(name) = words.next() {
+            let name: String = name
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+                .collect();
+            // A bare keyword with no name, or a name that is itself a keyword,
+            // is a control-flow line rather than a declaration.
+            if name.len() >= 2
+                && !DECLARATION_KEYWORDS.contains(&name.as_str())
+                && !name.chars().next().is_some_and(|c| c.is_numeric())
+            {
+                symbols.push(name);
+            }
+        }
+    }
+    symbols.sort();
+    symbols.dedup();
+    symbols
+}
+
 /// poorAI exclusions applied on top of VCS ignore rules. These are policy, not
 /// convenience: state and VCS internals must never enter the index.
 const POLICY_EXCLUSIONS: [&str; 4] = [".git", "target", "node_modules", ".poorai"];
@@ -105,16 +208,7 @@ fn walk(root: &Path, files: &mut Vec<FileRecord>) -> Result<(), RepoError> {
             continue;
         }
         let text = String::from_utf8_lossy(&bytes);
-        let symbols = text
-            .lines()
-            .filter_map(|l| {
-                l.trim()
-                    .strip_prefix("fn ")
-                    .or_else(|| l.trim().strip_prefix("pub fn "))
-            })
-            .filter_map(|r| r.split('(').next())
-            .map(str::to_string)
-            .collect();
+        let symbols = extract_symbols(&text);
         files.push(FileRecord {
             path: path
                 .strip_prefix(root)
