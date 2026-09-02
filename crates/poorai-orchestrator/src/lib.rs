@@ -381,6 +381,154 @@ pub async fn run_single_action<P: ModelProvider>(
     })
 }
 
+/// Characters per token. A documented estimate, not a count: exact counts are
+/// provider-specific and only available when a backend reports them.
+const CHARS_PER_TOKEN: usize = 4;
+/// Share of the context budget the message history may occupy before the loop
+/// compacts at its next checkpoint.
+const HISTORY_BUDGET_SHARE: f64 = 0.5;
+
+fn estimated_tokens(messages: &[poorai_domain::ChatMessage]) -> usize {
+    messages
+        .iter()
+        .map(|m| (m.role.len() + m.content.len()).div_ceil(CHARS_PER_TOKEN))
+        .sum()
+}
+
+/// Builds a factual ledger of the run so far, from the audit rather than from
+/// the deployment's recollection.
+///
+/// A summary the model wrote could be wrong about what it did; the event log
+/// cannot. Hashes are carried through so an edit planned before compaction is
+/// still valid after it, and denials are kept so a refused action is not
+/// retried from a blank memory.
+pub fn task_ledger(store: &Store, run_id: poorai_domain::Id) -> Result<String, String> {
+    let events = store.events_for_run(run_id).map_err(|e| e.to_string())?;
+    let mut read = Vec::new();
+    let mut edited = Vec::new();
+    let mut denied = Vec::new();
+    let mut commands = Vec::new();
+    let mut checks = None;
+    for event in &events {
+        match event.event_type.as_str() {
+            "tool.action" => {
+                let action = &event.payload["action"];
+                let capability = action["capability"].as_str().unwrap_or_default();
+                let path = action["path"].as_str().unwrap_or_default();
+                if event.payload["status"] == "denied" {
+                    let reason = event.payload["denial"].as_str().unwrap_or_default();
+                    denied.push(format!("{capability} on {path}: {reason}"));
+                    continue;
+                }
+                match capability {
+                    "read_file" => {
+                        let hash = event.payload["outcome"]["artifact_hash"]
+                            .as_str()
+                            .unwrap_or_default();
+                        read.push(format!("{path} (artifact_hash {hash})"));
+                    }
+                    "apply_replace" | "write_file" | "replace_text" => {
+                        let hash = event.payload["outcome"]["new_hash"]
+                            .as_str()
+                            .unwrap_or_default();
+                        edited.push(format!("{path} (now artifact_hash {hash})"));
+                    }
+                    "run_command" => {
+                        let executable = action["executable"].as_str().unwrap_or_default();
+                        let code = &event.payload["outcome"]["exit_code"];
+                        commands.push(format!("{executable} exited {code}"));
+                    }
+                    _ => {}
+                }
+            }
+            "verification.interim" => {
+                checks = Some(event.payload["passing"] == serde_json::Value::Bool(true));
+            }
+            _ => {}
+        }
+    }
+    // Later facts supersede earlier ones: the current hash of a file is the
+    // last one recorded for it, not the first.
+    read.reverse();
+    read.dedup_by(|a, b| a.split(' ').next() == b.split(' ').next());
+    edited.reverse();
+    edited.dedup_by(|a, b| a.split(' ').next() == b.split(' ').next());
+    let mut ledger = String::from(
+        "Ledger of this run so far, taken from the recorded audit rather than from memory.          Earlier conversation has been replaced by it; re-read any file you need.
+",
+    );
+    let section = |ledger: &mut String, title: &str, items: &[String]| {
+        if !items.is_empty() {
+            ledger.push_str(&format!(
+                "
+{title}:
+"
+            ));
+            for item in items {
+                ledger.push_str(&format!(
+                    "  - {item}
+"
+                ));
+            }
+        }
+    };
+    section(&mut ledger, "Files read", &read);
+    section(&mut ledger, "Files changed", &edited);
+    section(&mut ledger, "Commands run", &commands);
+    section(&mut ledger, "Actions refused, do not repeat them", &denied);
+    if let Some(passing) = checks {
+        ledger.push_str(&format!(
+            "
+Repository checks after the last change: {}
+",
+            if passing { "passing" } else { "failing" }
+        ));
+    }
+    Ok(ledger)
+}
+
+/// Replaces bulky history with the ledger, at an explicit checkpoint.
+///
+/// The system prompt and the original task survive, because they are the
+/// instruction and the goal; everything between them is reconstructible from
+/// the audit and is not worth its tokens.
+fn compact_history(
+    store: &Store,
+    run_id: poorai_domain::Id,
+    request: &mut poorai_domain::ModelRequest,
+    step: u8,
+) -> Result<bool, String> {
+    if request.messages.len() <= 3 {
+        return Ok(false);
+    }
+    let before = estimated_tokens(&request.messages);
+    let ledger = task_ledger(store, run_id)?;
+    let system = request.messages.first().cloned();
+    let task = request.messages.get(1).cloned();
+    let mut kept = Vec::new();
+    kept.extend(system);
+    kept.extend(task);
+    kept.push(poorai_domain::ChatMessage {
+        role: "tool".into(),
+        content: ledger,
+    });
+    request.messages = kept;
+    let after = estimated_tokens(&request.messages);
+    store
+        .append(
+            Some(run_id),
+            "context.compacted",
+            serde_json::json!({
+                "step": step,
+                "estimated_tokens_before": before,
+                "estimated_tokens_after": after,
+                "estimate_basis": "characters divided by 4; not a provider count",
+            }),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
 /// Executes a bounded reasoning/action loop. Completion is accepted only after
 /// deterministic checks pass.
 ///
@@ -542,6 +690,12 @@ pub async fn run_action_loop<P: ModelProvider>(
             role: "tool".into(),
             content: serde_json::to_string(&result).map_err(|e| e.to_string())?,
         });
+        // An explicit checkpoint, between actions, where the history is whole
+        // and the next request has not been built yet.
+        let history_budget = (f64::from(request.context_tokens) * HISTORY_BUDGET_SHARE) as usize;
+        if estimated_tokens(&request.messages) > history_budget {
+            compact_history(store, run_id, &mut request, step)?;
+        }
     }
     store
         .append(

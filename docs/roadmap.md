@@ -227,6 +227,14 @@ Two limits stood between this agent and a repository of any size, and both were 
 
 Both were found by asking what the agent could not do rather than by a failing test, which is why neither had shown up in six evaluation campaigns: every corpus task was small enough that whole-file rewriting worked and small enough that listing the tree was enough.
 
+### Context compaction — 2026-09-02
+
+The third structural limit. A long session simply ran out of context; nothing shortened the history.
+
+Compaction now runs at an explicit checkpoint between actions, replacing the middle of the conversation with a factual ledger. The ledger comes from the event log rather than from asking the deployment to summarise itself, because a model's account of its own work can be wrong and an audit cannot. It carries file hashes forward, so an edit planned before compaction remains valid, and it carries refusals forward, so a denied action is not retried from a blank memory.
+
+Both behaviours are mutation-checked: disabling compaction, and dropping refusals from the ledger, each fail a fixture. A real run on the 62-file workspace finished in three actions without triggering compaction at all, which is the correct behaviour and also means the hermetic fixture is what exercises this, not the live run.
+
 ### Current safety boundary
 
 `poorai run` executes for real. A non-dry run requires an explicit `--model` and a `--profile` pointing at a calibration artifact, and refuses to proceed unless that calibration still matches the model digest, deployment fingerprint, hardware compatibility key and harness revision in force. An artifact recording a refused calibration authorises nothing.

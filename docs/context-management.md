@@ -21,3 +21,15 @@ Token counting is provider-specific and an estimate unless the backend reports e
 A configured context limit is not a limit the backend can be trusted to enforce. Measured across seven local deployments at the same boundary, three distinct contracts appeared: the limit ignored and the whole prompt accepted; the prompt silently truncated with no error and content lost; and a clean typed rejection. The division is not by runtime -- two deployments on the same backend format behaved differently.
 
 The scheduler therefore enforces the budget before sending, and checks the backend's reported prompt token count against what it believed it sent. A deployment's measured `context_boundary` observation says which contract it offers; a `truncated_silently` deployment gives no other signal that context was dropped.
+
+## Compaction, as implemented
+
+Compaction happens at an explicit checkpoint between actions, when the estimated history exceeds half the context budget — never mid-action, when the history is incomplete.
+
+**The ledger is built from the audit, not from the deployment's recollection.** A summary a model writes about its own work can be wrong about what it did; the event log cannot. The ledger lists files read with their artifact hashes, files changed with their current hashes, commands run with exit codes, actions that were refused and why, and the state of the repository checks after the last change.
+
+Carrying hashes through matters: an edit planned before compaction is still valid after it. Carrying refusals matters for the opposite reason — without them a deployment retries a denied action from a blank memory.
+
+The system prompt and the original task survive compaction because they are the instruction and the goal. Everything between them is reconstructible from the audit and is not worth its tokens.
+
+Token counts here are estimates at four characters per token, labelled as such in the `context.compacted` event. A backend that reports real counts is used where it does; this is not one of those places.
