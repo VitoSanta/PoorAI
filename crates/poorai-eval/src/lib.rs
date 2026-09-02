@@ -511,10 +511,13 @@ pub struct SuiteReport {
     pub hardware_compatibility_key: String,
     pub execution_profile_id: poorai_domain::Id,
     pub seeds: Vec<u64>,
-    /// Recorded because a seed alone does not make sampling reproducible on
-    /// every backend; measured on this host, a seed with temperature 0 does.
+    /// Every sampling parameter actually in force, with where it came from.
+    ///
+    /// A report that names a seed and omits the temperature describes a
+    /// reproducibility it does not have, and two runs cannot be compared
+    /// without knowing whether a value was recommended, inherited or chosen.
     #[serde(default)]
-    pub temperature_milli: Option<u64>,
+    pub sampling: BTreeMap<String, poorai_domain::ResolvedParameter>,
     pub outcomes: Vec<TaskOutcome>,
     pub generated_at: chrono::DateTime<chrono::Utc>,
 }

@@ -187,7 +187,7 @@ fn gated_run(answers: Vec<ApprovalDecision>) -> (Store, poorai_domain::Id, Strin
         context_tokens: 4096,
         tools: None,
         seed: None,
-        temperature_milli: None,
+        sampling: Default::default(),
     };
     let _ = tokio::runtime::Runtime::new().unwrap().block_on(
         poorai_orchestrator::run_action_loop_with_prompt(

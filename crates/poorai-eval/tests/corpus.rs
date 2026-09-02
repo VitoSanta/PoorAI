@@ -282,7 +282,7 @@ fn report_of(outcomes: Vec<TaskOutcome>) -> SuiteReport {
         hardware_compatibility_key: "hw".into(),
         execution_profile_id: poorai_domain::new_id(),
         seeds: vec![1],
-        temperature_milli: None,
+        sampling: Default::default(),
         outcomes,
         generated_at: chrono::Utc::now(),
     }

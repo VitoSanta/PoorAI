@@ -315,8 +315,10 @@ impl ModelProvider for OllamaProvider {
         if let Some(seed) = request.seed {
             options.insert("seed", serde_json::json!(seed));
         }
-        if let Some(milli) = request.temperature_milli {
-            options.insert("temperature", serde_json::json!(milli as f64 / 1000.0));
+        // Sent verbatim, so what a report records and what the backend received
+        // are the same thing.
+        for (name, value) in &request.sampling {
+            options.insert(name.as_str(), value.clone());
         }
         let body = ChatRequest {
             model: &request.deployment.model_ref,
@@ -697,7 +699,7 @@ mod tests {
             context_tokens: 32,
             tools: None,
             seed: None,
-            temperature_milli: None,
+            sampling: Default::default(),
             messages: vec![],
         };
         let mut chunks = provider.chat(request).await.unwrap();

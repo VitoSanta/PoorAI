@@ -1,0 +1,186 @@
+{
+  "note": "Sampling values carry their origin. official_model_card means the vendor published it; ollama_model means the packaged Modelfile declared it; backend_default means nothing set it and the backend decides. A run reporting a value without its origin cannot be compared with another run.",
+  "profiles": [
+    {
+      "context": {
+        "default": 131072,
+        "maximum": 262144,
+        "minimum": 65536
+      },
+      "model_selector": "qwen3.8:27b-mlx",
+      "provenance": "Vendor thinking-mode recommendation, which the packaged Modelfile already matches exactly. Not changed by poorAI.",
+      "reasoning": {
+        "enabled": true,
+        "kind": "think"
+      },
+      "sampling": {
+        "min_p": {
+          "source": "official_model_card",
+          "value": 0.0
+        },
+        "presence_penalty": {
+          "source": "official_model_card",
+          "value": 0.0
+        },
+        "repeat_penalty": {
+          "source": "official_model_card",
+          "value": 1.0
+        },
+        "temperature": {
+          "source": "official_model_card",
+          "value": 1.0
+        },
+        "top_k": {
+          "source": "official_model_card",
+          "value": 20
+        },
+        "top_p": {
+          "source": "official_model_card",
+          "value": 0.95
+        }
+      },
+      "schema_version": 1
+    },
+    {
+      "context": {
+        "default": 131072,
+        "maximum": 262144,
+        "minimum": 65536
+      },
+      "model_selector": "ornith-1.5:35b",
+      "provenance": "The packaged Modelfile declares nothing, so this deployment was running on backend defaults (0.8/40/0.9) while its own card recommends 0.6/0.95/20 for use. Every measurement recorded before this profile existed was taken under the backend defaults, not the recommendation.",
+      "reasoning": null,
+      "sampling": {
+        "temperature": {
+          "source": "official_model_card",
+          "value": 0.6
+        },
+        "top_k": {
+          "source": "official_model_card",
+          "value": 20
+        },
+        "top_p": {
+          "source": "official_model_card",
+          "value": 0.95
+        }
+      },
+      "schema_version": 1
+    },
+    {
+      "context": {
+        "default": 131072,
+        "maximum": 131072,
+        "minimum": 65536
+      },
+      "model_selector": "granite4.2:30b-q6_K",
+      "provenance": "Vendor states temperature 1.0 and top_p 0.95 across all tasks including tool calling. top_k deliberately unset: the vendor recommends none, and inventing one is a configuration nobody chose.",
+      "reasoning": null,
+      "sampling": {
+        "temperature": {
+          "source": "official_model_card",
+          "value": 1.0
+        },
+        "top_p": {
+          "source": "official_model_card",
+          "value": 0.95
+        }
+      },
+      "schema_version": 1
+    },
+    {
+      "context": {
+        "default": 131072,
+        "maximum": 262144,
+        "minimum": 65536
+      },
+      "model_selector": "nemotron-3.5-lightning:30b-mlx",
+      "provenance": "Vendor recommendation. Context maximum is the MLX tag's 256K, not the 1M the upstream model declares -- the tag is what is served.",
+      "reasoning": null,
+      "sampling": {
+        "temperature": {
+          "source": "official_model_card",
+          "value": 1.0
+        },
+        "top_p": {
+          "source": "official_model_card",
+          "value": 0.95
+        }
+      },
+      "schema_version": 1
+    },
+    {
+      "context": {
+        "default": 131072,
+        "maximum": 131072,
+        "minimum": 65536
+      },
+      "model_selector": "gpt-oss:20b",
+      "provenance": "The packaged Modelfile sets temperature 1.0; the upstream config imposes no sampling recommendation, so nothing further is invented. Depth is controlled by reasoning_effort rather than by sampling.",
+      "reasoning": {
+        "kind": "backend_option",
+        "name": "reasoning_effort",
+        "value": "high"
+      },
+      "sampling": {
+        "temperature": {
+          "source": "ollama_model",
+          "value": 1.0
+        }
+      },
+      "schema_version": 1
+    },
+    {
+      "context": {
+        "default": 131072,
+        "maximum": 262144,
+        "minimum": 65536
+      },
+      "model_selector": "gemma4:31b-mlx",
+      "provenance": "Vendor recommendation for all use cases, which the packaged Modelfile already matches.",
+      "reasoning": null,
+      "sampling": {
+        "temperature": {
+          "source": "official_model_card",
+          "value": 1.0
+        },
+        "top_k": {
+          "source": "official_model_card",
+          "value": 64
+        },
+        "top_p": {
+          "source": "official_model_card",
+          "value": 0.95
+        }
+      },
+      "schema_version": 1
+    },
+    {
+      "context": {
+        "default": 131072,
+        "maximum": 131072,
+        "minimum": 65536
+      },
+      "model_selector": "muse-glimmer:30b-mlx",
+      "provenance": "Vendor recommendation, matching the packaged Modelfile. Depth is a system-prompt directive rather than an option, so it cannot be set through backend options.",
+      "reasoning": {
+        "kind": "prompt_directive",
+        "text": "Reasoning strength: high"
+      },
+      "sampling": {
+        "temperature": {
+          "source": "official_model_card",
+          "value": 1.0
+        },
+        "top_k": {
+          "source": "official_model_card",
+          "value": 64
+        },
+        "top_p": {
+          "source": "official_model_card",
+          "value": 0.95
+        }
+      },
+      "schema_version": 1
+    }
+  ]
+}

@@ -64,7 +64,7 @@ fn run(max_actions: u8) -> (Store, poorai_domain::Id) {
         context_tokens: 8192,
         tools: None,
         seed: None,
-        temperature_milli: None,
+        sampling: Default::default(),
     };
     let _ = tokio::runtime::Runtime::new()
         .unwrap()

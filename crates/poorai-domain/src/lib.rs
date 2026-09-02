@@ -61,6 +61,112 @@ pub enum Observation {
     Unknown { reason: String },
 }
 
+/// Where a parameter's value came from.
+///
+/// Recorded per parameter because a run that reports a value without its
+/// origin cannot be compared with another: a temperature the vendor
+/// recommends, one a package happened to ship, and one nobody chose are three
+/// different claims that look identical in a report.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ParameterSource {
+    /// The vendor's published recommendation for this model.
+    OfficialModelCard,
+    /// Declared in the packaged Modelfile the backend serves.
+    OllamaModel,
+    /// Chosen by poorAI deliberately, against a stated reason.
+    PoorAiOverride,
+    /// Derived from measurement on this machine.
+    HardwareCalibration,
+    /// Nothing set it. The backend decides, and we do not know what it decides.
+    BackendDefault,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ResolvedParameter {
+    pub value: serde_json::Value,
+    pub source: ParameterSource,
+}
+
+/// How a deployment's reasoning depth is controlled.
+///
+/// Three different mechanisms, named separately because they are not
+/// interchangeable: one is a backend option, one is a line the system prompt
+/// must carry, and one is a request field.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ReasoningControl {
+    /// A backend option, such as `reasoning_effort`.
+    BackendOption { name: String, value: String },
+    /// A directive the system prompt must contain, such as a reasoning
+    /// strength line.
+    PromptDirective { text: String },
+    /// The backend's own thinking toggle.
+    Think { enabled: bool },
+}
+
+/// Context sizes for one deployment tag.
+///
+/// Per tag rather than per family: the same model published under different
+/// tags can declare different limits, and a family-level number would be wrong
+/// for at least one of them.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContextPolicy {
+    /// Below this an agent is too constrained to work; a run refuses rather
+    /// than proceeding quietly.
+    pub minimum: u32,
+    /// Normal allocation.
+    pub default: u32,
+    /// The tag's declared limit.
+    pub maximum: u32,
+}
+
+/// Everything about how one deployment should be driven.
+///
+/// Separate from `ModelDefinition`, which is facts the backend reported, and
+/// from `ModelStrategy`, which is how the agent behaves. This is how the
+/// request is built.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ModelProfile {
+    pub schema_version: u32,
+    /// Matched against the deployment's model reference, exactly.
+    pub model_selector: String,
+    pub context: ContextPolicy,
+    /// Sampling options sent to the backend, each with its origin.
+    pub sampling: BTreeMap<String, ResolvedParameter>,
+    #[serde(default)]
+    pub reasoning: Option<ReasoningControl>,
+    /// Where these values came from, in words a reader can check.
+    pub provenance: String,
+}
+
+impl ModelProfile {
+    pub fn select<'a>(profiles: &'a [ModelProfile], model_ref: &str) -> Option<&'a ModelProfile> {
+        profiles
+            .iter()
+            .find(|profile| profile.model_selector == model_ref)
+    }
+
+    /// The context to allocate, bounded by the tag's own limits.
+    ///
+    /// A request for more than the tag declares is clamped rather than sent:
+    /// the backend would either refuse it or silently ignore it, and both make
+    /// the recorded number a fiction.
+    pub fn context_for(&self, requested: Option<u32>) -> u32 {
+        requested
+            .unwrap_or(self.context.default)
+            .clamp(self.context.minimum, self.context.maximum)
+    }
+
+    /// Sampling options as the backend expects them.
+    pub fn sampling_options(&self) -> BTreeMap<String, serde_json::Value> {
+        self.sampling
+            .iter()
+            .map(|(name, resolved)| (name.clone(), resolved.value.clone()))
+            .collect()
+    }
+}
+
 /// Policy for one deployment, as opposed to facts about it.
 ///
 /// Measured differences between deployments are large and do not point the same
@@ -264,11 +370,14 @@ pub struct ModelRequest {
     /// reproducible, whatever the record says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<u64>,
-    /// Sampling temperature, in thousandths so the request stays comparable
-    /// by value. Measured on this host: a seed alone does not make sampling
-    /// reproducible, and a seed with temperature 0 does.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub temperature_milli: Option<u64>,
+    /// Sampling options sent verbatim to the backend.
+    ///
+    /// A map rather than a field per parameter, because the set differs by
+    /// vendor: one model recommends top_k and min_p, another recommends
+    /// nothing, and inventing a value for a model whose vendor did not
+    /// recommend one is a configuration nobody chose.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sampling: BTreeMap<String, serde_json::Value>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChatMessage {

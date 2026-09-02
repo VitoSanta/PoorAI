@@ -25,6 +25,28 @@ Emission is sampled behaviour: at least one deployment produces a native call on
 
 Serving metadata is stored without its tokenizer vocabulary: oversized arrays are replaced by their length and content hash, so the observation stays auditable rather than silently truncated.
 
+## ModelProfile: how a deployment is driven
+
+Separate from `ModelDefinition`, which is what the backend reported, and from `ModelStrategy`, which is how the agent behaves. This is how the request is built: context sizes, sampling options and reasoning control, declared per **tag** rather than per family, because the same architecture published under two tags can declare two different limits.
+
+**Every sampling value carries where it came from** — `official_model_card`, `ollama_model`, `poorai_override`, `hardware_calibration`, or `backend_default`. A run that reports a temperature without its origin cannot be compared with another: a value the vendor recommends, one a package happened to ship, and one nobody chose look identical in a report and mean three different things.
+
+Where a vendor recommends nothing, nothing is invented. One deployment's card imposes no sampling recommendation, so its profile sets only what its package declares rather than borrowing another model's `top_k` because it happens to work there.
+
+**Reasoning depth is set three different ways and they are not interchangeable**: a backend option, a line the system prompt must carry, and the backend's own thinking toggle. Each goes to its own channel.
+
+Context is clamped to the tag's declared ceiling. A request for more would be refused or silently ignored, and both make the recorded number a fiction.
+
+### The correction this file exists for
+
+Every measurement recorded in this repository before these profiles existed used `num_ctx = 32768` for all seven deployments and set no sampling at all.
+
+That 32768 came from the M2 ladder, which stopped there because the ladder was chosen rather than measured to a limit. Four of these tags declare 262144 and the rest 131072, so the agent was running at an eighth of the available context on some.
+
+Worse, one deployment declares no parameters in its package, so it ran on the backend's bare defaults while its own card recommends different values. It was the strongest repairer measured here, under a configuration nobody had chosen for it. Comparisons between it and the others were therefore comparisons between configurations as much as between models, and every number recorded before this file should be read with that in mind.
+
+Measured on this machine: `num_ctx` changes the resident footprint on GGUF deployments — one grows from 21 GB at 8K to 25 GB at 131K — and does not move it at all on MLX ones, which matches the M1 finding that MLX deployments do not enforce the limit. All remain fully GPU-resident at every level tested.
+
 ## Withdrawn deployments
 
 **granite4.2:30b-q6_K — speed.** Measured at 7.4 tokens per second in M2 against 70 for the fastest deployment, and on the `realistic-v1` corpus it took 36.1 minutes per seed where ornith took 1.5 and qwen 7.5 — twenty-four times the slowest of the others. It had already failed the generation suite by exceeding a 900-second per-turn bound without producing one turn. An agent too slow to wait for is unusable in the same way an inaccurate one is, and the cost is paid on every campaign it appears in.

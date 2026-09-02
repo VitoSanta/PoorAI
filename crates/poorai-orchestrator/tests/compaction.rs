@@ -88,7 +88,7 @@ fn run_until_compaction(root: &Path) -> (Store, poorai_domain::Id, ModelRequest)
         context_tokens: 2048,
         tools: None,
         seed: None,
-        temperature_milli: None,
+        sampling: Default::default(),
     };
     let provider = ChattyProvider {
         turn: Arc::new(Mutex::new(0)),

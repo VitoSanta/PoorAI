@@ -59,7 +59,7 @@ fn request() -> ModelRequest {
         context_tokens: 4096,
         tools: None,
         seed: None,
-        temperature_milli: None,
+        sampling: Default::default(),
     }
 }
 

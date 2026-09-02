@@ -228,7 +228,7 @@ async fn a_declared_completion_is_audited_with_its_rationale() {
         context_tokens: 512,
         tools: None,
         seed: None,
-        temperature_milli: None,
+        sampling: Default::default(),
     };
     poorai_orchestrator::run_action_loop(
         &store,

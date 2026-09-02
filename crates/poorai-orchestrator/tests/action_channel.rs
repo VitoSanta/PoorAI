@@ -188,7 +188,7 @@ async fn a_denied_action_is_returned_to_the_model_rather_than_ending_the_run() {
         context_tokens: 512,
         tools: None,
         seed: None,
-        temperature_milli: None,
+        sampling: Default::default(),
     };
     let result =
         poorai_orchestrator::run_action_loop(&store, &provider, run_id, request, &policy, &[], 6)
@@ -247,7 +247,7 @@ async fn the_whole_run_is_recorded_under_one_identifier() {
         context_tokens: 512,
         tools: None,
         seed: None,
-        temperature_milli: None,
+        sampling: Default::default(),
     };
     poorai_orchestrator::run_action_loop(&store, &provider, run_id, request, &policy, &[], 4)
         .await
@@ -299,7 +299,7 @@ async fn a_successful_edit_is_followed_by_the_narrow_check() {
         context_tokens: 512,
         tools: None,
         seed: None,
-        temperature_milli: None,
+        sampling: Default::default(),
     };
     let checks = vec![("true".to_string(), vec![])];
     poorai_orchestrator::run_action_loop(&store, &provider, run_id, request, &policy, &checks, 6)
@@ -349,7 +349,7 @@ async fn a_denied_edit_does_not_trigger_a_check() {
         context_tokens: 512,
         tools: None,
         seed: None,
-        temperature_milli: None,
+        sampling: Default::default(),
     };
     let checks = vec![("true".to_string(), vec![])];
     poorai_orchestrator::run_action_loop(&store, &provider, run_id, request, &policy, &checks, 6)

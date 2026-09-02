@@ -145,10 +145,6 @@ enum EvalCommand {
         /// to distinguish repeated trials of the same suite.
         #[arg(long, default_value_t = 1)]
         seed: u64,
-        /// Sampling temperature in thousandths. Omitted leaves the backend
-        /// default; 0 makes a seeded run reproducible on this host.
-        #[arg(long)]
-        temperature_milli: Option<u64>,
         #[arg(long, default_value_t = 300)]
         turn_timeout_secs: u64,
         /// Where reports are written.
@@ -282,7 +278,6 @@ async fn main() {
                 model,
                 profile,
                 seed,
-                temperature_milli,
                 turn_timeout_secs,
                 out_dir,
             } => print(
@@ -293,7 +288,6 @@ async fn main() {
                     model,
                     profile,
                     seed,
-                    temperature_milli,
                     turn_timeout_secs,
                     out_dir,
                 )
@@ -361,7 +355,7 @@ async fn probe_context_boundary(
             context_tokens,
             tools: None,
             seed: None,
-            temperature_milli: None,
+            sampling: Default::default(),
             messages: vec![ChatMessage {
                 role: "user".into(),
                 content: prompt.clone(),
@@ -487,7 +481,7 @@ async fn probe_edit_once(
         context_tokens: 4096,
         tools: Some(poorai_orchestrator::action_tool_schema()),
         seed: None,
-        temperature_milli: None,
+        sampling: Default::default(),
         messages: vec![
             ChatMessage {
                 role: "system".into(),
@@ -586,7 +580,6 @@ async fn evaluate(
     model: String,
     profile: PathBuf,
     seed: u64,
-    temperature_milli: Option<u64>,
     turn_timeout_secs: u64,
     out_dir: PathBuf,
 ) -> Result<serde_json::Value, SafeError> {
@@ -627,6 +620,12 @@ async fn evaluate(
     // which is what every measurement so far was taken under.
     let declared = load_strategies(Path::new(STRATEGY_FILE));
     let strategy = poorai_domain::ModelStrategy::select(&declared, &deployment.model_ref).cloned();
+    let profiles = load_model_profiles(Path::new(MODEL_PROFILE_FILE));
+    let profile = poorai_domain::ModelProfile::select(&profiles, &deployment.model_ref);
+    // What the backend will actually receive, and where each value came from.
+    let resolved_sampling = resolved_sampling_for(profile);
+    let mut sampling = profile.map(|p| p.sampling_options()).unwrap_or_default();
+    sampling.extend(reasoning_options(profile));
     let mut outcomes = Vec::new();
     for task in &suite.tasks {
         outcomes.push(
@@ -636,8 +635,9 @@ async fn evaluate(
                 &execution,
                 task,
                 seed,
-                temperature_milli,
+                sampling.clone(),
                 strategy.as_ref(),
+                profile,
             )
             .await,
         );
@@ -651,7 +651,7 @@ async fn evaluate(
         hardware_compatibility_key: hardware.compatibility_key.clone(),
         execution_profile_id: execution.id,
         seeds: vec![seed],
-        temperature_milli,
+        sampling: resolved_sampling.clone(),
         outcomes,
         generated_at: now(),
     };
@@ -721,6 +721,67 @@ impl poorai_orchestrator::ApprovalPrompt for TerminalApproval {
             // has to be typed.
             _ => ApprovalDecision::Deny,
         }
+    }
+}
+
+/// A reasoning directive the system prompt must carry, where that is how a
+/// deployment's depth is set. Empty where it is not.
+fn reasoning_directive(profile: Option<&poorai_domain::ModelProfile>) -> String {
+    match profile.and_then(|p| p.reasoning.as_ref()) {
+        Some(poorai_domain::ReasoningControl::PromptDirective { text }) => format!("\n{text}"),
+        _ => String::new(),
+    }
+}
+
+/// Backend options a profile's reasoning control contributes, if any.
+///
+/// Depth is set three different ways across these deployments — an option, a
+/// prompt line, a request field — and they are not interchangeable, so each
+/// goes to its own channel rather than through one that happens to work for
+/// the model in front of us.
+fn reasoning_options(
+    profile: Option<&poorai_domain::ModelProfile>,
+) -> BTreeMap<String, serde_json::Value> {
+    match profile.and_then(|p| p.reasoning.as_ref()) {
+        Some(poorai_domain::ReasoningControl::BackendOption { name, value }) => {
+            BTreeMap::from([(name.clone(), serde_json::json!(value))])
+        }
+        _ => BTreeMap::new(),
+    }
+}
+
+/// Where declared model profiles live, relative to the working directory.
+const MODEL_PROFILE_FILE: &str = "strategies/models.json";
+
+fn load_model_profiles(path: &Path) -> Vec<poorai_domain::ModelProfile> {
+    #[derive(serde::Deserialize)]
+    struct File {
+        profiles: Vec<poorai_domain::ModelProfile>,
+    }
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<File>(&bytes).ok())
+        .map(|file| file.profiles)
+        .unwrap_or_default()
+}
+
+/// The sampling parameters in force, with their origins.
+///
+/// A deployment with no profile is recorded as running on backend defaults
+/// rather than as having no parameters: it has them, we simply did not choose
+/// them and do not know what they are.
+fn resolved_sampling_for(
+    profile: Option<&poorai_domain::ModelProfile>,
+) -> BTreeMap<String, poorai_domain::ResolvedParameter> {
+    match profile {
+        Some(profile) => profile.sampling.clone(),
+        None => BTreeMap::from([(
+            "all".to_string(),
+            poorai_domain::ResolvedParameter {
+                value: serde_json::json!("unset"),
+                source: poorai_domain::ParameterSource::BackendDefault,
+            },
+        )]),
     }
 }
 
@@ -799,14 +860,16 @@ fn retrieved_context(
 const EVAL_HARNESS_REV: &str = "eval-harness-v2";
 
 /// Runs one task and scores it.
+#[allow(clippy::too_many_arguments)]
 async fn evaluate_task(
     provider: &OllamaProvider,
     deployment: &DeploymentDescriptor,
     execution: &poorai_domain::ExecutionProfile,
     task: &poorai_eval::Task,
     seed: u64,
-    temperature_milli: Option<u64>,
+    sampling: BTreeMap<String, serde_json::Value>,
     strategy: Option<&poorai_domain::ModelStrategy>,
+    profile: Option<&poorai_domain::ModelProfile>,
 ) -> poorai_eval::TaskOutcome {
     let mut outcome = poorai_eval::TaskOutcome {
         task_id: task.id.clone(),
@@ -884,19 +947,24 @@ async fn evaluate_task(
     let run_id = new_id();
     let request = poorai_domain::ModelRequest {
         deployment: deployment.clone(),
-        context_tokens: execution.context_tokens,
+        // The tag's own context policy where one is declared, clamped to what
+        // the tag can serve; the calibrated point only where none is.
+        context_tokens: profile
+            .map(|p| p.context_for(None))
+            .unwrap_or(execution.context_tokens),
         tools: Some(poorai_orchestrator::action_tool_schema()),
         seed: Some(seed),
-        temperature_milli,
+        sampling: sampling.clone(),
         messages: vec![
             poorai_domain::ChatMessage {
                 role: "system".into(),
                 content: format!(
-                    "{}{}",
+                    "{}{}{}",
                     poorai_orchestrator::AGENT_SYSTEM_PROMPT,
                     strategy
                         .map(|s| s.prompt_suffix.as_str())
-                        .unwrap_or_default()
+                        .unwrap_or_default(),
+                    reasoning_directive(profile),
                 ),
             },
             poorai_domain::ChatMessage {
@@ -1188,7 +1256,7 @@ async fn probe_cancellation(
         context_tokens: 512,
         tools: None,
         seed: None,
-        temperature_milli: None,
+        sampling: Default::default(),
         messages: vec![ChatMessage {
             role: "user".into(),
             content: CANCEL_PROMPT.into(),
@@ -1239,7 +1307,7 @@ async fn inspect(
             context_tokens: 512,
             tools: None,
             seed: None,
-            temperature_milli: None,
+            sampling: Default::default(),
             messages: vec![ChatMessage {
                 role: "user".into(),
                 content: "Reply with OK.".into(),
@@ -1292,7 +1360,7 @@ async fn inspect(
                 context_tokens: 512,
                 tools: Some(tool_schema.clone()),
                 seed: None,
-                temperature_milli: None,
+                sampling: Default::default(),
                 messages: vec![ChatMessage {
                     role: "user".into(),
                     content: "Call the probe_echo tool with value 'ok'. Do not answer in prose."
@@ -1685,6 +1753,8 @@ async fn prepare_profiled_run(
     // cannot say which tree an edit was made against.
     let declared = load_strategies(Path::new(STRATEGY_FILE));
     let strategy = poorai_domain::ModelStrategy::select(&declared, &deployment.model_ref);
+    let model_profiles = load_model_profiles(Path::new(MODEL_PROFILE_FILE));
+    let model_profile = poorai_domain::ModelProfile::select(&model_profiles, &deployment.model_ref);
     let index = poorai_repo::index(&root).map_err(|e| SafeError {
         category: "invalid_input",
         context: e.to_string(),
@@ -1721,19 +1791,28 @@ async fn prepare_profiled_run(
         })?;
     let request = poorai_domain::ModelRequest {
         deployment: deployment.clone(),
-        context_tokens: execution.context_tokens,
+        context_tokens: model_profile
+            .map(|p| p.context_for(None))
+            .unwrap_or(execution.context_tokens),
         tools: Some(poorai_orchestrator::action_tool_schema()),
         seed: None,
-        temperature_milli: None,
+        sampling: {
+            let mut s = model_profile
+                .map(|p| p.sampling_options())
+                .unwrap_or_default();
+            s.extend(reasoning_options(model_profile));
+            s
+        },
         messages: vec![
             poorai_domain::ChatMessage {
                 role: "system".into(),
                 content: format!(
-                    "{}{}",
+                    "{}{}{}",
                     poorai_orchestrator::AGENT_SYSTEM_PROMPT,
                     strategy
                         .map(|s| s.prompt_suffix.as_str())
-                        .unwrap_or_default()
+                        .unwrap_or_default(),
+                    reasoning_directive(model_profile),
                 ),
             },
             poorai_domain::ChatMessage {
@@ -2354,5 +2433,81 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(observed.chunks, PROBE_MAX_CHUNKS);
+    }
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::*;
+
+    fn declared() -> Vec<poorai_domain::ModelProfile> {
+        load_model_profiles(Path::new("../../strategies/models.json"))
+    }
+
+    /// The case this file exists for. The packaged Modelfile declares nothing,
+    /// so every measurement before this profile existed ran on backend
+    /// defaults while the vendor recommends otherwise.
+    #[test]
+    fn ornith_resolves_to_its_vendor_recommendation() {
+        let profiles = declared();
+        let ornith = poorai_domain::ModelProfile::select(&profiles, "ornith-1.5:35b")
+            .expect("ornith has no profile");
+        let options = ornith.sampling_options();
+        assert_eq!(options["temperature"], serde_json::json!(0.6));
+        assert_eq!(options["top_p"], serde_json::json!(0.95));
+        assert_eq!(options["top_k"], serde_json::json!(20));
+    }
+
+    /// A vendor that recommends nothing gets nothing invented for it.
+    #[test]
+    fn a_model_with_no_recommendation_is_left_alone() {
+        let profiles = declared();
+        let gpt = poorai_domain::ModelProfile::select(&profiles, "gpt-oss:20b").unwrap();
+        let options = gpt.sampling_options();
+        assert!(options.contains_key("temperature"));
+        assert!(!options.contains_key("top_k"), "top_k was invented");
+        assert!(!options.contains_key("top_p"), "top_p was invented");
+    }
+
+    /// Depth is set three different ways and they are not interchangeable.
+    #[test]
+    fn reasoning_reaches_the_right_channel() {
+        let profiles = declared();
+        let gpt = poorai_domain::ModelProfile::select(&profiles, "gpt-oss:20b");
+        // A backend option, so it belongs in the request options.
+        assert_eq!(
+            reasoning_options(gpt)["reasoning_effort"],
+            serde_json::json!("high")
+        );
+        assert!(reasoning_directive(gpt).is_empty());
+
+        let muse = poorai_domain::ModelProfile::select(&profiles, "muse-glimmer:30b-mlx");
+        // A prompt directive, so it belongs in the system prompt and cannot be
+        // sent as an option.
+        assert!(reasoning_directive(muse).contains("Reasoning strength: high"));
+        assert!(reasoning_options(muse).is_empty());
+    }
+
+    /// Context is per tag: the same architecture under two tags declares two
+    /// different limits.
+    #[test]
+    fn context_ceilings_follow_the_tag() {
+        let profiles = declared();
+        let ceiling = |tag: &str| {
+            poorai_domain::ModelProfile::select(&profiles, tag)
+                .unwrap()
+                .context
+                .maximum
+        };
+        assert_eq!(ceiling("qwen3.8:27b-mlx"), 262_144);
+        assert_eq!(ceiling("gpt-oss:20b"), 131_072);
+        // Every default is well above the 32768 every measurement so far used.
+        for profile in &profiles {
+            assert!(
+                profile.context.default >= 65_536,
+                "{}",
+                profile.model_selector
+            );
+        }
     }
 }

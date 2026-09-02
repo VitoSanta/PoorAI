@@ -513,3 +513,60 @@ fn a_strategy_round_trips_and_keeps_its_rationale() {
     // A strategy without its reason is an opinion with a schema.
     assert!(!decoded.rationale.is_empty());
 }
+
+// ---------------------------------------------------------- model profiles
+
+fn profile(selector: &str, maximum: u32) -> ModelProfile {
+    ModelProfile {
+        schema_version: SCHEMA_VERSION,
+        model_selector: selector.into(),
+        context: ContextPolicy {
+            minimum: 65_536,
+            default: 131_072,
+            maximum,
+        },
+        sampling: BTreeMap::from([(
+            "temperature".to_string(),
+            ResolvedParameter {
+                value: serde_json::json!(0.6),
+                source: ParameterSource::OfficialModelCard,
+            },
+        )]),
+        reasoning: None,
+        provenance: "vendor card".into(),
+    }
+}
+
+/// A request for more context than the tag declares would either be refused or
+/// silently ignored, and both make the recorded number a fiction.
+#[test]
+fn context_is_clamped_to_what_the_tag_declares() {
+    let p = profile("m", 131_072);
+    assert_eq!(p.context_for(Some(1_000_000)), 131_072);
+    assert_eq!(p.context_for(Some(1024)), 65_536);
+    assert_eq!(p.context_for(None), 131_072);
+    // A tag with a larger ceiling allows more.
+    assert_eq!(profile("m", 262_144).context_for(Some(262_144)), 262_144);
+}
+
+/// A value without its origin cannot be compared with another run's: a
+/// temperature the vendor recommends and one nobody chose look identical.
+#[test]
+fn every_sampling_value_carries_where_it_came_from() {
+    let p = profile("m", 131_072);
+    assert_eq!(
+        p.sampling["temperature"].source,
+        ParameterSource::OfficialModelCard
+    );
+    // What the backend receives is the value alone.
+    assert_eq!(p.sampling_options()["temperature"], serde_json::json!(0.6));
+}
+
+#[test]
+fn a_profile_applies_only_to_the_tag_it_names() {
+    let declared = vec![profile("ornith-1.5:35b", 262_144)];
+    assert!(ModelProfile::select(&declared, "ornith-1.5:35b").is_some());
+    // Per tag, not per family: the same model under another tag can declare a
+    // different limit.
+    assert!(ModelProfile::select(&declared, "ornith-1.5:35b-mlx").is_none());
+}
