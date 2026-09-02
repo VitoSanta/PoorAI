@@ -907,6 +907,7 @@ async fn evaluate_task(
         violation: None,
         answer_matched: None,
         provider_failure: false,
+        events: BTreeMap::new(),
     };
     let Ok(workspace) = tempfile::tempdir() else {
         outcome.error = Some("could not create a task workspace".into());
@@ -1049,6 +1050,11 @@ async fn evaluate_task(
         }
     }
     let events = store.events_for_run(run_id).unwrap_or_default();
+    // The workspace does not survive the run, so what the run did has to be
+    // carried out in the report or it is lost.
+    for event in &events {
+        *outcome.events.entry(event.event_type.clone()).or_insert(0) += 1;
+    }
     for event in &events {
         if event.event_type == "tool.action" {
             outcome.tool_attempts += 1;

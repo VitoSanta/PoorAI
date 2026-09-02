@@ -52,6 +52,7 @@ fn outcome(kind: TaskKind) -> TaskOutcome {
         violation: None,
         answer_matched: None,
         provider_failure: false,
+        events: BTreeMap::new(),
     }
 }
 
@@ -546,4 +547,22 @@ fn harness_directories_stay_out_of_the_snapshot() {
         std::fs::write(root.path().join(dir).join("f"), "noise").unwrap();
     }
     assert!(changed_since(&before, root.path()).unwrap().is_empty());
+}
+
+/// The workspace is thrown away, so a report that omits what the run did makes
+/// compaction, planning and loop detection things to infer rather than read.
+#[test]
+fn a_report_carries_what_the_run_actually_did() {
+    let mut o = outcome(TaskKind::Bugfix);
+    o.events = BTreeMap::from([
+        ("tool.action".to_string(), 12),
+        ("context.compacted".to_string(), 1),
+        ("loop.detected".to_string(), 2),
+        ("action.malformed".to_string(), 1),
+    ]);
+    let report = report_of(vec![o]);
+    let encoded = serde_json::to_string(&report).unwrap();
+    for name in ["context.compacted", "loop.detected", "action.malformed"] {
+        assert!(encoded.contains(name), "{name} is absent from the report");
+    }
 }

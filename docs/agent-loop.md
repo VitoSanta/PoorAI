@@ -29,3 +29,11 @@ This is the measured failure shape of every budget-exhausted run recorded here: 
 A run may begin with one turn spent asking for a plan, opt-in per deployment strategy. The plan is **context, not authority**: nothing in the loop enforces it, no step grants permission, and verification is unchanged. If it turns out wrong the deployment is told to depart from it.
 
 It is bounded to eight steps, because a longer list is a script rather than a plan, and it costs a turn — which is why it is opt-in and has to be measured against the default rather than assumed to help. A deployment asked for a plan that answers in prose produced none, and that is recorded as a fact about the deployment rather than treated as an error.
+
+## Malformed tool calls
+
+A call naming a real tool with arguments that do not match its schema is a mistake the deployment can correct, and it can only correct one it is told about. The loop returns the problem as a tool result and continues, rather than ending the run and reporting the harness's silence as the deployment's failure.
+
+Measured before the change: five of thirteen evaluation runs ended this way, three of them the entire generation suite, in each case with actions still unspent.
+
+Three consecutive malformed calls do end the run. A deployment that cannot form a valid call after being told three times what was wrong is not going to, and the budget is better spent failing.

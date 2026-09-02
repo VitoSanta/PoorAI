@@ -389,6 +389,13 @@ pub struct TaskOutcome {
     /// deployment could not do the task.
     #[serde(default)]
     pub provider_failure: bool,
+    /// How many of each event the run produced.
+    ///
+    /// The workspace is thrown away, so without this a report cannot say
+    /// whether the history was compacted, whether a plan was made, or whether
+    /// a loop was named -- and those become things to infer rather than read.
+    #[serde(default)]
+    pub events: BTreeMap<String, usize>,
 }
 
 impl TaskOutcome {

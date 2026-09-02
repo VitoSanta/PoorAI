@@ -420,6 +420,12 @@ impl ApprovalPrompt for DenyWithoutAsking {
     }
 }
 
+/// Consecutive malformed tool calls before the run gives up.
+///
+/// A deployment that cannot form a valid call after being told what was wrong
+/// three times is not going to, and the budget is better spent failing.
+const MALFORMED_CALL_LIMIT: usize = 3;
+
 /// Identical repetitions of a refused action before the loop says so.
 ///
 /// Two is a retry, which can be reasonable — a hash may have changed. Three is
@@ -667,6 +673,7 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
         }
     }
     let mut refused_streak: Vec<String> = Vec::new();
+    let mut malformed = 0usize;
     let before = poorai_verify::baseline(&policy, checks)
         .await
         .map_err(|e| e.to_string())?;
@@ -686,7 +693,45 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
         )
         .await
         .map_err(|e| e.to_string())?;
-        let action = action_from_reply(&reply)?;
+        // A malformed call is a mistake the deployment can correct, and it can
+        // only correct one it is told about. Ending the run instead discards
+        // whatever work is already done and reports the harness's silence as
+        // the deployment's failure.
+        let action = match action_from_reply(&reply) {
+            Ok(action) => action,
+            Err(problem) => {
+                store
+                    .append(
+                        Some(run_id),
+                        "action.malformed",
+                        serde_json::json!({"step": step, "problem": problem}),
+                    )
+                    .map_err(|e| e.to_string())?;
+                malformed += 1;
+                if malformed > MALFORMED_CALL_LIMIT {
+                    store
+                        .append(
+                            Some(run_id),
+                            "task.failed",
+                            serde_json::json!({"reason": "repeatedly malformed tool calls"}),
+                        )
+                        .map_err(|e| e.to_string())?;
+                    return Err(format!(
+                        "{MALFORMED_CALL_LIMIT} malformed tool calls in a row: {problem}"
+                    ));
+                }
+                request.messages.push(poorai_domain::ChatMessage {
+                    role: "tool".into(),
+                    content: serde_json::json!({
+                        "rejected": problem,
+                        "hint": "Your tool call did not match the schema you were given.                                  Check the required arguments and their types, then call again.",
+                    })
+                    .to_string(),
+                });
+                continue;
+            }
+        };
+        malformed = 0;
         if matches!(action, ActionProposal::Complete { .. }) {
             // A completion is an action, and every action is audited. Handling
             // it before the audit left the declared rationale out of the log
