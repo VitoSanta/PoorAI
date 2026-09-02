@@ -274,7 +274,11 @@ The Python repository case now runs read, edit, checks pass, complete, in three 
 
 Declaration is a real effect: Fisher one-sided p = 0.026. Hidden verification is not — p = 0.50 — so what is demonstrated is that the deployment now declares, and reaches the declaration on a third less work, not that it is more often right. The undeclared runs before the change were spread across five different tasks at one run in four each, which is the signature of a defect that reaches anything rather than of a hard task, and is the strongest evidence that this belonged in the loop.
 
-`bugfix-parse` fails hidden verification once in four runs on *both* sides of the change. It was read as a regression when only one control trial existed; with four it is unchanged. The task is genuinely underspecified — its statement says "out-of-range" without settling whether port 0 is valid, and only the hidden test does — but `m5-frozen-v1` is frozen and will not be edited to raise a score. It belongs in a declared successor revision.
+`bugfix-parse` fails hidden verification about once in four runs, and has now done so in three separate campaigns — before the history fix, after it, and again after the plan and budget changes — moving between seeds each time. It is an unstable task, not a regression in anything.
+
+That same regression check confirmed the plan and budget work cost nothing: across seeds 1 and 2, completion declared 16/16 before and after, hidden verification 15/16 before and after, 46 actions against 43, 668 seconds against 691.
+
+The earlier reading, from one control trial only, was that `bugfix-parse` fails hidden verification once in four runs on *both* sides of the change. It was read as a regression when only one control trial existed; with four it is unchanged. The task is genuinely underspecified — its statement says "out-of-range" without settling whether port 0 is valid, and only the hidden test does — but `m5-frozen-v1` is frozen and will not be edited to raise a score. It belongs in a declared successor revision.
 
 **3. Resumable sessions.** *Closed.* `poorai run --session NAME` carries what earlier runs of that name established into the next one; `poorai session list` and `poorai session show NAME` read them back. Sessions are derived from the event log rather than kept in a table beside it — a projection maintained in parallel is a second source of truth that can disagree with the first, and the log is the one with the hash chain over it.
 
