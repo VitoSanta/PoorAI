@@ -204,3 +204,27 @@ fn an_explicit_declaration_outranks_ci_which_outranks_the_registry() {
         "cargo"
     );
 }
+
+/// Denying `python` to a project whose declared check runs `python3` refuses
+/// the interpreter it is already permitted to run. Measured: a run spent an
+/// action on exactly that refusal.
+#[test]
+fn an_interpreter_is_not_denied_under_its_other_name() {
+    let root = project(&[
+        ("pyproject.toml", "[project]"),
+        (
+            ".poorai/checks.json",
+            r#"{"checks":[{"executable":"python3","args":["check.py"]}]}"#,
+        ),
+    ]);
+    let executables = required_executables(root.path());
+    for name in ["python3", "python"] {
+        assert!(executables.contains(&name.to_string()), "{name} denied");
+    }
+    // A JavaScript project gets npx alongside npm and node for the same reason.
+    let js = project(&[("package.json", r#"{"scripts":{"test":"jest"}}"#)]);
+    let js_executables = required_executables(js.path());
+    for name in ["npm", "node", "npx"] {
+        assert!(js_executables.contains(&name.to_string()), "{name} denied");
+    }
+}

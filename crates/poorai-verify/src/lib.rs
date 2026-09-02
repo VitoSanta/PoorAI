@@ -212,6 +212,23 @@ pub fn required_executables(root: &std::path::Path) -> Vec<String> {
         executables.push("npm".into());
         executables.push("node".into());
     }
+    // Interpreters and runners are named several ways for the same thing, and
+    // denying `python` to a project whose check says `python3` refuses the
+    // interpreter it is already permitted to run. Measured: a run spent an
+    // action on exactly that refusal.
+    const ALIASES: [(&str, &[&str]); 6] = [
+        ("python3", &["python"]),
+        ("python", &["python3"]),
+        ("pytest", &["python3", "python"]),
+        ("poetry", &["python3"]),
+        ("npm", &["node", "npx"]),
+        ("flutter", &["dart"]),
+    ];
+    for (named, also) in ALIASES {
+        if executables.iter().any(|e| e == named) {
+            executables.extend(also.iter().map(|a| a.to_string()));
+        }
+    }
     if let Some(declared) = declared_checks(root) {
         executables.extend(declared.into_iter().map(|(executable, _)| executable));
     }

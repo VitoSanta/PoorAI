@@ -518,3 +518,85 @@ fn only_http_and_https_are_fetchable() {
 fn block_on_tools<F: std::future::Future>(f: F) -> F::Output {
     tokio::runtime::Runtime::new().unwrap().block_on(f)
 }
+
+/// A refusal that withholds what it already knows costs the caller a turn to
+/// learn it. Measured: three consecutive stale-hash refusals in one run, each
+/// spending an action the run did not have to spare.
+#[test]
+fn a_stale_hash_refusal_returns_the_current_hash() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("code.rs"), "current contents").unwrap();
+    let policy = policy(root.path());
+    let refusal = replace_text(&policy, Path::new("code.rs"), "stale", "current", "new")
+        .unwrap_err()
+        .to_string();
+    assert!(refusal.contains(&poorai_domain::hash_bytes("current contents")));
+    // And the same for a whole-file rewrite.
+    let refusal = apply_replace(&policy, Path::new("code.rs"), "stale", "new")
+        .unwrap_err()
+        .to_string();
+    assert!(refusal.contains(&poorai_domain::hash_bytes("current contents")));
+}
+
+/// A result field called `new_hash` and a parameter called `expected_hash` are
+/// one value under two names, and the mapping has to be inferred. Measured: a
+/// model re-sent the pre-edit hash four times after a successful edit, having
+/// never made that inference. Every result that carries the value now names it
+/// the way the parameter that consumes it is named.
+#[test]
+fn a_result_names_the_hash_the_way_the_next_call_must_pass_it() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("code.rs"), "old body").unwrap();
+    let policy = policy(root.path());
+
+    let read = read_file(&policy, Path::new("code.rs")).unwrap();
+    assert_eq!(read.expected_hash, read.artifact_hash);
+
+    let applied = replace_text(
+        &policy,
+        Path::new("code.rs"),
+        &read.expected_hash,
+        "old",
+        "new",
+    )
+    .unwrap();
+    assert_eq!(applied.expected_hash, applied.new_hash);
+    // And the value a result hands back is accepted by the next edit.
+    replace_text(
+        &policy,
+        Path::new("code.rs"),
+        &applied.expected_hash,
+        "new",
+        "newer",
+    )
+    .unwrap();
+}
+
+/// "Not found" is true but unhelpful when the reason the text is absent is that
+/// this very edit already replaced it. Measured: a model retried an applied
+/// edit four times on a file that was already correctly fixed.
+#[test]
+fn an_edit_that_already_landed_is_reported_as_already_applied() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("s.py"), "return (w + 99) // 100\n").unwrap();
+    let policy = policy(root.path());
+    let hash = poorai_domain::hash_bytes("return (w + 99) // 100\n");
+
+    let refusal = replace_text(
+        &policy,
+        Path::new("s.py"),
+        &hash,
+        "return w // 100",
+        "return (w + 99) // 100",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(refusal.contains("already applied"), "{refusal}");
+
+    // An edit whose replacement is genuinely absent still reports plainly, so
+    // this does not become a blanket excuse for any failed match.
+    let refusal = replace_text(&policy, Path::new("s.py"), &hash, "nothing", "absent")
+        .unwrap_err()
+        .to_string();
+    assert!(refusal.contains("does not appear"), "{refusal}");
+}

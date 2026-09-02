@@ -674,6 +674,8 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
     }
     let mut refused_streak: Vec<String> = Vec::new();
     let mut malformed = 0usize;
+    let mut checks_passed_at: Option<u8> = None;
+    let mut idle_since_pass = 0usize;
     let before = poorai_verify::baseline(&policy, checks)
         .await
         .map_err(|e| e.to_string())?;
@@ -693,6 +695,21 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
         )
         .await
         .map_err(|e| e.to_string())?;
+        // The deployment's own turn goes into the history before the result of
+        // it does. Without this the history is the task followed by a run of
+        // tool messages answering nothing, and the deployment cannot see what
+        // it already proposed -- so it re-derives the same action from the same
+        // unchanged prompt. Measured: a model re-sent a byte-identical edit
+        // four times, across two intervening re-reads of the file it had
+        // already correctly fixed.
+        request.messages.push(poorai_domain::ChatMessage {
+            role: "assistant".into(),
+            content: if reply.content.trim().is_empty() {
+                serde_json::json!({"tool_calls": reply.tool_calls}).to_string()
+            } else {
+                reply.content.clone()
+            },
+        });
         // A malformed call is a mistake the deployment can correct, and it can
         // only correct one it is told about. Ending the run instead discards
         // whatever work is already done and reports the harness's silence as
@@ -909,15 +926,46 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
                     serde_json::json!({"step": step, "passing": failing.is_empty()}),
                 )
                 .map_err(|e| e.to_string())?;
+            if failing.is_empty() {
+                checks_passed_at.get_or_insert(step);
+            } else {
+                checks_passed_at = None;
+            }
             result = serde_json::json!({
                 "edit": result,
                 "checks_passing": failing.is_empty(),
                 "failing_checks": failing,
             });
         }
+        // Facts the loop has and the deployment does not.
+        //
+        // A run is judged against a budget the deployment cannot see, and after
+        // a long history it cannot easily tell how long the checks have been
+        // passing either. The dominant failure mode measured here is a
+        // repository correctly fixed and the completion never declared: eleven
+        // of forty-eight runs in one campaign, and it appears in every
+        // deployment tested, so it is the loop withholding information rather
+        // than a trait of one model.
+        //
+        // Stated as facts, not as urging. The loop does not decide the task is
+        // finished -- deciding that for the deployment would be the harness
+        // solving the task and would make the measurement meaningless.
+        let remaining = max_actions.saturating_sub(step);
+        if checks_passed_at.is_some() && !edited {
+            idle_since_pass += 1;
+        } else if edited {
+            idle_since_pass = 0;
+        }
+        let mut status = serde_json::json!({"actions_remaining": remaining});
+        if let Some(passed_at) = checks_passed_at
+            && idle_since_pass > 0
+        {
+            status["checks_passing_since_step"] = serde_json::json!(passed_at);
+            status["actions_since_without_changing_a_file"] = serde_json::json!(idle_since_pass);
+        }
         request.messages.push(poorai_domain::ChatMessage {
             role: "tool".into(),
-            content: serde_json::to_string(&result).map_err(|e| e.to_string())?,
+            content: serde_json::json!({"result": result, "status": status}).to_string(),
         });
         // An explicit checkpoint, between actions, where the history is whole
         // and the next request has not been built yet.

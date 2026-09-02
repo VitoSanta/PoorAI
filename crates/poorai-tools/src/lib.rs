@@ -380,8 +380,10 @@ pub struct FileReadResult {
     pub truncated: bool,
     /// Hash of the whole file, not of the window returned. An edit is guarded
     /// against the file as it is on disk, so a partial read still yields a
-    /// usable hash.
+    /// usable hash. Repeated under `expected_hash` because that is the name of
+    /// the parameter it must be passed to.
     pub artifact_hash: String,
+    pub expected_hash: String,
     pub redacted: bool,
     /// Lines in the whole file, so a caller can tell it has seen only part.
     pub total_lines: usize,
@@ -405,6 +407,12 @@ pub struct ApplyResult {
     pub path: String,
     pub previous_hash: String,
     pub new_hash: String,
+    /// The same value as `new_hash`, under the name of the parameter that
+    /// consumes it. A result field called `new_hash` and a parameter called
+    /// `expected_hash` are one value under two names, and the mapping has to
+    /// be inferred. Measured: a model re-sent the pre-edit hash four times
+    /// after a successful edit, having never made that inference.
+    pub expected_hash: String,
 }
 
 /// Lists a bounded, policy-filtered workspace tree.
@@ -469,9 +477,9 @@ pub fn apply_replace(
     }
     let previous_hash = hash_bytes(&existing);
     if previous_hash != expected_hash {
-        return Err(ToolError::Denied(
-            "stale file hash; reread before editing".into(),
-        ));
+        return Err(ToolError::Denied(format!(
+            "stale file hash; the file now hashes to {previous_hash}"
+        )));
     }
     if replacement.len() > policy.output_limit {
         return Err(ToolError::Denied(
@@ -479,10 +487,12 @@ pub fn apply_replace(
         ));
     }
     std::fs::write(&path, replacement.as_bytes())?;
+    let new_hash = hash_bytes(replacement.as_bytes());
     Ok(ApplyResult {
         path: relative.display().to_string(),
         previous_hash,
-        new_hash: hash_bytes(replacement.as_bytes()),
+        expected_hash: new_hash.clone(),
+        new_hash,
     })
 }
 
@@ -515,14 +525,29 @@ pub fn replace_text(
     }
     let previous_hash = hash_bytes(&existing);
     if previous_hash != expected_hash {
-        return Err(ToolError::Denied(
-            "stale file hash; reread before editing".into(),
-        ));
+        // The current hash is in hand, and withholding it makes the caller
+        // spend a turn re-reading to learn something the refusal already knew.
+        // Measured: three consecutive refusals of this kind in one run, each
+        // costing an action the run did not have to spare.
+        return Err(ToolError::Denied(format!(
+            "stale file hash; the file now hashes to {previous_hash}"
+        )));
     }
     let text = String::from_utf8_lossy(&existing).to_string();
     let occurrences = text.matches(find).count();
     match occurrences {
         0 => {
+            // "Not found" is true but unhelpful when the reason it is absent
+            // is that this very edit already replaced it. Saying so is the
+            // difference between a caller that moves on and one that retries
+            // the same edit until its budget runs out. Measured: exactly that
+            // loop, four times in one run, on a file already correctly fixed.
+            if !replace.is_empty() && text.contains(replace) {
+                return Err(ToolError::Denied(format!(
+                    "this edit is already applied: the file does not contain the `find` text \
+                     and does contain the `replace` text. The file now hashes to {previous_hash}"
+                )));
+            }
             return Err(ToolError::Denied(
                 "find text does not appear in the file".into(),
             ));
@@ -539,10 +564,12 @@ pub fn replace_text(
         return Err(ToolError::Denied("result exceeds policy size limit".into()));
     }
     std::fs::write(&path, updated.as_bytes())?;
+    let new_hash = hash_bytes(updated.as_bytes());
     Ok(ApplyResult {
         path: relative.display().to_string(),
         previous_hash,
-        new_hash: hash_bytes(updated.as_bytes()),
+        expected_hash: new_hash.clone(),
+        new_hash,
     })
 }
 
@@ -643,10 +670,12 @@ pub fn write_file(
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(&path, content.as_bytes())?;
+    let new_hash = hash_bytes(content.as_bytes());
     Ok(ApplyResult {
         path: relative.display().to_string(),
         previous_hash: String::new(),
-        new_hash: hash_bytes(content.as_bytes()),
+        expected_hash: new_hash.clone(),
+        new_hash,
     })
 }
 
@@ -704,6 +733,7 @@ pub fn read_file_window(
     Ok(FileReadResult {
         path: relative.display().to_string(),
         artifact_hash: hash_bytes(&bytes),
+        expected_hash: hash_bytes(&bytes),
         content,
         truncated: bounded || first > 1 || window.len() < total_lines,
         redacted,
