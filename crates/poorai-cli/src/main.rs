@@ -728,13 +728,24 @@ async fn evaluate_task(
     }
     let policy = poorai_tools::ToolPolicy {
         root: root.clone(),
-        allow_commands: vec!["cargo".into()],
+        allow_commands: vec!["cargo".into(), "node".into(), "npm".into()],
         output_limit: 64 * 1024,
-        timeout: Duration::from_secs(120),
+        timeout: Duration::from_secs(180),
         sandbox: poorai_tools::SandboxPolicy::Preferred,
-        // The suite grants nothing. A task that needs a grant to pass would be
-        // measuring the grant, not the agent.
-        approvals: Vec::new(),
+        // Only what the task itself declares. A grant lives in the frozen
+        // corpus so a result cannot be read without seeing what the agent was
+        // permitted, and the suite cannot quietly widen it per run.
+        approvals: task
+            .approvals
+            .iter()
+            .filter_map(|name| match name.as_str() {
+                "dependency_change" => Some(poorai_tools::Approval::DependencyChange),
+                "history_rewrite" => Some(poorai_tools::Approval::HistoryRewrite),
+                "publish" => Some(poorai_tools::Approval::Publish),
+                "network_access" => Some(poorai_tools::Approval::NetworkAccess),
+                _ => None,
+            })
+            .collect(),
     };
     let state_dir = root.join(".poorai");
     if std::fs::create_dir_all(&state_dir).is_err() {
@@ -768,11 +779,16 @@ async fn evaluate_task(
         ],
     };
     let started = std::time::Instant::now();
-    let max_actions = execution.budgets["max_actions"]
-        .as_u64()
-        .unwrap_or(8)
-        .try_into()
-        .unwrap_or(8u8);
+    // The task's own budget where it declares one: building several files
+    // needs more turns than editing a line, and that is a property of the task
+    // rather than of the deployment.
+    let max_actions = task.max_actions.unwrap_or_else(|| {
+        execution.budgets["max_actions"]
+            .as_u64()
+            .unwrap_or(8)
+            .try_into()
+            .unwrap_or(8u8)
+    });
     let run = tokio::time::timeout(
         Duration::from_secs(task.time_budget_secs),
         poorai_orchestrator::run_action_loop(

@@ -1,0 +1,39 @@
+{
+  "name": "generation-v1",
+  "tasks": [
+    {
+      "allowed_files": [],
+      "approvals": [
+        "network_access"
+      ],
+      "files": {
+        "SPEC.md": "# HTTP API specification\n\nBuild an HTTP JSON API. It must start with `node server.js` and listen on the\nport in the `PORT` environment variable, defaulting to 3000.\n\nAll responses are JSON with `content-type: application/json`.\n\n## Endpoints\n\n`GET /health`\n  200 with body `{\"status\": \"ok\"}`\n\n`GET /todos`\n  200 with a JSON array of every todo. Empty array when there are none.\n\n`POST /todos`\n  Body: `{\"title\": \"<string>\"}`\n  201 with the created todo: `{\"id\": <number>, \"title\": \"<string>\", \"done\": false}`\n  Ids are numbers and are unique.\n\n`GET /todos/:id`\n  200 with that todo, or 404 with body `{\"error\": \"not found\"}`\n\n`POST /todos/:id/done`\n  200 with the todo, now `\"done\": true`. The change persists for later reads.\n  404 with `{\"error\": \"not found\"}` if the id does not exist.\n\nTodos are kept in memory. No database, no persistence across restarts.\n"
+      },
+      "hidden_files": {
+        "hidden/check.mjs": "// Hidden verifier. The agent never sees this file: it is written into the\n// workspace only after the agent has finished.\nimport { spawn } from 'node:child_process';\n\nconst PORT = 39117;\nconst base = `http://127.0.0.1:${PORT}`;\nconst server = spawn('node', ['server.js'], {\n  env: { ...process.env, PORT: String(PORT) },\n  stdio: ['ignore', 'pipe', 'pipe'],\n});\nlet serverOutput = '';\nserver.stdout.on('data', d => { serverOutput += d; });\nserver.stderr.on('data', d => { serverOutput += d; });\n\nconst fail = (message) => {\n  server.kill('SIGKILL');\n  console.error(`FAIL: ${message}\\n--- server output ---\\n${serverOutput.slice(0, 2000)}`);\n  process.exit(1);\n};\n\nconst get = async (path, options) => {\n  const response = await fetch(base + path, options);\n  let body = null;\n  try { body = await response.json(); } catch { body = null; }\n  return { status: response.status, body };\n};\n\n// Wait for the server to accept connections rather than assuming a delay.\nconst ready = async () => {\n  for (let i = 0; i < 100; i++) {\n    try { await fetch(base + '/health'); return true; } catch { await new Promise(r => setTimeout(r, 100)); }\n  }\n  return false;\n};\n\ntry {\n  if (!await ready()) fail('server never accepted a connection on /health');\n\n  let r = await get('/health');\n  if (r.status !== 200) fail(`GET /health returned ${r.status}, expected 200`);\n  if (!r.body || r.body.status !== 'ok') fail(`GET /health body was ${JSON.stringify(r.body)}`);\n\n  r = await get('/todos');\n  if (r.status !== 200) fail(`GET /todos returned ${r.status}`);\n  if (!Array.isArray(r.body) || r.body.length !== 0) fail(`GET /todos body was ${JSON.stringify(r.body)}`);\n\n  r = await get('/todos', {\n    method: 'POST',\n    headers: { 'content-type': 'application/json' },\n    body: JSON.stringify({ title: 'write tests' }),\n  });\n  if (r.status !== 201) fail(`POST /todos returned ${r.status}, expected 201`);\n  if (!r.body || r.body.title !== 'write tests' || r.body.done !== false || typeof r.body.id !== 'number') {\n    fail(`POST /todos body was ${JSON.stringify(r.body)}`);\n  }\n  const id = r.body.id;\n\n  r = await get('/todos');\n  if (r.body.length !== 1) fail(`after one POST, GET /todos had ${r.body.length} items`);\n\n  r = await get(`/todos/${id}`);\n  if (r.status !== 200 || r.body.id !== id) fail(`GET /todos/${id} returned ${r.status} ${JSON.stringify(r.body)}`);\n\n  r = await get('/todos/999999');\n  if (r.status !== 404) fail(`GET /todos/999999 returned ${r.status}, expected 404`);\n  if (!r.body || r.body.error !== 'not found') fail(`404 body was ${JSON.stringify(r.body)}`);\n\n  r = await get(`/todos/${id}/done`, { method: 'POST' });\n  if (r.status !== 200) fail(`POST /todos/${id}/done returned ${r.status}`);\n  if (r.body.done !== true) fail(`after done, body was ${JSON.stringify(r.body)}`);\n\n  r = await get(`/todos/${id}`);\n  if (r.body.done !== true) fail('done did not persist');\n\n  r = await get('/todos/999999/done', { method: 'POST' });\n  if (r.status !== 404) fail(`POST /todos/999999/done returned ${r.status}, expected 404`);\n  if (!r.body || r.body.error !== 'not found') fail(`done-404 body was ${JSON.stringify(r.body)}`);\n\n  // A second todo must get a different id, and both must be listed.\n  r = await get('/todos', {\n    method: 'POST',\n    headers: { 'content-type': 'application/json' },\n    body: JSON.stringify({ title: 'second' }),\n  });\n  if (r.status !== 201) fail(`second POST /todos returned ${r.status}`);\n  if (r.body.id === id) fail('ids are not unique');\n  if (r.body.done !== false) fail('a new todo was not created undone');\n  const listed = await get('/todos');\n  if (listed.body.length !== 2) fail(`after two POSTs, GET /todos had ${listed.body.length}`);\n  // Marking one done must not mark the other.\n  if (listed.body.filter(t => t.done).length !== 1) fail('done leaked across todos');\n\n  server.kill('SIGKILL');\n  console.log('OK');\n  process.exit(0);\n} catch (error) {\n  fail(`verifier threw: ${error && error.stack ? error.stack : error}`);\n}\n"
+      },
+      "hidden_verifier": {
+        "args": [
+          "hidden/check.mjs"
+        ],
+        "executable": "node"
+      },
+      "id": "generate-todo-api",
+      "kind": "generation",
+      "max_actions": 30,
+      "protected_files": [
+        "SPEC.md"
+      ],
+      "provenance": "authored for poorAI 2026-09-02; specification and verifier written for this suite, not derived from any public benchmark",
+      "statement": "Build the HTTP JSON API described in SPEC.md. Read SPEC.md first. Create server.js and anything else you need, so that `node server.js` starts a server implementing every endpoint exactly as specified. Do not modify SPEC.md. You may install dependencies with npm if you want them, or use only the Node standard library.",
+      "time_budget_secs": 1800,
+      "visible_verifier": {
+        "args": [
+          "--check",
+          "server.js"
+        ],
+        "executable": "node"
+      }
+    }
+  ]
+}
