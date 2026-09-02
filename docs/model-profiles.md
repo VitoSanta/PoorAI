@@ -24,3 +24,11 @@ Tool calls are read from the typed `ModelChunk::tool_calls` channel. Prose is ne
 Emission is sampled behaviour: at least one deployment produces a native call on some runs and not others. Every sampled capability therefore records `trials`, `calls` and `reliable` rather than a boolean, and keeps the failing trials in the record — a rate is not evidence unless the misses are visible. Zero calls in n trials is `unknown`, not proof the deployment cannot make one.
 
 Serving metadata is stored without its tokenizer vocabulary: oversized arrays are replaced by their length and content hash, so the observation stays auditable rather than silently truncated.
+
+## ModelStrategy is defined and unused
+
+`ModelStrategy` exists in the domain and appears nowhere else in the codebase. Every deployment therefore receives the same prompt, the same tools and the same budgets, so the harness is structurally unable to adapt to one.
+
+The measurements say the deployments differ in ways a strategy could address. One calls `list_tree` on all three trials of an edit probe instead of proposing an edit. One is the strongest repairer and writes a generated server that misses its contract. One is the weakest repairer and builds a working server in six actions. One emits a native tool call on two of three otherwise identical probes. And a single prompt change moved one deployment from 13 of 24 to 20 of 24 while leaving another unmoved at 17 — the same intervention, opposite effects.
+
+A single-prompt harness leaves that on the table. Building it is open work, and a strategy must be measured against the default rather than asserted, or it is an opinion with a schema.
