@@ -72,6 +72,11 @@ enum Command {
         /// now. An unknown name opens a new session under it.
         #[arg(long)]
         session: Option<String>,
+        /// Decompose the task into steps before acting, and carry them through
+        /// the run. Off by default: no strategy enables it, and turning it on
+        /// everywhere would be an unmeasured change to every run.
+        #[arg(long)]
+        plan: bool,
     },
     Eval(Eval),
     /// Named sessions, reconstructed from the event log.
@@ -279,6 +284,7 @@ async fn main() {
             approve,
             turn_timeout_secs,
             session,
+            plan,
         } => print(
             cli.json,
             run(
@@ -290,6 +296,7 @@ async fn main() {
                     approvals: approve.into_iter().map(Into::into).collect(),
                     turn_timeout_secs,
                     session,
+                    plan,
                 },
                 &cli.ollama_endpoint,
             )
@@ -1768,30 +1775,16 @@ struct RunOptions {
     approvals: Vec<poorai_tools::Approval>,
     turn_timeout_secs: u64,
     session: Option<String>,
+    plan: bool,
 }
 
 async fn run(options: RunOptions, endpoint: &str) -> Result<serde_json::Value, SafeError> {
-    let RunOptions {
-        task,
-        model,
-        profile,
-        dry_run,
-        approvals,
-        turn_timeout_secs,
-        session,
-    } = options;
-    if !dry_run {
-        return prepare_profiled_run(
-            task,
-            model,
-            profile,
-            approvals,
-            turn_timeout_secs,
-            session,
-            endpoint,
-        )
-        .await;
+    if !options.dry_run {
+        return prepare_profiled_run(options, endpoint).await;
     }
+    // A dry run plans against the index and never reaches a deployment, so
+    // only the task and the model it would have used matter here.
+    let (task, model) = (options.task, options.model);
     let root = std::env::current_dir()
         .map_err(|e| SafeError {
             category: "internal",
@@ -1850,14 +1843,19 @@ async fn run(options: RunOptions, endpoint: &str) -> Result<serde_json::Value, S
     Ok(serde_json::json!({"plan":plan,"index_artifact":index_artifact}))
 }
 async fn prepare_profiled_run(
-    task: String,
-    model: Option<String>,
-    profile: Option<PathBuf>,
-    approvals: Vec<poorai_tools::Approval>,
-    turn_timeout_secs: u64,
-    session: Option<String>,
+    options: RunOptions,
     endpoint: &str,
 ) -> Result<serde_json::Value, SafeError> {
+    let RunOptions {
+        task,
+        model,
+        profile,
+        approvals,
+        turn_timeout_secs,
+        session,
+        plan,
+        dry_run: _,
+    } = options;
     let model = model.ok_or_else(|| SafeError {
         category: "invalid_input",
         context: "--model is required; routing is deferred".into(),
@@ -2101,7 +2099,8 @@ async fn prepare_profiled_run(
             .try_into()
             .unwrap_or(1),
         &TerminalApproval,
-        strategy.is_some_and(|s| s.plan_first),
+        // The flag, or a strategy that declares it.
+        plan || strategy.is_some_and(|s| s.plan_first),
     )
     .await
     .map_err(|e| SafeError {
