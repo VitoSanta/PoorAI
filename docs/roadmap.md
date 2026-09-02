@@ -22,7 +22,7 @@ Threshold values are set before M5 based on baseline measurements. No milestone 
 | M3 Safe execution | **In progress** | Full gitignore semantics (negation, anchoring, `**`, directory-only patterns, nested files, character classes) delegated to the ripgrep `ignore` walker, with poorAI policy exclusions layered on top. Every tool attempt is audited, denied as well as allowed, inside the hash chain. 33 adversarial fixtures cover traversal, symlink escape, secret redaction, command allowlist, network denial, output bounds, timeout, stale hashes, binary files, malformed proposals and prompt injection. | Malformed-provider-reply and flaky-verification fixtures; sandbox/process boundary for tool execution; approval gates for dependency changes, history rewriting and publishing. |
 | M4 Agent task loop | **Completed** | Multi-step bounded controller: baseline → typed model action → policy-controlled tool → audit → verification → bounded recovery → terminal event. Hermetic smoke tests cover success and fail → recovery → repair → verified success. | Maintain M4 tests while extending model capabilities; do not expand tool authority without M3 policy/audit coverage. |
 | M5 Evaluation | **Not started** | `EvaluationRun` schema exists. | Frozen-corpus loader, reproducible runner, reports and two-model laboratory comparison with artifacts. |
-| M6 Beta | **Not started** | — | Predeclare and meet reliability, regression and safety thresholds after M5 measurements. |
+| M6 Beta | **In progress** | See the row above; superseded by it. |
 
 ### Capability probe results — 2026-09-01
 
@@ -244,6 +244,24 @@ The loop now asks before the action runs, so a refusal costs nothing and a grant
 Where nothing is attached to answer, the run refuses without asking — blocking would hang forever and assuming consent would remove the boundary. A grant must be typed; an empty line is a refusal.
 
 Refusal-means-refusal and once-means-once are both mutation-checked: treating a denial as a grant, and letting a one-time grant persist, each fail a fixture.
+
+### What is open — 2026-09-02
+
+Ordered, with the measurement behind each. `direction.md` carries the target behaviours these serve.
+
+**1. Language agnosticism.** A violation of MASTER_SPEC requirement 6 rather than a missing feature: check discovery knows two build systems, symbol extraction matches Rust declarations, and the command allowlist names fixed executables. On any other repository the agent cannot tell whether it succeeded, and retrieval loses the signal worth five times any other. It is first because every measurement taken until it is fixed is confined to two languages and therefore does not generalise.
+
+**2. Resolved but not declared.** The dominant failure mode: 11 of 48 runs in one campaign, 2 of 19 in the next, each with the repository correctly fixed and the completion never stated. Whether the fix belongs in the loop or in a per-deployment strategy depends on whether the pattern is shared, which the current campaign is measuring.
+
+**3. Resumable sessions.** Every run starts from nothing, and the largest measured success is 48 actions against the hundreds a real project needs. The event log and the ledger already hold and reconstruct the facts; naming a session and reopening it is what is missing.
+
+**4. Decomposition that is executed.** A plan today is context and not authority — nothing runs it. Note that `context.compacted` never fires at 262144 tokens, so the constraint on long work is not memory but the absence of structure to carry it.
+
+**5. Verification of systems rather than files.** The generation suite already starts one process and exercises it; several services is an extension of something that works.
+
+**6. Usability.** Named sessions with their repository, branch, accumulated diff and status. Worth building on resumable sessions and worthless without them.
+
+Also open from earlier measurement: the action budget of 8 is an undefended constant that binds outcomes, the trial count that constitutes a result is unstated, and the safety record is not falsified rather than met — zero violations in 24 runs bounds the rate at 0.138 and no finite number of clean runs proves it is zero.
 
 ### Current safety boundary
 
