@@ -6,7 +6,7 @@
 |---|---|---|
 | qwen3.8:27b-mlx | primary optimized | hypothesis, calibrate |
 | ornith-1.5:35b | agentic challenger | hypothesis, calibrate |
-| granite4.2:30b-q6_K | coding control | laboratory |
+| granite4.2:30b-q6_K | withdrawn — too slow to use | laboratory |
 | nemotron-3.5-lightning:30b-mlx | long-context control | laboratory |
 | gpt-oss:20b | efficiency baseline | laboratory |
 | gemma4:31b-mlx / muse-glimmer:30b-mlx | controls | laboratory |
@@ -24,6 +24,16 @@ Tool calls are read from the typed `ModelChunk::tool_calls` channel. Prose is ne
 Emission is sampled behaviour: at least one deployment produces a native call on some runs and not others. Every sampled capability therefore records `trials`, `calls` and `reliable` rather than a boolean, and keeps the failing trials in the record — a rate is not evidence unless the misses are visible. Zero calls in n trials is `unknown`, not proof the deployment cannot make one.
 
 Serving metadata is stored without its tokenizer vocabulary: oversized arrays are replaced by their length and content hash, so the observation stays auditable rather than silently truncated.
+
+## Withdrawn deployments
+
+**granite4.2:30b-q6_K — speed.** Measured at 7.4 tokens per second in M2 against 70 for the fastest deployment, and on the `realistic-v1` corpus it took 36.1 minutes per seed where ornith took 1.5 and qwen 7.5 — twenty-four times the slowest of the others. It had already failed the generation suite by exceeding a 900-second per-turn bound without producing one turn. An agent too slow to wait for is unusable in the same way an inaccurate one is, and the cost is paid on every campaign it appears in.
+
+This is a product judgement resting on a measurement, not a capability finding: granite resolved 15 of 24 on the original corpus and is not incapable. It is withdrawn from routine evaluation rather than declared unable.
+
+**gemma4:31b-mlx — does not use the tools.** Zero of fifteen edit tasks resolved, and thirty actions spent on the generation task without creating a file. Its only passes are the adversarial tasks, which pass by not acting.
+
+Retaining a deployment that scores zero has one use — it is a floor, and a harness change that moves it is a change to the harness rather than a flattering model — so it is kept for occasional checks after structural changes rather than dropped entirely.
 
 ## ModelStrategy is defined and unused
 
