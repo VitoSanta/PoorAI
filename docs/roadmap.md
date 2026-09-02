@@ -298,7 +298,13 @@ Three mutants confirm it: dropping the outstanding steps from the status, accept
 
 The earlier note that `context.compacted` never fires at 262144 tokens still stands: the constraint on long work was never memory.
 
-**5. Verification of systems rather than files.** The generation suite already starts one process and exercises it; several services is an extension of something that works.
+**5. Verification of systems rather than files.** *Unblocked, not finished.* The blocker was the sandbox, not the corpus: `(deny network*)` refused loopback too, so a verifier could start a service and then never reach it. A new `LocalService` approval, separate from `NetworkAccess` and implying neither direction, opens local ports while a remote host stays denied.
+
+The boundary is this *host*, not the loopback interface, and the name understates it. seatbelt takes only `*` or `localhost` as the host in a network address — a literal `127.0.0.1` is rejected and the whole profile fails to compile — and its `localhost` covers every address the machine holds. So a process under this grant reaches a service on a LAN interface as well, and can be reached from the LAN if it binds there. That is the platform's limit rather than a choice, and both halves are asserted by fixtures so neither is left to a comment.
+
+Two fixtures were wrong before they were right, and both mistakes are worth recording. Granting only `network-bind` let a server claim a port and then fail at `listen`. And the fixture guarding the remote boundary first aimed at a public address, where a connection times out for reasons unrelated to the sandbox — a mutant granting `LocalService` the entire network survived it. It now asserts the *kind* of failure: `PermissionError` from the sandbox refusing the socket, not a timeout, and it says so and skips where no route exists rather than asserting vacuously.
+
+Still open: a corpus task that starts several services and exercises them together. The capability now exists; nothing yet uses it.
 
 **6. Usability.** *Partly closed.* `session list` names each session, its workspace, how many runs it has, when it was last opened and what it was last asked — enough to choose between sessions without opening each one. `session show` reports the branch and head the session was opened on beside where the workspace stands now, so a session about to be resumed onto a different branch is visible before the resume rather than after. A workspace outside version control reports no branch rather than inventing `main`; every version-control field is absent when it cannot be read.
 

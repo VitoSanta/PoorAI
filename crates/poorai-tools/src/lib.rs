@@ -147,6 +147,24 @@ pub enum Approval {
     /// Reaching the network at all, for the workspace and for any process it
     /// runs. Dependency resolution needs it; so does exfiltration.
     NetworkAccess,
+    /// Binding and connecting to services on this machine, and nothing beyond
+    /// it.
+    ///
+    /// Verifying a system rather than a file means starting a service and
+    /// exercising it, which needs to reach a local port. It is separate from
+    /// `NetworkAccess` because it is a genuinely smaller grant -- no remote
+    /// host is reachable, so nothing can be exfiltrated -- and a genuinely
+    /// real one: it reaches whatever else listens on this machine, the model
+    /// backend among it. Neither implies the other, and the audit records
+    /// which was given.
+    ///
+    /// The boundary is this *host*, not the loopback interface. seatbelt takes
+    /// only `*` or `localhost` as the host in a network address, and its
+    /// `localhost` covers every address the machine holds, so a service on a
+    /// LAN interface is in scope too. That is the platform's limit rather than
+    /// an intent, and it is stated here because the narrower reading would be
+    /// wrong.
+    LocalService,
 }
 
 /// Dependency manifests and lockfiles. Editing one changes what the build
@@ -356,10 +374,39 @@ impl ToolPolicy {
         if root.contains('"') || root.contains('\\') {
             return None;
         }
+        // Order matters in a seatbelt profile: the last matching rule wins, so
+        // the loopback allowance must follow the blanket denial it carves out
+        // of. Written the other way round it grants nothing.
         let network = if self.network_allowed() {
-            ""
+            String::new()
+        } else if self.approvals.contains(&Approval::LocalService) {
+            // `localhost` is not loopback, and cannot be narrowed to it.
+            // seatbelt accepts only `*` or `localhost` as the host in a
+            // network address -- a literal `127.0.0.1` is rejected and the
+            // whole profile fails to compile -- and its `localhost` means this
+            // *host*: every address the machine holds, its LAN interfaces
+            // included. So this grant reaches a service listening on this
+            // machine's LAN address, not only on loopback, and a process under
+            // it can be reached from the LAN if it binds there.
+            //
+            // That is wider than the name suggests and is the platform's
+            // limit, not a choice. What it still withholds is the part that
+            // matters: a genuinely remote host is denied, so nothing leaves
+            // the machine. A fixture asserts that denial by its error --
+            // `PermissionError` from the sandbox rather than a timeout --
+            // because an earlier version aimed at a public address passed
+            // vacuously when the connection merely timed out.
+            //
+            // All three operations, because a service needs every one: bind to
+            // take the port, inbound to listen and accept, outbound to be
+            // connected to. Granting bind alone lets a server claim a port and
+            // then fail at `listen`, which another fixture caught.
+            "(deny network*)(allow network-bind (local ip \"localhost:*\"))\
+             (allow network-inbound (local ip \"localhost:*\"))\
+             (allow network-outbound (remote ip \"localhost:*\"))"
+                .to_string()
         } else {
-            "(deny network*)"
+            "(deny network*)".to_string()
         };
         Some(format!(
             "(version 1)(allow default)(deny file-write*)(allow file-write* (subpath \"{root}\"))(allow file-write-data (literal \"/dev/null\") (literal \"/dev/stdout\") (literal \"/dev/stderr\")){network}"

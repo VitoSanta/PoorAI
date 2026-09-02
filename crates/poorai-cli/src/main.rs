@@ -108,6 +108,7 @@ enum ApprovalArg {
     HistoryRewrite,
     Publish,
     NetworkAccess,
+    LocalService,
 }
 impl From<ApprovalArg> for poorai_tools::Approval {
     fn from(value: ApprovalArg) -> Self {
@@ -116,6 +117,7 @@ impl From<ApprovalArg> for poorai_tools::Approval {
             ApprovalArg::HistoryRewrite => Self::HistoryRewrite,
             ApprovalArg::Publish => Self::Publish,
             ApprovalArg::NetworkAccess => Self::NetworkAccess,
+            ApprovalArg::LocalService => Self::LocalService,
         }
     }
 }
