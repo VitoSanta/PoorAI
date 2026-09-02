@@ -235,6 +235,16 @@ Compaction now runs at an explicit checkpoint between actions, replacing the mid
 
 Both behaviours are mutation-checked: disabling compaction, and dropping refusals from the ledger, each fail a fixture. A real run on the 62-file workspace finished in three actions without triggering compaction at all, which is the correct behaviour and also means the hermetic fixture is what exercises this, not the live run.
 
+### Interactive approval — 2026-09-02
+
+The fourth structural limit, and the one closest to how an assisted tool actually feels. Approvals could only be granted in advance on the command line, so a run either had authority it might not need or lacked authority it turned out to need, with no way to resolve the second except starting over.
+
+The loop now asks before the action runs, so a refusal costs nothing and a grant is recorded against the action it was given for. The question names the command or the file and the fragment being changed. A grant is for one action or for the run, and a one-time grant expires with its action rather than quietly persisting.
+
+Where nothing is attached to answer, the run refuses without asking — blocking would hang forever and assuming consent would remove the boundary. A grant must be typed; an empty line is a refusal.
+
+Refusal-means-refusal and once-means-once are both mutation-checked: treating a denial as a grant, and letting a one-time grant persist, each fail a fixture.
+
 ### Current safety boundary
 
 `poorai run` executes for real. A non-dry run requires an explicit `--model` and a `--profile` pointing at a calibration artifact, and refuses to proceed unless that calibration still matches the model digest, deployment fingerprint, hardware compatibility key and harness revision in force. An artifact recording a refused calibration authorises nothing.

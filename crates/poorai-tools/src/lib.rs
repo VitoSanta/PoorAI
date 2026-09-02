@@ -185,6 +185,32 @@ pub fn command_approval(executable: &str, args: &[String]) -> Option<Approval> {
     None
 }
 
+/// What an action requires, and a description a person can judge.
+///
+/// One place, so the loop can ask before acting rather than each tool
+/// discovering its own gate at the moment it would have acted.
+pub fn required_approval(action: &ActionProposal) -> Option<(Approval, String)> {
+    match action {
+        ActionProposal::RunCommand { executable, args } => command_approval(executable, args)
+            .map(|approval| (approval, format!("run `{executable} {}`", args.join(" ")))),
+        ActionProposal::ApplyReplace { path, .. } | ActionProposal::WriteFile { path, .. } => {
+            edit_approval(Path::new(path)).map(|a| (a, format!("write {path}")))
+        }
+        ActionProposal::ReplaceText { path, find, .. } => edit_approval(Path::new(path))
+            .map(|a| (a, format!("change {path} where it reads `{}`", elide(find)))),
+        _ => None,
+    }
+}
+
+/// Shortens a fragment for a prompt without hiding what it is.
+fn elide(text: &str) -> String {
+    let single_line = text.replace('\n', " ");
+    if single_line.chars().count() <= 60 {
+        return single_line;
+    }
+    format!("{}…", single_line.chars().take(59).collect::<String>())
+}
+
 /// Returns the approval editing `relative` requires, if any.
 pub fn edit_approval(relative: &Path) -> Option<Approval> {
     let name = relative.file_name()?.to_string_lossy().to_string();

@@ -381,6 +381,39 @@ pub async fn run_single_action<P: ModelProvider>(
     })
 }
 
+/// What a person decided when asked to authorise an action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalDecision {
+    Deny,
+    /// Allow this action and ask again next time.
+    AllowOnce,
+    /// Allow this and every later action of the same kind in this run.
+    AllowForRun,
+}
+
+/// Asks a person whether to permit an action that policy would refuse.
+///
+/// The description names the actual command or file, not the category: "allow
+/// network access" tells a person nothing they can judge, while "run `git push
+/// origin main`" does.
+#[async_trait::async_trait]
+pub trait ApprovalPrompt: Send + Sync {
+    async fn ask(&self, approval: poorai_tools::Approval, description: &str) -> ApprovalDecision;
+}
+
+/// Refuses everything without asking.
+///
+/// The default, and the only correct one where nobody is watching: an
+/// unattended run that silently self-approves has no boundary at all.
+pub struct DenyWithoutAsking;
+#[async_trait::async_trait]
+impl ApprovalPrompt for DenyWithoutAsking {
+    async fn ask(&self, _: poorai_tools::Approval, _: &str) -> ApprovalDecision {
+        ApprovalDecision::Deny
+    }
+}
+
 /// Characters per token. A documented estimate, not a count: exact counts are
 /// provider-specific and only available when a backend reports them.
 const CHARS_PER_TOKEN: usize = 4;
@@ -539,12 +572,44 @@ pub async fn run_action_loop<P: ModelProvider>(
     store: &Store,
     provider: &P,
     run_id: poorai_domain::Id,
-    mut request: poorai_domain::ModelRequest,
+    request: poorai_domain::ModelRequest,
     policy: &ToolPolicy,
     checks: &[(String, Vec<String>)],
     max_actions: u8,
 ) -> Result<TaskRunResult, String> {
-    let before = poorai_verify::baseline(policy, checks)
+    run_action_loop_with_prompt(
+        store,
+        provider,
+        run_id,
+        request,
+        policy,
+        checks,
+        max_actions,
+        &DenyWithoutAsking,
+    )
+    .await
+}
+
+/// The loop, with a person available to authorise what policy would refuse.
+///
+/// Asking happens before the action runs, so a refusal costs nothing and a
+/// grant is recorded against the action it was given for. A grant obtained this
+/// way is audited exactly like a pre-declared one, and a run where nobody is
+/// asked behaves as it did before.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_action_loop_with_prompt<P: ModelProvider>(
+    store: &Store,
+    provider: &P,
+    run_id: poorai_domain::Id,
+    mut request: poorai_domain::ModelRequest,
+    policy: &ToolPolicy,
+    checks: &[(String, Vec<String>)],
+    max_actions: u8,
+    prompt: &dyn ApprovalPrompt,
+) -> Result<TaskRunResult, String> {
+    let mut policy = policy.clone();
+    let mut once_granted: Option<poorai_tools::Approval> = None;
+    let before = poorai_verify::baseline(&policy, checks)
         .await
         .map_err(|e| e.to_string())?;
     store
@@ -579,7 +644,7 @@ pub async fn run_action_loop<P: ModelProvider>(
                     }),
                 )
                 .map_err(|e| e.to_string())?;
-            let after = poorai_verify::baseline(policy, checks)
+            let after = poorai_verify::baseline(&policy, checks)
                 .await
                 .map_err(|e| e.to_string())?;
             let comparison = poorai_verify::compare(&before, &after);
@@ -644,6 +709,35 @@ pub async fn run_action_loop<P: ModelProvider>(
             });
             continue;
         }
+        // Asked before the action runs: a refusal then costs nothing, and a
+        // grant is recorded against the action it was given for rather than
+        // against a category in the abstract.
+        if let Some((approval, description)) = poorai_tools::required_approval(&action)
+            && !policy.approvals.contains(&approval)
+        {
+            let decision = prompt.ask(approval, &description).await;
+            store
+                .append(
+                    Some(run_id),
+                    "approval.decision",
+                    serde_json::json!({
+                        "approval": approval,
+                        "description": description,
+                        "decision": decision,
+                        "step": step,
+                    }),
+                )
+                .map_err(|e| e.to_string())?;
+            match decision {
+                ApprovalDecision::Deny => {}
+                ApprovalDecision::AllowOnce | ApprovalDecision::AllowForRun => {
+                    policy.approvals.push(approval);
+                }
+            }
+            if decision == ApprovalDecision::AllowOnce {
+                once_granted = Some(approval);
+            }
+        }
         let edited = matches!(
             action,
             ActionProposal::ApplyReplace { .. }
@@ -654,17 +748,21 @@ pub async fn run_action_loop<P: ModelProvider>(
         // discards work already done -- a stale-hash refusal literally says
         // "reread before editing", which the deployment can act on. The action
         // budget, not the first refusal, is what bounds the loop.
-        let outcome = match execute_action(store, run_id, policy, action).await {
+        let outcome = match execute_action(store, run_id, &policy, action).await {
             Ok(outcome) => outcome,
             Err(denial) => serde_json::json!({"denied": denial}),
         };
+        // A one-time grant expires with the action it was given for.
+        if let Some(approval) = once_granted.take() {
+            policy.approvals.retain(|granted| *granted != approval);
+        }
         // "Make one hypothesis-linked correction, rerun the narrow check."
         // Without this the deployment has no way to learn whether its edit
         // worked: it can only guess, and a correct edit followed by guessing
         // burns the action budget instead of completing.
         let mut result = outcome;
         if edited && result.get("denied").is_none() && !checks.is_empty() {
-            let after = poorai_verify::baseline(policy, checks)
+            let after = poorai_verify::baseline(&policy, checks)
                 .await
                 .map_err(|e| e.to_string())?;
             let failing: Vec<&str> = after

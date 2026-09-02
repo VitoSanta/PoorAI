@@ -681,6 +681,44 @@ async fn evaluate(
     }))
 }
 
+/// Asks the person at the terminal.
+///
+/// Refuses without asking when nothing is attached to answer, because a run
+/// with no one watching that blocks on a question hangs forever, and one that
+/// assumes yes has no boundary at all. The question names the command or file,
+/// not the category, so there is something to judge.
+struct TerminalApproval;
+
+#[async_trait::async_trait]
+impl poorai_orchestrator::ApprovalPrompt for TerminalApproval {
+    async fn ask(
+        &self,
+        approval: poorai_tools::Approval,
+        description: &str,
+    ) -> poorai_orchestrator::ApprovalDecision {
+        use poorai_orchestrator::ApprovalDecision;
+        use std::io::{IsTerminal, Write};
+        if !std::io::stdin().is_terminal() {
+            return ApprovalDecision::Deny;
+        }
+        eprintln!("\nThe agent wants to {description}.");
+        eprintln!("This needs approval for {approval:?}, which was not granted.");
+        eprint!("Allow? [o]nce / [r]un / [N]o: ");
+        let _ = std::io::stderr().flush();
+        let mut answer = String::new();
+        if std::io::stdin().read_line(&mut answer).is_err() {
+            return ApprovalDecision::Deny;
+        }
+        match answer.trim().to_lowercase().as_str() {
+            "o" | "once" => ApprovalDecision::AllowOnce,
+            "r" | "run" => ApprovalDecision::AllowForRun,
+            // Anything else, including an empty line, is a refusal. A grant
+            // has to be typed.
+            _ => ApprovalDecision::Deny,
+        }
+    }
+}
+
 /// Share of the context budget spent on retrieved repository passages.
 ///
 /// A fraction rather than a fixed count: the budget is what is scarce, and a
@@ -1654,7 +1692,7 @@ async fn prepare_profiled_run(
             },
         ],
     };
-    let result = poorai_orchestrator::run_action_loop(
+    let result = poorai_orchestrator::run_action_loop_with_prompt(
         &store,
         &provider,
         run_id,
@@ -1666,6 +1704,7 @@ async fn prepare_profiled_run(
             .unwrap_or(1)
             .try_into()
             .unwrap_or(1),
+        &TerminalApproval,
     )
     .await
     .map_err(|e| SafeError {

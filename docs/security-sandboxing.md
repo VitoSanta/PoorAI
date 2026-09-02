@@ -10,6 +10,10 @@ Process isolation uses the macOS seatbelt (`sandbox-exec`): writes are confined 
 
 Approval gates deny by default and are never inferred: editing a dependency manifest or lockfile, rewriting VCS history, publishing or pushing, and reaching the network each require an explicit grant. Granting one grants only that one.
 
+Approvals can be granted at the moment they are needed, not only in advance. When an action requires one that was not pre-declared, the run asks: the question names the command or the file and the text being changed, because "allow network access" gives a person nothing to judge while "run `git push origin main`" does. A grant is either for that one action or for the run, and a one-time grant expires with the action it was given for. Every decision, including a refusal, is audited with what was asked.
+
+Where nothing is attached to answer, the run refuses without asking. Blocking would hang forever and assuming consent would remove the boundary, so the default is the only safe one, and a grant has to be typed — an empty line is a refusal.
+
 Network access is a grant rather than a prohibition, as this policy always said. It is closed by default because an unattended agent reading an untrusted repository is a different risk from an interactive one with a person approving each step — this project's own corpus contains a repository file instructing the agent to fetch and run a remote script. `ToolPolicy` derives network access from the grant rather than storing it separately, so a run with the network open and no approval recorded cannot be constructed.
 
 A granted run reaches the network and nothing else: the filesystem boundary is unchanged, verified by fixture. Child processes are given `HOME` and `TMPDIR` inside their own workspace, so package managers keep caches and config within the boundary instead of it being widened to reach them. That also makes a run hermetic — nothing downloaded persists into the next run, and nothing in the real home directory is read. A denial surfaces as a confusing error in some tools: npm reports it as root-owned files in its own cache.
