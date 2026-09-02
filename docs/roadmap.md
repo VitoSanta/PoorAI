@@ -263,6 +263,19 @@ Three narrower defects surfaced while diagnosing it, each an instance of the har
 
 The Python repository case now runs read, edit, checks pass, complete, in three actions, where it previously exhausted its budget on a file it had already fixed. The two history assertions fail when the assistant turn is removed.
 
+*Measured against a control.* `m5-frozen-v1` on qwen, seeds 1-4 on each side, same corpus revision and the same host; the pre-change binary built from `HEAD~2` in a separate worktree, so the change is the only variable.
+
+| | before | after |
+| --- | --- | --- |
+| completion declared | 27/32 = 0.844 `[0.682, 0.931]` | 32/32 = 1.000 `[0.893, 1.000]` |
+| hidden verification | 30/32 = 0.938 | 31/32 = 0.969 |
+| actions | 144 | 93 (−35%) |
+| seconds | 2194 | 1432 (−35%) |
+
+Declaration is a real effect: Fisher one-sided p = 0.026. Hidden verification is not — p = 0.50 — so what is demonstrated is that the deployment now declares, and reaches the declaration on a third less work, not that it is more often right. The undeclared runs before the change were spread across five different tasks at one run in four each, which is the signature of a defect that reaches anything rather than of a hard task, and is the strongest evidence that this belonged in the loop.
+
+`bugfix-parse` fails hidden verification once in four runs on *both* sides of the change. It was read as a regression when only one control trial existed; with four it is unchanged. The task is genuinely underspecified — its statement says "out-of-range" without settling whether port 0 is valid, and only the hidden test does — but `m5-frozen-v1` is frozen and will not be edited to raise a score. It belongs in a declared successor revision.
+
 **3. Resumable sessions.** Every run starts from nothing, and the largest measured success is 48 actions against the hundreds a real project needs. The event log and the ledger already hold and reconstruct the facts; naming a session and reopening it is what is missing.
 
 **4. Decomposition that is executed.** A plan today is context and not authority — nothing runs it. Note that `context.compacted` never fires at 262144 tokens, so the constraint on long work is not memory but the absence of structure to carry it.
