@@ -36,6 +36,8 @@ fn the_schema_offers_exactly_the_typed_capabilities() {
             // `complete`, and sits beside it for that reason.
             "record_progress",
             "apply_patch",
+            "start_service",
+            "stop_service",
             "make_directory",
             "delete_path",
             "move_path",

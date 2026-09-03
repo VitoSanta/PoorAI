@@ -490,7 +490,21 @@ pub async fn execute_action(
     policy: &ToolPolicy,
     action: ActionProposal,
 ) -> Result<serde_json::Value, ActionExecutionError> {
-    let result = attempt_action(policy, &action).await;
+    // A supervisor of its own, so a caller that executes a single action
+    // cannot leave a service behind: it is dropped with this call, and drops
+    // kill what they started.
+    let mut services = poorai_tools::service::ServiceSupervisor::new();
+    execute_action_with_services(store, run_id, policy, action, &mut services).await
+}
+
+pub async fn execute_action_with_services(
+    store: &Store,
+    run_id: poorai_domain::Id,
+    policy: &ToolPolicy,
+    action: ActionProposal,
+    services: &mut poorai_tools::service::ServiceSupervisor,
+) -> Result<serde_json::Value, ActionExecutionError> {
+    let result = attempt_action(policy, &action, services).await;
     let payload = match &result {
         Ok(outcome) => poorai_domain::RunEvent::ToolAction {
             action: serde_json::to_value(&action).unwrap_or_default(),
@@ -605,6 +619,7 @@ fn serialize_tool_result<T: Serialize>(
 async fn attempt_action(
     policy: &ToolPolicy,
     action: &ActionProposal,
+    services: &mut poorai_tools::service::ServiceSupervisor,
 ) -> Result<serde_json::Value, ActionExecutionError> {
     action
         .validate()
@@ -654,6 +669,52 @@ async fn attempt_action(
             expected_hash,
             hunks,
         )),
+        ActionProposal::StartService {
+            executable,
+            args,
+            port,
+            ready_timeout_secs,
+        } => {
+            // A port is reserved rather than chosen: a fixed range collides
+            // with whatever else the developer is running, and this project
+            // has no business claiming 8080 on their machine.
+            let port = match port {
+                Some(port) => *port,
+                None => poorai_tools::service::ServiceSupervisor::reserve_port()?,
+            };
+            let handle = services.start(policy, executable, args, Some(port)).await?;
+            let waited = services
+                .wait_until_ready(
+                    handle.id,
+                    port,
+                    std::time::Duration::from_secs(
+                        ready_timeout_secs.unwrap_or(SERVICE_READY_TIMEOUT_SECS),
+                    ),
+                )
+                .await;
+            match waited {
+                Ok(waited) => Ok(serde_json::json!({
+                    "service_id": handle.id,
+                    "port": port,
+                    "ready_after_ms": waited.as_millis(),
+                })),
+                Err(error) => {
+                    // A service that never answered is stopped rather than
+                    // left running: a failed start that keeps a process alive
+                    // is the leak this supervisor exists to prevent.
+                    let outcome = services.stop(handle.id, policy.output_limit).await.ok();
+                    Err(ActionExecutionError::Io(format!(
+                        "service did not accept a connection on port {port}: {error}. Output: {}",
+                        outcome
+                            .map(|outcome| format!("{}{}", outcome.stdout, outcome.stderr))
+                            .unwrap_or_default()
+                    )))
+                }
+            }
+        }
+        ActionProposal::StopService { id } => {
+            serialize_tool_result(services.stop(*id, policy.output_limit).await)
+        }
         ActionProposal::MakeDirectory { path } => serialize_tool_result(
             poorai_tools::make_directory(policy, std::path::Path::new(path)),
         ),
@@ -1119,6 +1180,10 @@ pub fn malformed_call_limit(successes: u32, trials: u32) -> usize {
 /// Two is a retry, which can be reasonable — a hash may have changed. Three is
 /// a deployment that is not reading the refusal, and more budget buys more of
 /// the same rather than progress.
+/// How long a service is given to accept a connection before the start is a
+/// failure. A server that has not bound is not a slow server to a client.
+const SERVICE_READY_TIMEOUT_SECS: u64 = 30;
+
 const REPEATED_REFUSAL_LIMIT: usize = 3;
 
 /// How many actions may pass with nothing to show before the loop says so.
@@ -1264,6 +1329,10 @@ fn action_fingerprint(action: &ActionProposal) -> String {
         ActionProposal::ApplyPatchHunks { path, hunks, .. } => {
             format!("apply_patch:{path}:{}", hunks.len())
         }
+        ActionProposal::StartService {
+            executable, args, ..
+        } => format!("start_service:{executable}:{}", args.join(" ")),
+        ActionProposal::StopService { id } => format!("stop_service:{id}"),
         ActionProposal::MakeDirectory { path } => format!("make_directory:{path}"),
         ActionProposal::DeletePath { path, .. } => format!("delete_path:{path}"),
         ActionProposal::MovePath { from, to } => format!("move_path:{from}:{to}"),
@@ -1800,6 +1869,10 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
 ) -> Result<TaskRunResult, String> {
     let malformed_limit = tuning.malformed_call_limit;
     let _terminal_guard = TerminalEventGuard { store, run_id };
+    // One supervisor for the run. It is dropped when the loop returns by any
+    // route -- completion, failure, budget, panic -- and dropping it kills
+    // every service the run started.
+    let mut services = poorai_tools::service::ServiceSupervisor::new();
     let mut policy = policy.clone();
     // Owned, because an approved verifier joins it for the rest of the run.
     let mut checks: Vec<(String, Vec<String>)> = checks.to_vec();
@@ -2430,16 +2503,18 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
         // discards work already done -- a stale-hash refusal literally says
         // "reread before editing", which the deployment can act on. The action
         // budget, not the first refusal, is what bounds the loop.
-        let outcome = match execute_action(store, run_id, &policy, action).await {
-            Ok(outcome) => outcome,
-            Err(ActionExecutionError::Denied(denial)) => {
-                serde_json::json!({"denied": denial})
-            }
-            Err(error) => serde_json::json!({
-                "tool_failure": error.to_string(),
-                "failure_category": error.category(),
-            }),
-        };
+        let outcome =
+            match execute_action_with_services(store, run_id, &policy, action, &mut services).await
+            {
+                Ok(outcome) => outcome,
+                Err(ActionExecutionError::Denied(denial)) => {
+                    serde_json::json!({"denied": denial})
+                }
+                Err(error) => serde_json::json!({
+                    "tool_failure": error.to_string(),
+                    "failure_category": error.category(),
+                }),
+            };
         // A one-time grant expires with the action it was given for.
         if let Some(approval) = once_granted.take() {
             policy.approvals.retain(|granted| *granted != approval);
@@ -2955,6 +3030,23 @@ pub fn action_tool_schema() -> serde_json::Value {
                 },
             }),
             &["path", "expected_hash", "hunks"],
+        ),
+        function(
+            "start_service",
+            "Start a long-running service and wait until it accepts a connection. Needs the local-service grant. Omit port and one is reserved for you and reported back. Use it to stand a server up and then exercise it; it is stopped automatically when the run ends.",
+            serde_json::json!({
+                "executable": {"type": "string"},
+                "args": {"type": "array", "items": {"type": "string"}},
+                "port": {"type": "integer"},
+                "ready_timeout_secs": {"type": "integer"},
+            }),
+            &["executable"],
+        ),
+        function(
+            "stop_service",
+            "Stop a service you started and read what it printed.",
+            serde_json::json!({"id": {"type": "integer"}}),
+            &["id"],
         ),
         function(
             "make_directory",

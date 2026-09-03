@@ -69,3 +69,9 @@ A tool outcome is one of five — `allowed_success`, `allowed_failure`, `policy_
 `ToolCapability` is an enum left over from an earlier design and no longer corresponds to the typed actions above. It is two vocabularies for one concept, and one of them is wrong.
 
 Evaluation used to be the exception to all of this. Corpus materialisation and external verifiers shelled out directly, with no sandbox, timeout or output cap; they now run through `run_command` under their own bounded policy. See `security-sandboxing.md`.
+
+## Services — 2026-09-03
+
+`StartService` and `StopService` stand a long-running process up and take it down. `run_command` cannot: it waits for the process to exit, which a server does not do.
+
+Ready means accepting a connection, not existing. A port is reserved from the operating system unless one is named. A start that never answers is stopped rather than left running, and every service is killed when the run ends by any route -- the supervisor's `Drop` is the mechanism, and a mutant removing it fails the fixture.

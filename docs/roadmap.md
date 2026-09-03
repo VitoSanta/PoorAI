@@ -630,13 +630,23 @@ Absent is not the same as failed. A step without a check is done when it is clai
 
 Fixing the compaction path found a defect: the outstanding steps were being numbered twice, once by the plan and once by the compactor, so a compacted plan read `2. 3. test it`. The existing compaction fixture caught it.
 
+### Services that are started, waited for, and certainly gone — 2026-09-03
+
+`LocalService` opened a port and nothing used it. Verifying a system rather than a file means standing a service up and exercising it, and `run_command` cannot: it waits for the process to exit, which is the one thing a server does not do.
+
+**The hard part is not starting them.** A run that crashes, is killed, or simply forgets leaves a process holding a port on the developer's machine. Every service belongs to a supervisor that kills what it started when it is dropped — whatever route the run took out, including a panic — and the fixture that proves it fails when the drop is removed. A start that never answers is stopped rather than left running: a failed start that keeps a process alive is exactly the leak this exists to prevent.
+
+**A service is ready when it accepts a connection**, not when its process exists. A server that has been spawned and has not yet bound refuses every request, and a test racing it fails for reasons unrelated to the code. A process that has already exited is not waited out either — spending the full timeout to discover that wastes the time the caller gave for starting rather than for failing.
+
+**The port is asked of the operating system**, not chosen from a range: a range collides with whatever else the developer is running, and this project has no business claiming 8080 on their machine. It is a reservation with a race in it and the code says so — the socket closes before the child binds, and closing that window needs the child's cooperation.
+
+Preparing a child process now happens in one place. A second way of starting one is a second chance to forget the sandbox, the scratch directory or the cleared environment, and a long-running service goes through exactly the same path a check does. The existing sandbox and approval fixtures pass unchanged, which is what says the refactor narrowed nothing.
+
 ### P3 — a measurable beta
 
 | Item | What is wrong now | What closing it looks like |
 |---|---|---|
-| Services and ports are unmanaged | `LocalService` exists and nothing uses it; there is no spawn/wait/terminate, port reservation or cleanup | A process supervisor owning service lifetime, and a corpus task that starts several services and exercises them together |
 | Status is written by hand in three places | This roadmap has declared the same milestone complete and in progress; older documents describe as absent what exists | Milestone status generated from a versioned manifest, with historical notes kept as dated reports rather than as claims |
-| The model is never unloaded on purpose | No keep-alive or unload policy, so residency between runs is whatever Ollama last decided | Residency is a decision the lease holder makes and records |
 
 ### Removals
 

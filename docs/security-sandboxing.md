@@ -41,3 +41,11 @@ What remains open under `--provision` is narrower but not nothing: an arbitrary 
 It is a separate policy rather than the run's because preparation needs to fetch a pinned commit and the measured task must not have the network. That grant is asserted by its own fixture, so widening it later is a visible change.
 
 **One host, one model.** Separately from the sandbox, any operation that loads a model takes a host-wide lease before it starts, so two poorAI processes on one machine cannot each load a 30B deployment and produce numbers describing a saturated host. The lease is not a security boundary — it protects the measurement and the machine, not the workspace — but it is the other thing that had `concurrency = 1` written down and nothing enforcing it.
+
+## Services — 2026-09-03
+
+`LocalService` gates starting one, and it is the only approval that does: a process that outlives the action which started it is a different risk from a command that runs and exits, and it should be named as one.
+
+A service is prepared through the same path a check is -- the same sandbox profile, the same cleared environment, the same scratch and home inside the workspace -- because a second way of starting a process is a second chance to forget one of them.
+
+Every service belongs to a supervisor that kills its process group when dropped, so a run that crashes or is killed leaves nothing holding a port. Ports are asked of the operating system rather than taken from a range; the reservation has a race in it, since the socket closes before the child binds, and the code says so where someone reading it will see.

@@ -1,4 +1,6 @@
 //! Typed, bounded workspace tools and policy enforcement.
+pub mod service;
+
 use poorai_domain::hash_bytes;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -43,6 +45,21 @@ pub enum ActionProposal {
         path: String,
         expected_hash: String,
         hunks: Vec<Hunk>,
+    },
+    /// Starts a long-running service and waits until it accepts a connection.
+    StartService {
+        executable: String,
+        #[serde(default)]
+        args: Vec<String>,
+        /// Where to wait for it. Omit and one is reserved and reported back.
+        #[serde(default)]
+        port: Option<u16>,
+        #[serde(default)]
+        ready_timeout_secs: Option<u64>,
+    },
+    /// Stops a service this run started and returns what it printed.
+    StopService {
+        id: u32,
     },
     /// Creates a directory and its parents.
     MakeDirectory {
@@ -686,6 +703,81 @@ impl ToolPolicy {
             "(version 1)(allow default)(deny file-write*)(allow file-write* (subpath \"{root}\"))(allow file-write-data (literal \"/dev/null\") (literal \"/dev/stdout\") (literal \"/dev/stderr\")){reads}{secrets}{network}"
         ))
     }
+    /// Whether a command will actually be sandboxed, refusing if it must be
+    /// and cannot.
+    pub fn will_sandbox(&self) -> Result<bool, ToolError> {
+        let available = match self.sandbox {
+            SandboxPolicy::Disabled => None,
+            SandboxPolicy::Preferred | SandboxPolicy::Required => self.sandbox_profile(),
+        };
+        if available.is_none() && self.sandbox == SandboxPolicy::Required {
+            return Err(ToolError::Denied(
+                "policy requires a sandbox and this platform provides none".into(),
+            ));
+        }
+        Ok(available.is_some())
+    }
+
+    /// Builds a child command with the boundary already applied.
+    ///
+    /// One place, because a second way of starting a process is a second
+    /// chance to forget the sandbox, the scratch directory or the cleared
+    /// environment. A long-running service goes through exactly this.
+    pub fn prepare_command(&self, executable: &str, args: &[String]) -> Result<Command, ToolError> {
+        let profile = match self.sandbox {
+            SandboxPolicy::Disabled => None,
+            SandboxPolicy::Preferred | SandboxPolicy::Required => self.sandbox_profile(),
+        };
+        if profile.is_none() && self.sandbox == SandboxPolicy::Required {
+            return Err(ToolError::Denied(
+                "policy requires a sandbox and this platform provides none".into(),
+            ));
+        }
+        let mut command = match &profile {
+            Some(profile) => {
+                let mut wrapped = Command::new(SEATBELT);
+                wrapped.arg("-p").arg(profile).arg(executable).args(args);
+                wrapped
+            }
+            None => {
+                let mut plain = Command::new(executable);
+                plain.args(args);
+                plain
+            }
+        };
+        // Build tooling needs a scratch directory -- rustdoc creates one per
+        // doctest run -- and the system one lies outside the sandbox. Rather
+        // than widening the boundary to all of $TMPDIR, which would let one
+        // workspace write into another's, the child is given a scratch
+        // directory inside its own root.
+        //
+        // The canonical root, for the same reason the seatbelt profile needs
+        // it: on macOS the uncanonical path is a symlink, and handing the
+        // child that path makes its scratch directory look like it lies
+        // outside the workspace.
+        let scratch = self
+            .root
+            .canonicalize()
+            .unwrap_or_else(|_| self.root.clone())
+            .join(SCRATCH_DIRECTORY);
+        let _ = std::fs::create_dir_all(&scratch);
+        command
+            .current_dir(&self.root)
+            .env_clear()
+            // PATH is allowlisted solely for executable resolution; never logged.
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("TMPDIR", &scratch)
+            .env("TMP", &scratch)
+            .env("TEMP", &scratch)
+            // Package managers keep caches and config under HOME. Pointing it
+            // into the workspace keeps them inside the boundary instead of
+            // widening it, and makes a run hermetic: nothing it downloads
+            // persists into the next one, and nothing in the real home
+            // directory is read.
+            .env("HOME", &scratch);
+        Ok(command)
+    }
+
     pub fn redact(&self, text: &str) -> (String, bool) {
         let re = Regex::new(r"(?i)(api[_-]?key|token|password)\s*[=:]\s*[^\s]+|AKIA[0-9A-Z]{16}")
             .expect("valid regex");
@@ -1617,58 +1709,10 @@ pub async fn run_command_with_stdin(
     if let Some(approval) = command_approval(executable, args) {
         policy.require(approval)?;
     }
-    let profile = match policy.sandbox {
-        SandboxPolicy::Disabled => None,
-        SandboxPolicy::Preferred | SandboxPolicy::Required => policy.sandbox_profile(),
-    };
-    if profile.is_none() && policy.sandbox == SandboxPolicy::Required {
-        return Err(ToolError::Denied(
-            "policy requires a sandbox and this platform provides none".into(),
-        ));
-    }
-    let sandboxed = profile.is_some();
-    let mut command = match &profile {
-        Some(profile) => {
-            let mut wrapped = Command::new(SEATBELT);
-            wrapped.arg("-p").arg(profile).arg(executable).args(args);
-            wrapped
-        }
-        None => {
-            let mut plain = Command::new(executable);
-            plain.args(args);
-            plain
-        }
-    };
-    // Build tooling needs a scratch directory -- rustdoc creates one per
-    // doctest run -- and the system one lies outside the sandbox. Rather than
-    // widening the boundary to all of $TMPDIR, which would let one workspace
-    // write into another's, the child is given a scratch directory inside its
-    // own root.
-    // The canonical root, for the same reason the seatbelt profile needs it: on
-    // macOS the uncanonical path is a symlink, and handing the child that path
-    // makes its scratch directory look like it lies outside the workspace.
-    let scratch = policy
-        .root
-        .canonicalize()
-        .unwrap_or_else(|_| policy.root.clone())
-        .join(SCRATCH_DIRECTORY);
-    let _ = std::fs::create_dir_all(&scratch);
+    let sandboxed = policy.will_sandbox()?;
+    let mut command = policy.prepare_command(executable, args)?;
     let started = std::time::Instant::now();
     command
-        .current_dir(&policy.root)
-        .env_clear()
-        // PATH is explicitly allowlisted solely for executable resolution; it is never logged.
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env("TMPDIR", &scratch)
-        .env("TMP", &scratch)
-        .env("TEMP", &scratch)
-        // Package managers keep caches and config under HOME. Pointing it
-        // into the workspace keeps them inside the boundary instead of
-        // widening it, and makes a run hermetic: nothing it downloads
-        // persists into the next one, and nothing in the real home
-        // directory is read. npm reports the denial as a permissions bug
-        // in its own cache, which is worth knowing when diagnosing one.
-        .env("HOME", &scratch)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
