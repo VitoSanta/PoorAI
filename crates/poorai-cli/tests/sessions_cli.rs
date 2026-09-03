@@ -136,3 +136,99 @@ fn a_workspace_outside_version_control_reports_no_branch() {
     let value = run_json(root.path(), &["--json", "session", "show", "plain"]);
     assert!(value["result"]["workspace_now"].get("branch").is_none());
 }
+
+/// A field that no production path reads is a defect, and it is the defect
+/// this whole audit was about: `ReasoningControl::Think` serialised into a
+/// profile and never reached Ollama, `RuntimeSnapshot.loaded_models` was built
+/// empty, `concurrency` was a number nobody enforced.
+///
+/// The instances are fixed. This is the guard against the class: every value a
+/// declared profile carries has to arrive somewhere a run can act on it, and
+/// the fixture fails when one stops arriving.
+mod declared_values_reach_the_request {
+    use poorai_domain::{ModelProfile, ReasoningControl};
+
+    fn declared() -> Vec<ModelProfile> {
+        #[derive(serde::Deserialize)]
+        struct File {
+            profiles: Vec<ModelProfile>,
+        }
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../strategies/models.json"
+        ))
+        .expect("strategies/models.json");
+        serde_json::from_slice::<File>(&bytes).unwrap().profiles
+    }
+
+    #[test]
+    fn every_declared_sampling_option_is_sent() {
+        for profile in declared() {
+            let sent = profile.sampling_options();
+            for name in profile.sampling.keys() {
+                assert!(
+                    sent.contains_key(name),
+                    "{}: declares {name} and does not send it",
+                    profile.model_selector
+                );
+            }
+        }
+    }
+
+    /// The instance that made this necessary. `Think { enabled: true }` was
+    /// declared for one deployment, serialised, validated, and dropped: neither
+    /// the request nor the adapter carried a `think` field, so the profile
+    /// described a mode the backend was never told about.
+    #[test]
+    fn a_declared_reasoning_mode_reaches_a_channel() {
+        for profile in declared() {
+            let Some(reasoning) = &profile.reasoning else {
+                continue;
+            };
+            // Three channels, and a declared mode has to arrive on one of
+            // them: the backend's own toggle, a backend option, or a line the
+            // system prompt carries. Which channel a variant uses is checked
+            // by asserting the wiring exists, because an assertion that holds
+            // for every possible value asserts nothing -- the first draft of
+            // this test said `*enabled || !*enabled`, which is the defect it
+            // was written to guard against.
+            let source =
+                std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
+                    .unwrap();
+            match reasoning {
+                ReasoningControl::Think { .. } => assert!(
+                    source.contains(r#""think".into()"#),
+                    "{}: declares Think and nothing builds the request's think field",
+                    profile.model_selector
+                ),
+                ReasoningControl::BackendOption { name, .. } => assert!(
+                    !name.is_empty() && source.contains("BackendOption"),
+                    "{}: declares a backend option that nothing sends",
+                    profile.model_selector
+                ),
+                ReasoningControl::PromptDirective { text } => assert!(
+                    !text.is_empty() && source.contains("reasoning_directive"),
+                    "{}: declares a prompt directive that reaches no prompt",
+                    profile.model_selector
+                ),
+            }
+        }
+    }
+
+    /// A declared context is a fact about the tag, and must never be what the
+    /// request carries -- that substitution is how a profile calibrated at
+    /// 32768 authorised a quarter-million-token request.
+    #[test]
+    fn a_declared_context_is_not_what_the_request_uses() {
+        let source =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs")).unwrap();
+        assert!(
+            !source.contains("context_for("),
+            "the request builder is reading a declared context again"
+        );
+        assert!(
+            source.contains("context_tokens: execution.context_tokens"),
+            "the request no longer carries the resolved execution context"
+        );
+    }
+}

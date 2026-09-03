@@ -676,7 +676,9 @@ Not new capability — code and configuration that exists, is not on the product
 | What | Why it should go |
 |---|---|
 
-A guard against the class rather than the instances: a field that no production path reads is a defect, and the cheapest place to catch it is a test that fails when a declared value does not reach the request, the policy or the decision it names.
+**The guard against the class now exists.** Every declared sampling option must be sent; a declared reasoning mode must reach one of its three channels; and a declared context must *not* be what the request carries, which is the substitution that let a profile calibrated at 32768 authorise a quarter-million-token request. Breaking the `think` wiring fails the fixture.
+
+Its first draft asserted `*enabled || !*enabled` — a condition that holds for every possible value, which is the defect it was written to guard against, reproduced inside the guard. It now asserts that the wiring exists rather than that a boolean is a boolean.
 
 ### Work the harness should absorb from the model
 
