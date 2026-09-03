@@ -540,7 +540,6 @@ A run that ended is reported, not resumed: every exit writes a terminal event, a
 
 | Item | What is wrong now | What closing it looks like |
 |---|---|---|
-| The index is rebuilt from nothing every run | Every run walks and re-reads the whole repository, then re-reads the ranked files; cost is O(repository) per run and quality is lexical | An incremental content-addressed index in SQLite, invalidated by hash and HEAD, carrying import, call and test-ownership edges |
 | Tool history is text in a chat | `ChatMessage` carries a role and a string; calls and results are serialised JSON with no call ids, so a protocol-sensitive deployment can lose the pairing | Native tool-call and tool-result messages with ids, matching what the backend's own protocol expects |
 | A plan is a list, not a graph | Steps are claimed, reconciled and never verified individually | Subgoals with their own local verifiers, and replanning driven by their outcomes |
 | Calibration measures allocation, not occupancy | A tier is qualified by a prompt of one token and pressure sampled before generation, so "262144 is nearly free" describes an allocation | A ladder that fills the context and samples peak resident memory during generation |
@@ -592,6 +591,18 @@ More to the point, nothing ever checked either. The API only appended and SQLite
 **`--seed` repeats.** `--seed 1 --seed 2 --seed 3` is one campaign of three trials under a single runtime lease. It was several invocations by hand: nothing held the lease between them, so a second model could load in the gap; nothing tied the trials together; and the person running it had to remember which seeds they had spent.
 
 **Calibration profiles and capability evidence are tracked.** They are what a promotion decision cites and they lived only on the machine that produced them, so a number in the roadmap could not be checked against the artifact behind it by anyone without that machine. They are content-addressed and never overwritten, so tracking them adds rather than churns. **Evaluation reports stay untracked deliberately**: every campaign recorded before this date is void, and committing them would put artifacts in the repository that look like evidence and are not. That exception is lifted when the re-run produces reports worth citing.
+
+### An index that remembers, and edges it has always specified — 2026-09-03
+
+Every run walked and re-read the whole repository, and retrieval then re-read every file to score it before re-opening the ones it chose: O(repository bytes) twice per run, on a workspace the previous run had already read.
+
+**The index is incremental.** A per-workspace SQLite cache keyed on path, modification time and size — never on either alone, since a file rewritten to the same length in the same second is exactly the case where both are needed. A hit reuses the record the earlier run measured, so nothing downstream is told a hash that was not computed from bytes; the cache decides only whether a file has to be *read*. A file the walk no longer finds is forgotten, because a deleted file left in the cache is one retrieval can still rank, which is worse than a slow index. The run records how much it had to read: a claim that indexing is incremental is worth nothing beside the number.
+
+**Scoring no longer touches the disk.** The index keeps each file's distinct lowercase terms, bounded, so ranking reads the index and only the chosen excerpts are opened. That also retires the occurrence count in favour of a distinct term, which is where the saturating cap of eight was heading anyway — a file mentioning a term a hundred times was never fifty times more relevant than one mentioning it twice.
+
+**The graph has edges.** Imports are read as written — the name the file wrote, not resolved to a path, because resolution is per language and per build system and a wrong edge points retrieval at a file with nothing to do with the task. Test ownership is read from naming convention, and labelled a guess wherever it ranks. A file the strongest candidates import is retrieved even when it never names the task, with "imported by" in its rationale like every other signal.
+
+One hop, deliberately: two hops from a well-connected module is most of the repository, and a signal that reaches everything ranks nothing. Both edge weights sit below a path match, and a fixture requires that a file actually defining what was asked for still outranks its neighbours — proximity is evidence about the neighbourhood, not about the file.
 
 ### P3 — a measurable beta
 

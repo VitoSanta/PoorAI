@@ -2305,7 +2305,10 @@ async fn run(
             category: "internal",
             context: e.to_string(),
         })?;
-    let index = poorai_repo::index(&root).map_err(|e| SafeError {
+    // Incremental: a file the previous run already read is not read again,
+    // which on any repository larger than the corpus is most of them.
+    let (index, _index_work) = poorai_repo::index_incremental(&root, Some(&root.join(".poorai")))
+        .map_err(|e| SafeError {
         category: "invalid_input",
         context: e.to_string(),
     })?;
@@ -2487,10 +2490,13 @@ async fn prepare_profiled_run(
     let strategy = poorai_domain::ModelStrategy::select(&declared, &deployment.model_ref);
     let model_profiles = load_model_profiles(Path::new(MODEL_PROFILE_FILE))?;
     let model_profile = poorai_domain::ModelProfile::select(&model_profiles, &deployment.model_ref);
-    let index = poorai_repo::index(&root).map_err(|e| SafeError {
-        category: "invalid_input",
-        context: e.to_string(),
-    })?;
+    // Incremental: a file the previous run already read is not read again,
+    // which on any repository larger than the corpus is most of them.
+    let (index, index_work) = poorai_repo::index_incremental(&root, Some(&root.join(".poorai")))
+        .map_err(|e| SafeError {
+            category: "invalid_input",
+            context: e.to_string(),
+        })?;
     let index_artifact = poorai_repo::persist(&index, &state_dir).map_err(|e| SafeError {
         category: "internal",
         context: e.to_string(),
@@ -2599,6 +2605,9 @@ async fn prepare_profiled_run(
                 "hardware_compatibility_key": hardware.compatibility_key,
                 "harness_rev": CALIBRATION_HARNESS_REV,
                 "repository_inventory_hash": index.inventory_hash,
+                // How much of the index this run had to read. A claim that
+                // indexing is incremental is worth nothing beside the number.
+                "index_work": index_work,
                 "approvals_granted": policy.approvals,
                 "sandbox_policy": policy.sandbox,
                 "allow_commands": policy.allow_commands,
@@ -2748,6 +2757,7 @@ async fn prepare_profiled_run(
         "runtime_snapshot": runtime,
         "artifact": artifact,
         "index_artifact": index_artifact,
+        "index_work": index_work,
         "repository_inventory_hash": index.inventory_hash,
         "approvals_granted": policy.approvals,
         "run": result,
@@ -2764,16 +2774,24 @@ async fn prepare_profiled_run(
     }))
 }
 fn index_repository(path: PathBuf) -> Result<serde_json::Value, SafeError> {
-    let index = poorai_repo::index(path).map_err(|e| SafeError {
-        category: "invalid_input",
-        context: e.to_string(),
-    })?;
+    let (index, index_work) = poorai_repo::index_incremental(&path, Some(&path.join(".poorai")))
+        .map_err(|e| SafeError {
+            category: "invalid_input",
+            context: e.to_string(),
+        })?;
     let artifact = poorai_repo::persist(&index, &PathBuf::from(&index.root).join(".poorai"))
         .map_err(|e| SafeError {
             category: "internal",
             context: e.to_string(),
         })?;
-    Ok(serde_json::json!({"index":index,"artifact":artifact,"stale":false}))
+    // How much had to be read. A claim that indexing is incremental is worth
+    // nothing beside the number that shows it was.
+    Ok(serde_json::json!({
+        "index": index,
+        "artifact": artifact,
+        "stale": false,
+        "work": index_work,
+    }))
 }
 /// The typed events of a run, or none if they cannot be read.
 fn events_of(

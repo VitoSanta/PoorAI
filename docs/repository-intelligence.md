@@ -14,7 +14,9 @@ The excerpt hash is the whole file's, not the fragment's, so an edit guarded by 
 
 Retrieval spends a fraction of the context budget rather than a fixed number of passages, and stops when the budget is spent rather than exceeding it. Ignored files are absent from the index and so cannot be retrieved — the secret-leak case, one layer further out.
 
-Not implemented: call and import graph proximity, test ownership, and ranking on recent tool evidence. Non-source files compete on the same footing as source, so a lockfile mentioning a common term can rank above an unrelated source file; measured on a sixty-two file workspace the intended file still led by 114 to 16.
+Import proximity and test ownership are implemented as of 2026-09-03. Imports are read as written — the name a file wrote, not resolved to a path, because resolution is per language and per build system and a wrong edge points retrieval at a file with nothing to do with the task. Test ownership is naming convention, and is labelled a guess wherever it ranks. One hop from the three strongest candidates, deliberately: two hops from a well-connected module is most of the repository, and a signal that reaches everything ranks nothing. Both weights sit below a path match, and a fixture requires a file that actually defines what was asked for to outrank its neighbours.
+
+Not implemented: call-graph proximity, and ranking on recent tool evidence. Non-source files compete on the same footing as source, so a lockfile mentioning a common term can rank above an unrelated source file; measured on a sixty-two file workspace the intended file still led by 114 to 16.
 
 ## Symbol extraction
 
@@ -28,6 +30,10 @@ This is deliberately shallow. It finds the name a task is likely to mention, not
 
 The index is content-addressed as of 2026-09-03: it is written under the hash of its contents and a write never replaces an existing artifact, where it previously overwrote a single `index.json` on every run. `stale()` exists and is still not consulted on the production path.
 
-What has not changed is the cost. **Every run rebuilds the index from nothing**, walking and reading the whole repository, and retrieval then re-reads every file to score it before opening the selected ones again. That is O(repository bytes) per run, twice, on a workspace the previous run had already read. The incremental update keyed by content hash and HEAD that this document specifies is not implemented, and neither is invalidation against VCS HEAD.
+**The index is incremental as of 2026-09-03.** A per-workspace SQLite cache keyed on path, modification time and size — never either alone, since a file rewritten to the same length in the same second is the case where both are needed — lets a run reuse what an earlier one measured. A hit carries the record that run computed, so nothing downstream is told a hash not derived from bytes; the cache decides only whether a file must be read. A file the walk no longer finds is forgotten. Each run reports how much it read.
+
+Scoring reads the index rather than the disk: each file's distinct lowercase terms are kept, bounded, so only the selected excerpts are opened. That replaces the occurrence count with a distinct term, which is where the saturating cap of eight was already heading.
+
+Invalidation against VCS HEAD is still not implemented; the cache is invalidated by the filesystem, not by the branch.
 
 Tools reach files the index deliberately excludes. `Search` and `ListTree` do their own directory walk and skip four known names rather than honouring `.gitignore`, so "ignored files are absent from the index and so cannot be retrieved" holds for retrieval and not for the tool surface.

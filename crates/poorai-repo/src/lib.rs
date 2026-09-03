@@ -18,6 +18,35 @@ pub struct FileRecord {
     pub content_hash: String,
     pub bytes: u64,
     pub symbols: Vec<String>,
+    /// Modules, packages or files this one names in an import.
+    ///
+    /// The graph edges `repository-intelligence.md` has always specified and
+    /// never had. Shallow by design -- the name as written, not resolved to a
+    /// path -- because resolution is per language and per build system, and a
+    /// wrong resolution is worse than an unresolved name.
+    #[serde(default)]
+    pub imports: Vec<String>,
+    /// The source stem this file appears to test, by naming convention.
+    ///
+    /// `tests/parser.rs`, `test_parser.py` and `parser.test.ts` all say the
+    /// same thing about `parser`. Ownership by convention is a guess and is
+    /// labelled as one wherever it is used to rank.
+    #[serde(default)]
+    pub tests: Option<String>,
+    /// Distinct lowercase words in the file, bounded.
+    ///
+    /// Retrieval read every file in the repository to score it and then
+    /// re-opened the ones it chose -- O(repository bytes) twice per run, on a
+    /// workspace the previous run had already read. Keeping the terms means
+    /// scoring touches the index and only the selected excerpts touch the
+    /// disk.
+    #[serde(default)]
+    pub terms: Vec<String>,
+    /// Modification time and size, the pair that says "unchanged" without
+    /// reading. A file whose hash matters is still hashed; this only decides
+    /// whether it has to be.
+    #[serde(default)]
+    pub mtime_ns: u64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepositoryIndex {
@@ -29,22 +58,43 @@ pub struct RepositoryIndex {
     pub stale: bool,
 }
 pub fn index(root: impl AsRef<Path>) -> Result<RepositoryIndex, RepoError> {
+    index_incremental(root, None).map(|(index, _)| index)
+}
+
+/// The same index, reusing what an earlier run measured about files that have
+/// not changed.
+///
+/// The cache decides only whether a file has to be *read*. Everything a
+/// consumer is told -- the hash, the symbols, the imports -- was measured from
+/// the bytes at some point, and a reused record carries the values the run
+/// that read it computed. Nothing is inferred from a timestamp.
+pub fn index_incremental(
+    root: impl AsRef<Path>,
+    state_dir: Option<&Path>,
+) -> Result<(RepositoryIndex, IndexWork), RepoError> {
     let root = root.as_ref().canonicalize()?;
     if !root.is_dir() {
         return Err(RepoError::InvalidRoot);
     }
+    let cache = match state_dir {
+        Some(state_dir) => Some(IndexCache::open(state_dir)?),
+        None => None,
+    };
     let mut files = Vec::new();
-    walk(&root, &mut files)?;
+    let work = walk_with_cache(&root, cache.as_ref(), &mut files)?;
     files.sort_by(|a, b| a.path.cmp(&b.path));
     let inventory_hash = hash_bytes(serde_json::to_vec(&files).expect("serializable"));
-    Ok(RepositoryIndex {
-        schema_version: 1,
-        root: root.display().to_string(),
-        generated_at: now(),
-        inventory_hash,
-        files,
-        stale: false,
-    })
+    Ok((
+        RepositoryIndex {
+            schema_version: 1,
+            root: root.display().to_string(),
+            generated_at: now(),
+            inventory_hash,
+            files,
+            stale: false,
+        },
+        work,
+    ))
 }
 /// Writes the index atomically as a durable workspace artifact.
 pub fn persist(index: &RepositoryIndex, state_dir: &Path) -> Result<std::path::PathBuf, RepoError> {
@@ -193,6 +243,132 @@ pub fn extract_symbols(text: &str) -> Vec<String> {
     symbols
 }
 
+/// Import statements, as written.
+///
+/// Shallow on purpose: the name a file writes, not the path it resolves to.
+/// Resolution is per language and per build system, and a wrong edge is worse
+/// than a missing one -- it points retrieval at a file that has nothing to do
+/// with the task.
+pub fn extract_imports(text: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for line in text.lines().take(MAX_SCANNED_LINES) {
+        let line = line.trim();
+        if line.starts_with("//") || line.starts_with('#') && !line.starts_with("#include") {
+            // A comment, except the one language where `#` starts a directive.
+            if !line.starts_with("#include") && !line.starts_with("#import") {
+                // Python's `import` never starts with `#`, so a `#` line here
+                // is a comment in every language this recognises.
+                if line.starts_with('#') {
+                    continue;
+                }
+            }
+        }
+        let candidate = if let Some(rest) = line.strip_prefix("use ") {
+            // Rust: `use crate::parser::Token;`
+            rest.split([';', ' ', '{'])
+                .next()
+                .map(|path| path.trim_end_matches("::").to_string())
+        } else if let Some(rest) = line.strip_prefix("from ") {
+            // Python: `from app.parser import Token`
+            rest.split_whitespace().next().map(str::to_string)
+        } else if line.starts_with("import ") && line.contains(" from ") {
+            // JavaScript and TypeScript: `import { Token } from "./parser"`.
+            // Checked before the bare `import` form, which would otherwise
+            // take the opening brace as the module name.
+            line.split_once(" from ").and_then(|(_, tail)| {
+                tail.trim()
+                    .trim_start_matches(['"', '\''])
+                    .split(['"', '\'', ';'])
+                    .next()
+                    .map(str::to_string)
+            })
+        } else if let Some(rest) = line.strip_prefix("import ") {
+            // Python, Java, Go, and the side-effect form in JavaScript.
+            rest.split([';', ' '])
+                .next()
+                .map(|name| name.trim_matches(['"', '\'']).to_string())
+        } else if line.starts_with("#include") {
+            line.split(['<', '"'])
+                .nth(1)
+                .map(|name| name.trim_end_matches(['>', '"']).to_string())
+        } else {
+            // JavaScript and TypeScript: `import { x } from "./parser"`, and
+            // `require("./parser")`.
+            line.split_once(" from ")
+                .map(|(_, tail)| tail)
+                .or_else(|| line.split_once("require(").map(|(_, tail)| tail))
+                .and_then(|tail| {
+                    let tail = tail.trim().trim_start_matches(['"', '\'']);
+                    tail.split(['"', '\'', ')', ';']).next()
+                })
+                .map(str::to_string)
+        };
+        if let Some(name) = candidate {
+            let name = name.trim().trim_matches(['"', '\'', ',']).to_string();
+            if !name.is_empty() && name.len() <= 200 && !found.contains(&name) {
+                found.push(name);
+            }
+        }
+        if found.len() >= MAX_IMPORTS {
+            break;
+        }
+    }
+    found
+}
+
+/// The source stem a path appears to test, by naming convention.
+///
+/// A guess, and labelled as one wherever it ranks: `tests/parser.rs`,
+/// `test_parser.py` and `parser.test.ts` all say the same thing about
+/// `parser`, and none of them proves it.
+pub fn test_subject(path: &str) -> Option<String> {
+    let file = Path::new(path).file_stem()?.to_str()?.to_ascii_lowercase();
+    let in_test_directory = path
+        .split(['/', '\\'])
+        .any(|part| matches!(part, "tests" | "test" | "spec" | "__tests__"));
+    let stem = if let Some(rest) = file.strip_prefix("test_") {
+        Some(rest.to_string())
+    } else if let Some(rest) = file.strip_suffix("_test") {
+        Some(rest.to_string())
+    } else if let Some(rest) = file.strip_suffix(".test") {
+        Some(rest.to_string())
+    } else if let Some(rest) = file.strip_suffix(".spec") {
+        Some(rest.to_string())
+    } else if in_test_directory {
+        Some(file)
+    } else {
+        None
+    };
+    stem.filter(|stem| !stem.is_empty() && stem != "mod" && stem != "index")
+}
+
+/// Distinct lowercase words, bounded.
+///
+/// What scoring reads instead of the file itself. Bounded because a generated
+/// file with a hundred thousand identifiers should not be able to make the
+/// index larger than the repository.
+fn extract_terms(text: &str) -> Vec<String> {
+    let mut terms: Vec<String> = Vec::new();
+    for word in text
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter(|word| word.len() >= 2)
+    {
+        let word = word.to_ascii_lowercase();
+        if !terms.contains(&word) {
+            terms.push(word);
+        }
+        if terms.len() >= MAX_TERMS {
+            break;
+        }
+    }
+    terms.sort();
+    terms
+}
+
+const MAX_SCANNED_LINES: usize = 2_000;
+const MAX_IMPORTS: usize = 200;
+const MAX_TERMS: usize = 4_000;
+
 /// poorAI exclusions applied on top of VCS ignore rules. These are policy, not
 /// convenience: state and VCS internals must never enter the index.
 const POLICY_EXCLUSIONS: [&str; 4] = [".git", "target", "node_modules", ".poorai"];
@@ -205,7 +381,115 @@ const MAX_INDEXED_BYTES: usize = 1_000_000;
 /// than approximated here: negation, `**`, anchoring, directory-only patterns
 /// and nested `.gitignore` files are all load-bearing, and a pattern this walk
 /// misunderstands is a secret in the index.
-fn walk(root: &Path, files: &mut Vec<FileRecord>) -> Result<(), RepoError> {
+/// What the last index knew about a file, keyed by path.
+///
+/// Every run walked and re-read the whole repository, then retrieval re-read
+/// every file to score it and re-opened the ones it chose -- O(repository
+/// bytes) twice, on a workspace the previous run had already read. This is the
+/// half that stops the first re-read.
+///
+/// Keyed on modification time and size together, and never on either alone: a
+/// file rewritten with the same length in the same second is the case where
+/// both are needed and the hash is what settles it. A cache hit still carries
+/// the hash the previous run computed, so nothing downstream is told a hash
+/// that was not measured.
+pub struct IndexCache {
+    connection: rusqlite::Connection,
+}
+
+impl IndexCache {
+    /// Opens, or creates, the cache beside the workspace's other state.
+    pub fn open(state_dir: &Path) -> Result<Self, RepoError> {
+        fs::create_dir_all(state_dir)?;
+        let connection = rusqlite::Connection::open(state_dir.join("index.sqlite"))
+            .map_err(|error| RepoError::Walk(error.to_string()))?;
+        connection
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS files (
+                    path TEXT PRIMARY KEY,
+                    mtime_ns INTEGER NOT NULL,
+                    bytes INTEGER NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    record TEXT NOT NULL
+                );",
+            )
+            .map_err(|error| RepoError::Walk(error.to_string()))?;
+        Ok(Self { connection })
+    }
+
+    fn get(&self, path: &str, mtime_ns: u64, bytes: u64) -> Option<FileRecord> {
+        let record: String = self
+            .connection
+            .query_row(
+                "SELECT record FROM files WHERE path=?1 AND mtime_ns=?2 AND bytes=?3",
+                rusqlite::params![path, mtime_ns as i64, bytes as i64],
+                |row| row.get(0),
+            )
+            .ok()?;
+        serde_json::from_str(&record).ok()
+    }
+
+    fn put(&self, record: &FileRecord) -> Result<(), RepoError> {
+        let encoded =
+            serde_json::to_string(record).map_err(|error| RepoError::Walk(error.to_string()))?;
+        self.connection
+            .execute(
+                "INSERT INTO files(path,mtime_ns,bytes,content_hash,record) VALUES(?1,?2,?3,?4,?5)
+                 ON CONFLICT(path) DO UPDATE SET mtime_ns=?2, bytes=?3, content_hash=?4, record=?5",
+                rusqlite::params![
+                    record.path,
+                    record.mtime_ns as i64,
+                    record.bytes as i64,
+                    record.content_hash,
+                    encoded
+                ],
+            )
+            .map_err(|error| RepoError::Walk(error.to_string()))?;
+        Ok(())
+    }
+
+    /// Removes rows for files the walk no longer found.
+    ///
+    /// A deleted file that stays in the cache is a file retrieval can still
+    /// rank, which is worse than a slow index.
+    fn retain(&self, present: &[String]) -> Result<usize, RepoError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT path FROM files")
+            .map_err(|error| RepoError::Walk(error.to_string()))?;
+        let known: Vec<String> = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| RepoError::Walk(error.to_string()))?
+            .filter_map(Result::ok)
+            .collect();
+        let mut removed = 0;
+        for path in known {
+            if !present.contains(&path) {
+                self.connection
+                    .execute("DELETE FROM files WHERE path=?1", rusqlite::params![path])
+                    .map_err(|error| RepoError::Walk(error.to_string()))?;
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+}
+
+/// How much of an index run had to be read from disk.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IndexWork {
+    pub files: usize,
+    pub read: usize,
+    pub reused: usize,
+    pub forgotten: usize,
+}
+
+fn walk_with_cache(
+    root: &Path,
+    cache: Option<&IndexCache>,
+    files: &mut Vec<FileRecord>,
+) -> Result<IndexWork, RepoError> {
+    let mut work = IndexWork::default();
     let walker = WalkBuilder::new(root)
         .hidden(false)
         .git_ignore(true)
@@ -231,24 +515,50 @@ fn walk(root: &Path, files: &mut Vec<FileRecord>) -> Result<(), RepoError> {
         if !metadata.is_file() {
             continue;
         }
+        let relative = path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .display()
+            .to_string();
+        let size = metadata.len();
+        let mtime_ns = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|since| since.as_nanos() as u64)
+            .unwrap_or_default();
+        work.files += 1;
+        if let Some(cached) = cache.and_then(|cache| cache.get(&relative, mtime_ns, size)) {
+            work.reused += 1;
+            files.push(cached);
+            continue;
+        }
         let bytes = fs::read(path)?;
+        work.read += 1;
         if bytes.len() > MAX_INDEXED_BYTES || bytes.iter().take(4096).any(|b| *b == 0) {
             continue;
         }
         let text = String::from_utf8_lossy(&bytes);
-        let symbols = extract_symbols(&text);
-        files.push(FileRecord {
-            path: path
-                .strip_prefix(root)
-                .unwrap_or(path)
-                .display()
-                .to_string(),
+        let record = FileRecord {
             content_hash: hash_bytes(&bytes),
             bytes: bytes.len() as u64,
-            symbols,
-        });
+            symbols: extract_symbols(&text),
+            imports: extract_imports(&text),
+            tests: test_subject(&relative),
+            terms: extract_terms(&text),
+            mtime_ns,
+            path: relative,
+        };
+        if let Some(cache) = cache {
+            cache.put(&record)?;
+        }
+        files.push(record);
     }
-    Ok(())
+    if let Some(cache) = cache {
+        let present: Vec<String> = files.iter().map(|file| file.path.clone()).collect();
+        work.forgotten = cache.retain(&present)?;
+    }
+    Ok(work)
 }
 
 /// A ranked passage of the repository, with everything needed to audit why it
@@ -300,6 +610,81 @@ fn terms_of(query: &str) -> Vec<String> {
     terms
 }
 
+/// Files reachable in one hop from the strongest candidates.
+///
+/// One hop, deliberately. Two hops from a well-connected module is most of the
+/// repository, and a ranking signal that reaches everything ranks nothing.
+/// Weaker than any direct match, because proximity is evidence about the
+/// neighbourhood rather than about the file.
+fn graph_neighbours(
+    index: &RepositoryIndex,
+    scored: &[(u32, String, &FileRecord)],
+) -> Vec<(String, (u32, String))> {
+    let mut best: Vec<&FileRecord> = scored
+        .iter()
+        .map(|(_, _, file)| *file)
+        .take(GRAPH_SEEDS)
+        .collect();
+    best.sort_by(|a, b| a.path.cmp(&b.path));
+    let mut found: Vec<(String, (u32, String))> = Vec::new();
+    let mut add = |path: String, bonus: u32, why: String| {
+        if !found.iter().any(|(existing, _)| *existing == path) {
+            found.push((path, (bonus, why)));
+        }
+    };
+    for seed in &best {
+        let seed_stem = Path::new(&seed.path)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        for file in &index.files {
+            if file.path == seed.path {
+                continue;
+            }
+            let stem = Path::new(&file.path)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            // The seed imports this file, by the name it wrote.
+            if !stem.is_empty()
+                && seed
+                    .imports
+                    .iter()
+                    .any(|name| name.to_ascii_lowercase().contains(&stem))
+            {
+                add(
+                    file.path.clone(),
+                    IMPORT_PROXIMITY,
+                    format!("imported by {}", seed.path),
+                );
+            }
+            // This file tests the seed, by naming convention -- a guess, and
+            // said to be one.
+            if file
+                .tests
+                .as_deref()
+                .is_some_and(|subject| subject == seed_stem)
+            {
+                add(
+                    file.path.clone(),
+                    TEST_OWNERSHIP,
+                    format!("appears to test {} by name", seed.path),
+                );
+            }
+        }
+    }
+    found
+}
+
+/// How many top candidates seed the graph walk.
+const GRAPH_SEEDS: usize = 3;
+/// Weaker than a path match: proximity is evidence about the neighbourhood.
+const IMPORT_PROXIMITY: u32 = 6;
+/// Weaker still, because ownership here is a naming convention, not a fact.
+const TEST_OWNERSHIP: u32 = 5;
+
 /// Ranks repository passages against a task statement.
 ///
 /// This is lexical: it matches symbol names, path components and literal
@@ -318,10 +703,11 @@ pub fn retrieve(
     if terms.is_empty() || max_excerpts == 0 {
         return Ok(Vec::new());
     }
+    // Scored from the index, not from the disk. Retrieval used to read every
+    // file to score it and then re-open the ones it chose; the terms an
+    // earlier run extracted answer the same question without either read.
     let mut scored: Vec<(u32, String, &FileRecord)> = Vec::new();
     for file in &index.files {
-        let text = fs::read_to_string(root.join(&file.path)).unwrap_or_default();
-        let lowered = text.to_lowercase();
         let lowered_path = file.path.to_lowercase();
         let mut score = 0u32;
         let mut reasons = Vec::new();
@@ -337,15 +723,33 @@ pub fn retrieve(
                 score += PATH_MATCH;
                 reasons.push(format!("path contains {term}"));
             }
-            let occurrences = lowered.matches(term.as_str()).count();
-            if occurrences > 0 {
-                score += CONTENT_OCCURRENCE * occurrences.min(MAX_COUNTED_OCCURRENCES) as u32;
-                reasons.push(format!("mentions {term} {occurrences}x"));
+            // A distinct term rather than an occurrence count. The index keeps
+            // which words a file uses, not how often, and saturating the count
+            // at eight was already most of the way to that -- a file
+            // mentioning a term a hundred times was never fifty times more
+            // relevant than one mentioning it twice.
+            if file.terms.binary_search(term).is_ok() {
+                score += CONTENT_OCCURRENCE * MAX_COUNTED_OCCURRENCES as u32;
+                reasons.push(format!("mentions {term}"));
             }
         }
         if score > 0 {
             reasons.dedup();
             scored.push((score, reasons.join(", "), file));
+        }
+    }
+
+    // Graph proximity: a file the best candidates import, and the test that
+    // owns one of them, are about the task even when they never name it.
+    // `repository-intelligence.md` has specified this since the beginning and
+    // the ranking has never had it.
+    let neighbours = graph_neighbours(index, &scored);
+    for (path, (bonus, why)) in neighbours {
+        if let Some(existing) = scored.iter_mut().find(|(_, _, file)| file.path == path) {
+            existing.0 += bonus;
+            existing.1 = format!("{}, {why}", existing.1);
+        } else if let Some(file) = index.files.iter().find(|file| file.path == path) {
+            scored.push((bonus, why, file));
         }
     }
     scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.2.path.cmp(&b.2.path)));
