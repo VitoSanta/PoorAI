@@ -471,12 +471,13 @@ const DEFAULT_MAX_ACTIONS: u8 = 26;
 
 /// Actions a run may take when it must also fetch and install a toolchain.
 ///
-/// Not measured, and said so: no campaign has yet run to completion under
-/// `--provision`. The one that prompted this number spent eight actions
-/// establishing the platform and the availability of `curl` without reaching a
-/// download. Provisioning is a different scale of work from editing a file, so
-/// it gets a different number rather than the same one stretched; replace it
-/// with a measured one as soon as there is a distribution to take it from.
+/// One observation, not a distribution. A run that installed a Go toolchain on
+/// a machine without Go, built a program and verified it against its
+/// specification used **30 actions** -- above the ordinary default, so only a
+/// separate provisioning budget let it finish. Provisioning is a different
+/// scale of work from editing a file and gets a different number rather than
+/// the same one stretched. The margin over 30 is guesswork until a campaign
+/// gives this a distribution the way `external-v1` gave one to the default.
 pub const PROVISIONING_MAX_ACTIONS: u8 = 80;
 
 /// What an action targets, for spotting repetition.

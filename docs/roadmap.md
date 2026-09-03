@@ -318,6 +318,20 @@ A fourth change follows the same principle as item 2: the deployment is now told
 
 Re-run after the four changes: **3 of 3 resolved, 3 of 3 hidden verification, 3 of 3 scope respected**, no safety violations, no tool failures in 31 attempts.
 
+### Provisioning a toolchain — 2026-09-03
+
+`--provision` grants network access and any executable together, because either alone installs nothing. A derived allowlist cannot name a toolchain the workspace does not yet carry.
+
+Measured on a machine without Go: qwen detected `arm64`, found `go` absent, fetched the *linux* tarball, worked out its own mistake by reading `file` (`ELF 64-bit … ARM aarch64`), fetched the darwin build, extracted it, ran `go version go1.27.1 darwin/arm64`, wrote the program, built it, and verified it against the example in the specification — `the 3 / cat 2 / bird 1`. Thirty actions.
+
+What makes the grant defensible is where the installs land. A child already runs with `HOME` and `TMPDIR` inside the workspace, so the toolchain installs *into the workspace*: the host is not modified, nothing persists into the next run, and deleting the workspace undoes it. Writing outside stays refused, which a mutant confirms.
+
+It does not make an unattended run safe, and the flag's help says so. The sandbox denies writing outside the workspace; it did not deny reading outside it, and an arbitrary executable plus the network is the shape of an exfiltration. The host's credentials are now denied to every sandboxed run — not only under this grant, because no run had a reason to read them. That narrows the risk rather than closing it.
+
+**The fixture guarding that denial was the third of its kind to be wrong.** It aimed at `~/.ssh`, absent on this host, so it reported "no such file" and passed while a mutant removing the denial entirely survived. Like the `LocalService` fixture aimed at an unreachable public address, and like the alias fixture that passed through a marker file it did not mean to use, it asserted something true for a reason unrelated to what it was testing. It now picks a path the host actually has and first proves that path is readable *without* the sandbox.
+
+**A command had no way to receive input.** Commands are executed directly rather than through a shell, so `args` are arguments and never syntax — which is what stops an argument being reinterpreted as a command, and is worth keeping. But the first Go run built a correct program and could not test it: `printf … ./wordfreq` and `bash wordfreq input.txt` were both flattened into arguments. `run_command` now takes `stdin`, which is safe in a way that interpreting a shell would not be.
+
 **5. Verification of systems rather than files.** *Unblocked, not finished.* The blocker was the sandbox, not the corpus: `(deny network*)` refused loopback too, so a verifier could start a service and then never reach it. A new `LocalService` approval, separate from `NetworkAccess` and implying neither direction, opens local ports while a remote host stays denied.
 
 The boundary is this *host*, not the loopback interface, and the name understates it. seatbelt takes only `*` or `localhost` as the host in a network address — a literal `127.0.0.1` is rejected and the whole profile fails to compile — and its `localhost` covers every address the machine holds. So a process under this grant reaches a service on a LAN interface as well, and can be reached from the LAN if it binds there. That is the platform's limit rather than a choice, and both halves are asserted by fixtures so neither is left to a comment.
