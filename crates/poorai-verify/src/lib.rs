@@ -323,17 +323,46 @@ fn ci_declared_checks(root: &std::path::Path) -> Vec<(String, Vec<String>)> {
             std::fs::read_to_string(&path).into_iter().collect()
         };
         for text in texts {
+            // A bare `- item` is a command only where the list it belongs to is
+            // a list of commands. GitLab and Travis write `script:` followed by
+            // such a list; GitHub writes `- uses: actions/checkout@v5`, which is
+            // a step that uses an action and is not a command at all. Taking
+            // every list item produced a check named `uses:`, which cannot
+            // execute and therefore failed on every turn of every run in that
+            // repository -- scoring a correct fix as a failure.
+            let mut in_script_list = false;
             for line in text.lines() {
+                let indented = line;
                 let line = line.trim();
-                // A shell step in any of these formats is a line beginning with
-                // a list marker or a run key.
+                if let Some((key, rest)) = line.split_once(':')
+                    && !key.contains(' ')
+                    && !key.starts_with('-')
+                {
+                    in_script_list = matches!(
+                        key.trim_start_matches("- "),
+                        "script" | "before_script" | "commands" | "run"
+                    ) && rest.trim().is_empty();
+                }
+                // A dedent to column zero ends any list.
+                if !indented.starts_with(char::is_whitespace) && !line.starts_with('-') {
+                    in_script_list = in_script_list && line.ends_with(':');
+                }
                 let command = line
                     .strip_prefix("- run:")
                     .or_else(|| line.strip_prefix("run:"))
-                    .or_else(|| line.strip_prefix("- "))
+                    .or_else(|| in_script_list.then(|| line.strip_prefix("- ")).flatten())
                     .map(str::trim)
                     .unwrap_or("");
                 if command.is_empty() || command.contains(['{', '}', '$']) {
+                    continue;
+                }
+                // A first word ending in a colon is a YAML key, never an
+                // executable -- `uses:`, `with:`, `name:`.
+                if command
+                    .split_whitespace()
+                    .next()
+                    .is_some_and(|word| word.ends_with(':'))
+                {
                     continue;
                 }
                 let lowered = command.to_lowercase();

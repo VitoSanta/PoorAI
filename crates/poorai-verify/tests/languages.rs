@@ -239,3 +239,73 @@ fn an_interpreter_is_not_denied_under_its_other_name() {
         assert!(js_executables.contains(&name.to_string()), "{name} denied");
     }
 }
+
+/// A bare `- item` is a command only where the list it belongs to is a list of
+/// commands. GitLab and Travis write `script:` followed by such a list; GitHub
+/// writes `- uses: actions/checkout@v5`, which is a step that uses an action
+/// and is not a command at all.
+///
+/// Measured: taking every list item produced a check named `uses:`, which
+/// cannot execute and so failed on every turn of every run in that repository,
+/// scoring a correct fix as a failure.
+#[test]
+fn a_github_step_that_uses_an_action_is_not_a_command() {
+    let root = project(&[(
+        ".github/workflows/main.yml",
+        "name: CI\njobs:\n  test:\n    steps:\n      - uses: actions/checkout@v5\n      \
+         - uses: actions/setup-node@v4\n        with:\n          node-version: 20\n      \
+         - run: npm test\n",
+    )]);
+    let checks = discover_checks(root.path(), "targeted").unwrap();
+    assert!(
+        !checks
+            .iter()
+            .any(|(executable, _)| executable.contains(':')),
+        "a YAML key was taken for an executable: {checks:?}"
+    );
+    assert!(
+        checks
+            .iter()
+            .any(|(executable, args)| executable == "npm" && args == &["test".to_string()]),
+        "the one real command was lost: {checks:?}"
+    );
+}
+
+/// The bare-list form still works where the list really is a list of commands.
+#[test]
+fn a_gitlab_script_list_is_still_read() {
+    let root = project(&[(
+        ".gitlab-ci.yml",
+        "test:\n  script:\n    - cargo test\n    - cargo clippy\n",
+    )]);
+    let checks = discover_checks(root.path(), "targeted").unwrap();
+    assert!(
+        checks
+            .iter()
+            .any(|(e, a)| e == "cargo" && a == &["test".to_string()]),
+        "{checks:?}"
+    );
+}
+
+/// A discovered check is not filtered by whether its executable exists on this
+/// machine. Two fixtures caught an attempt to do that: `mix`, `sbt` and
+/// `rebar3` are absent here, so the filter silently discarded the Elixir, Scala
+/// and Erlang cases. Discovery that depends on what happens to be installed
+/// gives different answers on different machines, and it contradicts
+/// provisioning, where the toolchain is precisely what is not there yet.
+///
+/// A check that cannot run is handled where it can be handled honestly: the
+/// deployment is told which checks were already failing when the run opened.
+#[test]
+fn discovery_does_not_depend_on_what_is_installed_here() {
+    let root = project(&[(
+        ".github/workflows/main.yml",
+        "jobs:\n  test:\n    steps:\n      - run: mix test\n",
+    )]);
+    let checks = discover_checks(root.path(), "targeted").unwrap();
+    assert_eq!(
+        checks.first().map(|(e, _)| e.as_str()),
+        Some("mix"),
+        "a check was dropped for not being installed on this machine: {checks:?}"
+    );
+}
