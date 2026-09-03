@@ -250,3 +250,61 @@ fn a_run_grant_is_asked_once() {
     let (store, run_id, _) = gated_run(vec![ApprovalDecision::AllowForRun]);
     assert_eq!(decisions(&store, run_id), vec!["allow_for_run"]);
 }
+
+/// A workspace with no checks cannot complete, which is correct and leaves no
+/// way forward. The two toolchain-provisioning runs wrote correct programs
+/// into workspaces created from nothing and are failures under that rule.
+///
+/// The way out cannot be the agent running whatever it nominates: a command
+/// nobody authorised is not a verifier, and one the agent both chooses and
+/// trusts is the agent marking its own work. So the question a person is asked
+/// has to name the command, not the category.
+#[test]
+fn a_proposed_verifier_asks_a_person_and_names_the_command() {
+    let (approval, description) = required_approval(&ActionProposal::ProposeVerifier {
+        executable: "python3".into(),
+        args: vec!["-m".into(), "pytest".into(), "-q".into()],
+        rationale: "the workspace has no build system; this runs the tests I wrote".into(),
+    })
+    .unwrap();
+    assert_eq!(approval, Approval::VerifierProposal);
+    assert!(
+        description.contains("python3 -m pytest -q"),
+        "{description}"
+    );
+    // And why, because a command alone is not enough to judge one by.
+    assert!(description.contains("no build system"), "{description}");
+}
+
+/// The proposal is refused before anyone is asked when it cannot be judged, or
+/// when a whole command line was put where a program name belongs -- the same
+/// shape `run_command` refuses, which reached exec as one filename and came
+/// back looking like a missing program.
+#[test]
+fn a_verifier_proposal_that_cannot_be_judged_is_refused() {
+    let unjudgeable = ActionProposal::ProposeVerifier {
+        executable: "pytest".into(),
+        args: vec![],
+        rationale: "  ".into(),
+    };
+    assert!(unjudgeable.validate().is_err());
+
+    let command_line = ActionProposal::ProposeVerifier {
+        executable: "python3 -m pytest".into(),
+        args: vec![],
+        rationale: "runs the tests".into(),
+    };
+    let error = command_line.validate().unwrap_err().to_string();
+    assert!(error.contains("command line"), "{error}");
+}
+
+/// Nobody attached means nobody approved. A run that self-approves its own
+/// verifier has no boundary at all -- it is the agent deciding what counts as
+/// proof of its own work.
+#[tokio::test]
+async fn nobody_attached_means_no_verifier_is_adopted() {
+    let decision = DenyWithoutAsking
+        .ask(Approval::VerifierProposal, "adopt `pytest -q`")
+        .await;
+    assert_eq!(decision, ApprovalDecision::Deny);
+}

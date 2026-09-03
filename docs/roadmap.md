@@ -445,7 +445,6 @@ The four items that had to be true before another campaign, and are now.
 
 | Item | What is wrong now | What closing it looks like |
 |---|---|---|
-| A repository with no checks can only fail | Completion is refused where nothing verifies, which is right, and leaves no way forward: the agent cannot propose a check, because a command nobody authorised is not a verifier | A verifier the run can be given, or one the agent proposes and a person approves through the existing approval path — the two toolchain-provisioning runs are the case this would unblock |
 | Cancellation is not demonstrated | `ProviderError::Cancelled` is never constructed and the trait exposes no cancellation handle; the probe drops the stream and calls `/api/ps` alive, which does not show the backend stopped | An explicit cancellation handle on the provider trait, and a fixture asserting the connection closed and generation stopped server-side |
 | Resume is continuity, not a checkpoint | A session carries facts forward; a crashed run restarts from a summary rather than from the state it was in | Run state is a typed projection of the event log through one reducer, and a checkpoint is resumable |
 | Non-progress is detected only as repeated refusals | Successful reads in a circle, identical searches, an edit and its revert, or commands that change nothing are all invisible | A no-progress window over workspace hash, check state and repeated diagnostics, not just consecutive denials |
@@ -471,6 +470,14 @@ Eight items that needed no design, only doing.
 **A strategy's action budget binds `run`, not only `eval`.** The same deployment ran under two different limits depending on which command started it. And a run now records the strategy and model-profile hashes beside its calibration and digest, so two campaigns differing only in policy are no longer indistinguishable in the log — which is usually the difference a comparison is trying to isolate.
 
 `cargo test --workspace`: 372 passed, 2 ignored.
+
+### A verifier a person adopts — 2026-09-03
+
+Completion is refused where nothing can verify it, which is right and left no way forward: the two toolchain-provisioning runs wrote correct programs into workspaces created from nothing, and under that rule they are failures. The way out cannot be the agent running whatever it nominates — a command nobody authorised is not a verifier, and one the agent both chooses and trusts is the agent marking its own work.
+
+So it proposes and a person decides. `propose_verifier` runs nothing by itself; it offers a command, and the question a person is asked names the command and the reason rather than a category. If approved, it joins the checks the run is judged against and its executable joins the allowlist — adopted by the loop rather than by the tool, because a check outlives the action that proposed it. If refused, the workspace still has no verifier and completion is still refused. The adoption is recorded as `verifier.adopted`, so it is a fact in the audit rather than an inference from the run having succeeded.
+
+**Writing the refusal test found a real defect.** The loop's `Deny` branch was empty: it relied on each tool re-checking the approval against the policy. Every tool that needed one did — `run_command` consults `command_approval`, `fetch_url` the network grant, the edits their manifest gate — so it worked, until an action was added that did not, and that action executed after a person had denied it. A gate that depends on each capability remembering to re-check is advisory, not binding. The loop now enforces the refusal itself and returns it to the deployment as a tool result, since ending the run would discard work already done.
 
 ### P2 — an agent for whole codebases
 

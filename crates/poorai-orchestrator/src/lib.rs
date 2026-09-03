@@ -547,6 +547,19 @@ async fn attempt_action(
         ActionProposal::Complete { rationale } => {
             Ok(serde_json::json!({"complete":true,"rationale":rationale}))
         }
+        // Reaching here means a person approved it: the approval gate runs
+        // before execution. Adopting it is the loop's job, not the tool's,
+        // because a check outlives the action that proposed it.
+        ActionProposal::ProposeVerifier {
+            executable,
+            args,
+            rationale,
+        } => Ok(serde_json::json!({
+            "verifier_adopted": true,
+            "executable": executable,
+            "args": args,
+            "rationale": rationale,
+        })),
         // Records a claim; it touches nothing. The loop reconciles it against
         // the plan, and the checks judge it like any other claim.
         ActionProposal::RecordProgress { step, note } => {
@@ -847,6 +860,28 @@ const DEFAULT_MAX_ACTIONS: u8 = 26;
 /// default.
 pub const PROVISIONING_MAX_ACTIONS: u8 = 80;
 
+/// The check an approved `propose_verifier` established, if that is what ran.
+///
+/// Read from the outcome rather than from the proposal, because only an
+/// outcome proves the approval gate let it through: a refused proposal returns
+/// a denial and must establish nothing.
+fn adopted_verifier(outcome: &serde_json::Value) -> Option<(String, Vec<String>)> {
+    if outcome.get("verifier_adopted")? != &serde_json::Value::Bool(true) {
+        return None;
+    }
+    let executable = outcome.get("executable")?.as_str()?.to_string();
+    let args = outcome
+        .get("args")
+        .and_then(|args| args.as_array())
+        .map(|args| {
+            args.iter()
+                .filter_map(|arg| arg.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    Some((executable, args))
+}
+
 /// What an action targets, for spotting repetition.
 ///
 /// Compared on the capability and its target rather than the whole proposal,
@@ -861,6 +896,9 @@ fn action_fingerprint(action: &ActionProposal) -> String {
             format!("read_file:{path}:{first_line:?}")
         }
         ActionProposal::Search { query, .. } => format!("search:{query}"),
+        ActionProposal::ProposeVerifier {
+            executable, args, ..
+        } => format!("propose_verifier:{executable}:{}", args.join(" ")),
         ActionProposal::ListTree { .. } => "list_tree".into(),
         ActionProposal::ApplyReplace { path, .. } => format!("apply_replace:{path}"),
         ActionProposal::WriteFile { path, .. } => format!("write_file:{path}"),
@@ -1368,6 +1406,8 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
 ) -> Result<TaskRunResult, String> {
     let _terminal_guard = TerminalEventGuard { store, run_id };
     let mut policy = policy.clone();
+    // Owned, because an approved verifier joins it for the rest of the run.
+    let mut checks: Vec<(String, Vec<String>)> = checks.to_vec();
     let mut once_granted: Option<poorai_tools::Approval> = None;
     // A plan pushed once as a message is context, not authority: nothing
     // consults it again, and compaction drops it entirely, so on a long task
@@ -1420,7 +1460,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
     let mut idle_since_pass = 0usize;
     let mut edit_recovery_attempts = 0u8;
     let mut context_recovery_attempts = 0u8;
-    let before = match poorai_verify::baseline(&policy, checks).await {
+    let before = match poorai_verify::baseline(&policy, &checks).await {
         Ok(before) => before,
         Err(error) => {
             persist_failure(
@@ -1730,7 +1770,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                     }),
                 )
                 .map_err(|e| e.to_string())?;
-            let after = poorai_verify::baseline(&policy, checks)
+            let after = poorai_verify::baseline(&policy, &checks)
                 .await
                 .map_err(|e| e.to_string())?;
             let comparison = poorai_verify::compare(&before, &after);
@@ -1914,7 +1954,35 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                 )
                 .map_err(|e| e.to_string())?;
             match decision {
-                ApprovalDecision::Deny => {}
+                ApprovalDecision::Deny => {
+                    // The refusal is enforced here rather than left to the
+                    // tool to notice. Every tool that needs an approval did
+                    // re-check it, which worked until an action was added that
+                    // did not -- and a self-approving action is not a gap in
+                    // one capability, it is the gate being advisory. A denial
+                    // is still a tool result: the run continues and the
+                    // deployment is told, because ending it would discard work
+                    // already done.
+                    let denial = format!("a person refused this: {description}");
+                    store
+                        .append(
+                            Some(run_id),
+                            "tool.action",
+                            serde_json::json!({
+                                "action": action,
+                                "status": "denied",
+                                "outcome_class": "policy_denial",
+                                "denial": denial,
+                            }),
+                        )
+                        .map_err(|e| e.to_string())?;
+                    refused_streak.push(action_fingerprint(&action));
+                    request.messages.push(poorai_domain::ChatMessage {
+                        role: "tool".into(),
+                        content: serde_json::json!({"denied": denial}).to_string(),
+                    });
+                    continue;
+                }
                 ApprovalDecision::AllowOnce | ApprovalDecision::AllowForRun => {
                     policy.approvals.push(approval);
                 }
@@ -1956,6 +2024,33 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
         if let Some(approval) = once_granted.take() {
             policy.approvals.retain(|granted| *granted != approval);
         }
+        // Reaching an outcome means the approval gate let it through, so a
+        // person authorised this command as the workspace's check. Adopting it
+        // here rather than in the tool is deliberate: a check outlives the
+        // action that proposed it, and the executable has to join the
+        // allowlist or the check it becomes cannot run.
+        if let Some(adopted) = adopted_verifier(&outcome)
+            && !checks.contains(&adopted)
+        {
+            {
+                if !policy.allow_commands.contains(&adopted.0) {
+                    policy.allow_commands.push(adopted.0.clone());
+                }
+                checks.push(adopted.clone());
+                store
+                    .append(
+                        Some(run_id),
+                        "verifier.adopted",
+                        serde_json::json!({
+                            "step": step,
+                            "executable": adopted.0,
+                            "args": adopted.1,
+                            "source": "proposed by the deployment and approved by a person",
+                        }),
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
+        }
         if outcome.get("denied").is_some() {
             refused_streak.push(fingerprint);
         } else {
@@ -1969,7 +2064,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
         // burns the action budget instead of completing.
         let mut result = outcome;
         if edited && result.get("denied").is_none() && !checks.is_empty() {
-            let after = poorai_verify::baseline(&policy, checks)
+            let after = poorai_verify::baseline(&policy, &checks)
                 .await
                 .map_err(|e| e.to_string())?;
             let failing: Vec<serde_json::Value> = after
@@ -2285,6 +2380,16 @@ pub fn action_tool_schema() -> serde_json::Value {
                 "note": {"type": "string"},
             }),
             &["step"],
+        ),
+        function(
+            "propose_verifier",
+            "Offer a command as this workspace's deterministic check, when it declares none. Runs nothing by itself and needs a person's approval; if approved it becomes the check your completion is judged against. Use it only for a workspace that has no test or build command of its own.",
+            serde_json::json!({
+                "executable": {"type": "string"},
+                "args": {"type": "array", "items": {"type": "string"}},
+                "rationale": {"type": "string"},
+            }),
+            &["executable", "rationale"],
         ),
         function(
             "complete",
@@ -3594,6 +3699,136 @@ mod tests {
             .is_err()
         );
         assert_eq!(*contexts.lock().unwrap(), vec![2048]);
+    }
+
+    /// A workspace that declares no checks could only fail, which is right and
+    /// is not a way forward: the toolchain-provisioning runs built correct
+    /// programs into workspaces created from nothing. A person can now adopt a
+    /// verifier the deployment proposes, and only then does completion mean
+    /// something.
+    #[tokio::test]
+    async fn an_approved_verifier_makes_a_checkless_workspace_completable() {
+        struct AllowEverything;
+        #[async_trait::async_trait]
+        impl ApprovalPrompt for AllowEverything {
+            async fn ask(&self, _: poorai_tools::Approval, _: &str) -> ApprovalDecision {
+                ApprovalDecision::AllowOnce
+            }
+        }
+        let root = tempfile::tempdir().unwrap();
+        let policy = ToolPolicy {
+            root: root.path().to_path_buf(),
+            // Empty: the executable joins it only because a person approved it.
+            allow_commands: vec![],
+            output_limit: 4096,
+            timeout: Duration::from_secs(5),
+            sandbox: poorai_tools::SandboxPolicy::Disabled,
+            approvals: Vec::new(),
+        };
+        let provider = SequenceProvider(std::sync::Mutex::new(std::collections::VecDeque::from([
+            r#"{"capability":"propose_verifier","executable":"echo","args":["ok"],"rationale":"nothing here declares a check"}"#.into(),
+            r#"{"capability":"complete","rationale":"done"}"#.into(),
+        ])));
+        let store = Store::open(":memory:").unwrap();
+        let run_id = new_id();
+        let request = ModelRequest {
+            deployment: deployment(),
+            context_tokens: 4096,
+            tools: None,
+            seed: None,
+            sampling: Default::default(),
+            messages: vec![poorai_domain::ChatMessage {
+                role: "user".into(),
+                content: "do work".into(),
+            }],
+        };
+        let result = run_action_loop_with_prompt(
+            &store,
+            &provider,
+            run_id,
+            request,
+            &policy,
+            &[],
+            4,
+            &AllowEverything,
+            false,
+        )
+        .await
+        .expect("an adopted verifier makes completion possible");
+        assert!(result.verifiable, "the run had a check to verify against");
+        assert!(result.verified);
+
+        let events = store.events_for_run(run_id).unwrap();
+        // The adoption is a fact in the audit, not an inference from the run
+        // having succeeded.
+        let adopted = events
+            .iter()
+            .find(|event| event.event_type == "verifier.adopted")
+            .expect("adoption is recorded");
+        assert_eq!(adopted.payload["executable"], "echo");
+        assert!(
+            events
+                .iter()
+                .any(|event| event.event_type == "task.complete"),
+            "completion is reached"
+        );
+    }
+
+    /// A refused proposal must establish nothing. Otherwise the agent could
+    /// nominate its own check and have it apply regardless of the answer,
+    /// which is the whole boundary this action sits behind.
+    #[tokio::test]
+    async fn a_refused_verifier_proposal_leaves_the_workspace_unverifiable() {
+        let root = tempfile::tempdir().unwrap();
+        let policy = ToolPolicy {
+            root: root.path().to_path_buf(),
+            allow_commands: vec![],
+            output_limit: 4096,
+            timeout: Duration::from_secs(5),
+            sandbox: poorai_tools::SandboxPolicy::Disabled,
+            approvals: Vec::new(),
+        };
+        let provider = SequenceProvider(std::sync::Mutex::new(std::collections::VecDeque::from([
+            r#"{"capability":"propose_verifier","executable":"echo","args":["ok"],"rationale":"nothing here declares a check"}"#.into(),
+            r#"{"capability":"complete","rationale":"done"}"#.into(),
+        ])));
+        let store = Store::open(":memory:").unwrap();
+        let run_id = new_id();
+        let request = ModelRequest {
+            deployment: deployment(),
+            context_tokens: 4096,
+            tools: None,
+            seed: None,
+            sampling: Default::default(),
+            messages: vec![poorai_domain::ChatMessage {
+                role: "user".into(),
+                content: "do work".into(),
+            }],
+        };
+        // DenyWithoutAsking is the default, and the unattended case.
+        assert!(
+            run_action_loop_with_prompt(
+                &store,
+                &provider,
+                run_id,
+                request,
+                &policy,
+                &[],
+                4,
+                &DenyWithoutAsking,
+                false,
+            )
+            .await
+            .is_err()
+        );
+        let events = store.events_for_run(run_id).unwrap();
+        assert!(
+            !events
+                .iter()
+                .any(|event| event.event_type == "verifier.adopted"),
+            "a refused proposal adopts nothing"
+        );
+        assert!(events.iter().any(|event| event.event_type == "task.failed"));
     }
 
     #[tokio::test]

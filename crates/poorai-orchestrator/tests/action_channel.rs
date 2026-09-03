@@ -35,6 +35,7 @@ fn the_schema_offers_exactly_the_typed_capabilities() {
             // Records a claim rather than touching the workspace, like
             // `complete`, and sits beside it for that reason.
             "record_progress",
+            "propose_verifier",
             "complete"
         ]
     );

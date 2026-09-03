@@ -38,6 +38,17 @@ pub enum ActionProposal {
     Complete {
         rationale: String,
     },
+    /// Offers a command as the deterministic check for this workspace.
+    ///
+    /// Runs nothing by itself. If a person approves it, it joins the checks the
+    /// run verifies against and its executable joins the allowlist; if not, the
+    /// workspace still has no verifier and completion is still refused.
+    ProposeVerifier {
+        executable: String,
+        #[serde(default)]
+        args: Vec<String>,
+        rationale: String,
+    },
     ReadFile {
         path: String,
         #[serde(default)]
@@ -104,6 +115,27 @@ impl ActionProposal {
             Self::Complete { rationale } if rationale.is_empty() => {
                 Err(ToolError::Denied("completion rationale is required".into()))
             }
+            Self::ProposeVerifier {
+                executable,
+                rationale,
+                ..
+            } => {
+                if executable.trim().is_empty() || rationale.trim().is_empty() {
+                    return Err(ToolError::Denied(
+                        "a proposed verifier needs an executable and a rationale a person can judge"
+                            .into(),
+                    ));
+                }
+                // The same shape refused for run_command: a program name never
+                // contains whitespace, and one that does reaches exec as a
+                // single filename.
+                if executable.split_whitespace().count() > 1 {
+                    return Err(ToolError::Denied(format!(
+                        "`{executable}` is a command line where a program name belongs; pass the program in `executable` and the rest in `args`"
+                    )));
+                }
+                Ok(())
+            }
             Self::ReadFile { path, .. }
             | Self::ApplyReplace { path, .. }
             | Self::WriteFile { path, .. }
@@ -157,6 +189,16 @@ pub enum SandboxPolicy {
 pub enum Approval {
     /// Editing a dependency manifest or lockfile.
     DependencyChange,
+    /// Adopting a command the agent proposed as this workspace's verifier.
+    ///
+    /// A repository that declares no checks cannot complete, which is correct
+    /// and leaves no way forward: the two toolchain-provisioning runs wrote
+    /// correct programs into workspaces created from nothing and are failures
+    /// under that rule. The way out cannot be the agent running whatever it
+    /// nominates -- a command nobody authorised is not a verifier, and one the
+    /// agent both chooses and trusts is the agent marking its own work. So it
+    /// proposes and a person decides.
+    VerifierProposal,
     /// Rewriting version-control history.
     HistoryRewrite,
     /// Publishing a package or pushing to a remote.
@@ -298,6 +340,18 @@ pub fn required_approval(action: &ActionProposal) -> Option<(Approval, String)> 
         }
         ActionProposal::ReplaceText { path, find, .. } => edit_approval(Path::new(path))
             .map(|a| (a, format!("change {path} where it reads `{}`", elide(find)))),
+        ActionProposal::ProposeVerifier {
+            executable,
+            args,
+            rationale,
+        } => Some((
+            Approval::VerifierProposal,
+            format!(
+                "adopt `{executable} {}` as this workspace's verifier — {}",
+                args.join(" "),
+                elide(rationale)
+            ),
+        )),
         _ => None,
     }
 }

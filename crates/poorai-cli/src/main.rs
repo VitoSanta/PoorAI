@@ -145,6 +145,11 @@ enum ApprovalArg {
     NetworkAccess,
     LocalService,
     ToolchainInstall,
+    /// Adopting a check the deployment proposes for a workspace that declares
+    /// none. Granting it in advance means the run may adopt one without asking
+    /// again, which is the unattended case; without it a proposal is asked
+    /// about when a terminal is attached, and refused when none is.
+    VerifierProposal,
 }
 impl From<ApprovalArg> for poorai_tools::Approval {
     fn from(value: ApprovalArg) -> Self {
@@ -155,6 +160,7 @@ impl From<ApprovalArg> for poorai_tools::Approval {
             ApprovalArg::NetworkAccess => Self::NetworkAccess,
             ApprovalArg::LocalService => Self::LocalService,
             ApprovalArg::ToolchainInstall => Self::ToolchainInstall,
+            ApprovalArg::VerifierProposal => Self::VerifierProposal,
         }
     }
 }
@@ -1454,6 +1460,7 @@ async fn evaluate_task(
                 "network_access" => Some(poorai_tools::Approval::NetworkAccess),
                 "local_service" => Some(poorai_tools::Approval::LocalService),
                 "toolchain_install" => Some(poorai_tools::Approval::ToolchainInstall),
+                "verifier_proposal" => Some(poorai_tools::Approval::VerifierProposal),
                 _ => None,
             })
             .collect(),
