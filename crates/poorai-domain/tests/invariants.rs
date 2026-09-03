@@ -606,3 +606,95 @@ fn an_artifact_from_another_schema_is_refused_rather_than_read() {
     // artifact as though it were current is the failure this prevents.
     assert!(poorai_domain::check_schema_version(0, "profile").is_err());
 }
+
+/// A typed event has to survive the store and come back as itself, or the
+/// reducer that resumes a run is reading something else.
+#[test]
+fn every_run_event_round_trips_through_its_stored_shape() {
+    use poorai_domain::{RunEvent, ToolActionStatus};
+    let cases = vec![
+        RunEvent::RunStarted(serde_json::json!({"task": "fix it"})),
+        RunEvent::SessionOpened {
+            session: "s".into(),
+        },
+        RunEvent::TaskPlan {
+            steps: vec!["one".into(), "two".into()],
+            note: None,
+        },
+        RunEvent::PlanReconciled {
+            steps_total: 2,
+            steps_recorded_done: 1,
+            steps_outstanding: vec!["two".into()],
+        },
+        RunEvent::TurnGenerated {
+            step: 3,
+            turn: 4,
+            metrics: None,
+            tokens_per_second: Some(12.5),
+            thinking_chars: 10,
+            content_chars: 20,
+            prompt_delivery: None,
+        },
+        RunEvent::ToolAction {
+            action: serde_json::json!({"capability": "read_file"}),
+            status: ToolActionStatus::Denied,
+            outcome_class: "policy_denial".into(),
+            outcome: None,
+            denial: Some("refused".into()),
+            failure: None,
+            failure_category: None,
+        },
+        RunEvent::VerifierAdopted {
+            step: 1,
+            executable: "pytest".into(),
+            args: vec!["-q".into()],
+            source: "approved".into(),
+        },
+        RunEvent::VerificationResult {
+            verified: true,
+            verifiable: true,
+            after: serde_json::json!({}),
+            comparison: serde_json::json!({}),
+            failing_before_the_run: vec![],
+        },
+        RunEvent::ContextTierChanged {
+            previous_context_tokens: 8192,
+            context_tokens: 2048,
+            evidence: "measured".into(),
+            provider_error: "context".into(),
+            attempt: 1,
+        },
+        RunEvent::NoProgressDetected {
+            step: 6,
+            window: 6,
+            actions: vec!["read_file:a".into()],
+        },
+        RunEvent::TaskComplete {
+            step: 2,
+            verified: true,
+        },
+        RunEvent::TaskFailed {
+            reason: "no verifier".into(),
+            detail: None,
+        },
+    ];
+    for event in cases {
+        let stored = RunEvent::from_stored(event.event_type(), &event.payload());
+        assert_eq!(
+            stored.as_ref(),
+            Some(&event),
+            "{} did not round trip",
+            event.event_type()
+        );
+    }
+}
+
+/// An event written by another build is skipped rather than guessed at. A
+/// reducer that invents a variant for an unknown record resumes a run into a
+/// state nothing ever recorded.
+#[test]
+fn an_unknown_event_type_is_not_guessed_at() {
+    assert!(
+        poorai_domain::RunEvent::from_stored("something.new", &serde_json::json!({})).is_none()
+    );
+}

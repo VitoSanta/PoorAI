@@ -255,7 +255,11 @@ fn persist_failure(
         .append(
             Some(run_id),
             "task.failed",
-            serde_json::json!({"reason": reason, "detail": detail}),
+            poorai_domain::RunEvent::TaskFailed {
+                reason: reason.into(),
+                detail: Some(detail),
+            }
+            .payload(),
         )
         .map_err(|error| error.to_string())?;
     Ok(())
@@ -292,7 +296,11 @@ impl Drop for TerminalEventGuard<'_> {
         let _ = self.store.append(
             Some(self.run_id),
             "task.failed",
-            serde_json::json!({"reason":"run interrupted or cancelled"}),
+            poorai_domain::RunEvent::TaskFailed {
+                reason: "run interrupted or cancelled".into(),
+                detail: None,
+            }
+            .payload(),
         );
     }
 }
@@ -434,30 +442,38 @@ pub async fn execute_action(
 ) -> Result<serde_json::Value, ActionExecutionError> {
     let result = attempt_action(policy, &action).await;
     let payload = match &result {
-        Ok(outcome) => serde_json::json!({
-            "action": action,
-            "status": "allowed",
-            "outcome_class": outcome_class(outcome),
-            "outcome": outcome,
-        }),
-        Err(ActionExecutionError::Denied(denial)) => serde_json::json!({
-            "action": action,
-            "status": "denied",
-            "outcome_class": "policy_denial",
-            "denial": denial,
-        }),
-        Err(error) => serde_json::json!({
-            "action": action,
-            "status": "failed",
-            "outcome_class": error.outcome_class(),
-            "failure": error.to_string(),
-            "failure_category": error.category(),
-        }),
+        Ok(outcome) => poorai_domain::RunEvent::ToolAction {
+            action: serde_json::to_value(&action).unwrap_or_default(),
+            status: poorai_domain::ToolActionStatus::Allowed,
+            outcome_class: outcome_class(outcome).into(),
+            outcome: Some(outcome.clone()),
+            denial: None,
+            failure: None,
+            failure_category: None,
+        },
+        Err(ActionExecutionError::Denied(denial)) => poorai_domain::RunEvent::ToolAction {
+            action: serde_json::to_value(&action).unwrap_or_default(),
+            status: poorai_domain::ToolActionStatus::Denied,
+            outcome_class: "policy_denial".into(),
+            outcome: None,
+            denial: Some(denial.clone()),
+            failure: None,
+            failure_category: None,
+        },
+        Err(error) => poorai_domain::RunEvent::ToolAction {
+            action: serde_json::to_value(&action).unwrap_or_default(),
+            status: poorai_domain::ToolActionStatus::Failed,
+            outcome_class: error.outcome_class().into(),
+            outcome: None,
+            denial: None,
+            failure: Some(error.to_string()),
+            failure_category: Some(error.category().into()),
+        },
     };
     // The audit is written before the denial propagates, so a refused action
     // cannot leave the run without a record of what was asked.
     store
-        .append(Some(run_id), "tool.action", payload)
+        .append_event(Some(run_id), &payload)
         .map_err(|error| ActionExecutionError::Audit(error.to_string()))?;
     result
 }
@@ -696,16 +712,15 @@ fn recover_at_lower_measured_context(
     let previous = request.context_tokens;
     request.context_tokens = next;
     store
-        .append(
+        .append_event(
             Some(run_id),
-            "context.tier_changed",
-            serde_json::json!({
-                "previous_context_tokens": previous,
-                "context_tokens": next,
-                "evidence": "compatible calibration stable point",
-                "provider_error": provider_error,
-                "attempt": context_attempts.saturating_add(1),
-            }),
+            &poorai_domain::RunEvent::ContextTierChanged {
+                previous_context_tokens: previous,
+                context_tokens: next,
+                evidence: "compatible calibration stable point".into(),
+                provider_error: provider_error.to_string(),
+                attempt: context_attempts.saturating_add(1),
+            },
         )
         .map_err(|error| error.to_string())?;
     Ok(true)
@@ -809,6 +824,127 @@ pub struct DenyWithoutAsking;
 impl ApprovalPrompt for DenyWithoutAsking {
     async fn ask(&self, _: poorai_tools::Approval, _: &str) -> ApprovalDecision {
         ApprovalDecision::Deny
+    }
+}
+
+/// The state of a run, rebuilt from its own log.
+///
+/// A session carried facts forward; it did not resume anything. A crashed run
+/// lost the state the loop was in, and the next run started over with a
+/// summary. `TaskCheckpoint` was persisted on every transition and nothing
+/// ever read it back, so "all state transitions are evented and resumable"
+/// described half a mechanism.
+///
+/// This is the other half: a projection, computed by folding the events in
+/// order, with no second source of truth beside the log. Everything here is
+/// something the log actually recorded -- nothing is inferred, and a field
+/// that cannot be recovered is absent rather than guessed.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RunState {
+    /// Where the machine had got to, if a transition was recorded.
+    pub state: Option<TaskState>,
+    /// Actions already charged against the budget.
+    pub actions_spent: u8,
+    /// Files this run wrote, and the hash each write produced.
+    pub changed_files: std::collections::BTreeMap<String, String>,
+    /// Verifiers a person adopted during the run. They outlive it: a check
+    /// approved once should not have to be approved again on resume.
+    pub adopted_verifiers: Vec<(String, Vec<String>)>,
+    pub plan: Vec<String>,
+    pub steps_done: Vec<usize>,
+    /// The context the run was last sending, after any tier downgrade.
+    pub context_tokens: Option<u32>,
+    /// How a run ended, or `None` if it never did -- which is what says it can
+    /// be resumed rather than reported.
+    pub terminal: Option<RunTerminal>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunTerminal {
+    Complete { verified: bool },
+    Failed { reason: String },
+}
+
+impl RunState {
+    /// Folds a run's events into the state they describe.
+    pub fn replay(events: &[poorai_domain::RunEvent]) -> Self {
+        use poorai_domain::RunEvent as E;
+        let mut state = Self::default();
+        for event in events {
+            match event {
+                E::TaskTransition(checkpoint) => {
+                    state.state =
+                        serde_json::from_value(serde_json::Value::String(checkpoint.state.clone()))
+                            .ok();
+                }
+                E::TaskPlan { steps, .. } => state.plan = steps.clone(),
+                E::PlanReconciled { .. } => {}
+                E::ToolAction {
+                    action,
+                    status,
+                    outcome,
+                    ..
+                } => {
+                    // A denied attempt performed nothing and cost no action,
+                    // which is the same rule the live loop applies.
+                    if *status != poorai_domain::ToolActionStatus::Denied {
+                        state.actions_spent = state.actions_spent.saturating_add(1);
+                    }
+                    if let Some(outcome) = outcome {
+                        if let (Some(path), Some(hash)) = (
+                            outcome.get("path").and_then(|v| v.as_str()),
+                            outcome.get("new_hash").and_then(|v| v.as_str()),
+                        ) {
+                            state
+                                .changed_files
+                                .insert(path.to_string(), hash.to_string());
+                        }
+                        if let Some(step) = outcome
+                            .get("recorded_step")
+                            .and_then(serde_json::Value::as_u64)
+                        {
+                            let step = step as usize;
+                            if !state.steps_done.contains(&step) {
+                                state.steps_done.push(step);
+                            }
+                        }
+                    }
+                    let _ = action;
+                }
+                E::VerifierAdopted {
+                    executable, args, ..
+                } => {
+                    let adopted = (executable.clone(), args.clone());
+                    if !state.adopted_verifiers.contains(&adopted) {
+                        state.adopted_verifiers.push(adopted);
+                    }
+                }
+                E::ContextTierChanged { context_tokens, .. } => {
+                    state.context_tokens = Some(*context_tokens);
+                }
+                E::TaskComplete { verified, .. } => {
+                    state.terminal = Some(RunTerminal::Complete {
+                        verified: *verified,
+                    });
+                }
+                E::TaskFailed { reason, .. } => {
+                    state.terminal = Some(RunTerminal::Failed {
+                        reason: reason.clone(),
+                    });
+                }
+                _ => {}
+            }
+        }
+        state
+    }
+
+    /// Whether this run stopped without recording how it ended.
+    ///
+    /// The signature of a crash, a kill, or a machine going away: every other
+    /// way out writes a terminal event, including an interrupted run, which
+    /// the guard records on drop. A run that ended is reported, not resumed.
+    pub fn interrupted(&self) -> bool {
+        self.terminal.is_none() && self.state.is_some()
     }
 }
 
@@ -1731,21 +1867,20 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
             reply.metrics.as_ref(),
         );
         store
-            .append(
+            .append_event(
                 Some(run_id),
-                "turn.generated",
-                serde_json::json!({
-                    "step": step,
-                    "turn": turns,
-                    "metrics": reply.metrics,
-                    "tokens_per_second": reply
+                &poorai_domain::RunEvent::TurnGenerated {
+                    step,
+                    turn: turns,
+                    metrics: reply.metrics.clone(),
+                    tokens_per_second: reply
                         .metrics
                         .as_ref()
                         .and_then(poorai_domain::GenerationMetrics::tokens_per_second),
-                    "thinking_chars": reply.thinking.len(),
-                    "content_chars": reply.content.len(),
-                    "prompt_delivery": delivery,
-                }),
+                    thinking_chars: reply.thinking.len(),
+                    content_chars: reply.content.len(),
+                    prompt_delivery: delivery.clone(),
+                },
             )
             .map_err(|e| e.to_string())?;
         if let Some(concern) = delivery
@@ -1757,15 +1892,14 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
             // that did not arrive explains a reply that makes no sense, and
             // nobody reading a confusing answer thinks to open the counters.
             store
-                .append(
+                .append_event(
                     Some(run_id),
-                    "context.delivery_diverged",
-                    serde_json::json!({
-                        "step": step,
-                        "turn": turns,
-                        "concern": concern,
-                        "delivery": delivery,
-                    }),
+                    &poorai_domain::RunEvent::ContextDeliveryDiverged {
+                        step,
+                        turn: turns,
+                        concern: concern.to_string(),
+                        delivery: delivery.clone().unwrap_or_default(),
+                    },
                 )
                 .map_err(|e| e.to_string())?;
         }
@@ -1785,10 +1919,12 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
             Ok(action) => action,
             Err(problem) => {
                 store
-                    .append(
+                    .append_event(
                         Some(run_id),
-                        "action.malformed",
-                        serde_json::json!({"step": step, "problem": problem}),
+                        &poorai_domain::RunEvent::ActionMalformed {
+                            step,
+                            problem: problem.clone(),
+                        },
                     )
                     .map_err(|e| e.to_string())?;
                 malformed += 1;
@@ -1822,19 +1958,18 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
             // fact to preserve rather than a reason to refuse -- but it is a
             // fact worth having when reading back why a run went as it did.
             store
-                .append(
+                .append_event(
                     Some(run_id),
-                    "plan.reconciled",
-                    serde_json::json!({
-                        "steps_total": plan.len(),
-                        "steps_recorded_done": steps_done.len(),
-                        "steps_outstanding": plan
+                    &poorai_domain::RunEvent::PlanReconciled {
+                        steps_total: plan.len(),
+                        steps_recorded_done: steps_done.len(),
+                        steps_outstanding: plan
                             .iter()
                             .enumerate()
                             .filter(|(i, _)| !steps_done.contains(&(i + 1)))
                             .map(|(i, step)| format!("{}. {step}", i + 1))
-                            .collect::<Vec<_>>(),
-                    }),
+                            .collect(),
+                    },
                 )
                 .map_err(|e| e.to_string())?;
         }
@@ -1850,14 +1985,17 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
             // it before the audit left the declared rationale out of the log
             // entirely -- the one part of a completion that says anything.
             store
-                .append(
+                .append_event(
                     Some(run_id),
-                    "tool.action",
-                    serde_json::json!({
-                        "action": action,
-                        "status": "allowed",
-                        "outcome": {"declared": true, "step": step},
-                    }),
+                    &poorai_domain::RunEvent::ToolAction {
+                        action: serde_json::to_value(&action).unwrap_or_default(),
+                        status: poorai_domain::ToolActionStatus::Allowed,
+                        outcome_class: "allowed_success".into(),
+                        outcome: Some(serde_json::json!({"declared": true, "step": step})),
+                        denial: None,
+                        failure: None,
+                        failure_category: None,
+                    },
                 )
                 .map_err(|e| e.to_string())?;
             let after = poorai_verify::baseline(&policy, &checks)
@@ -1875,16 +2013,15 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                     .all(|check| check.result.exit_code == Some(0))
                 && comparison.regression_free;
             store
-                .append(
+                .append_event(
                     Some(run_id),
-                    "verification.result",
-                    serde_json::json!({
-                        "after": after,
-                        "comparison": comparison,
-                        "verified": verified,
-                        "verifiable": verifiable,
-                        "failing_before_the_run": failing_at_start,
-                    }),
+                    &poorai_domain::RunEvent::VerificationResult {
+                        verified,
+                        verifiable,
+                        after: serde_json::to_value(&after).unwrap_or_default(),
+                        comparison: serde_json::to_value(&comparison).unwrap_or_default(),
+                        failing_before_the_run: failing_at_start.clone(),
+                    },
                 )
                 .map_err(|e| e.to_string())?;
             if !verifiable {
@@ -1909,10 +2046,12 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                     "deterministic verification passed",
                 )?;
                 store
-                    .append(
+                    .append_event(
                         Some(run_id),
-                        "task.complete",
-                        serde_json::json!({"step": step, "verified": true}),
+                        &poorai_domain::RunEvent::TaskComplete {
+                            step,
+                            verified: true,
+                        },
                     )
                     .map_err(|e| e.to_string())?;
                 return Ok(TaskRunResult {
@@ -2009,10 +2148,12 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
         let fingerprint = action_fingerprint(&action);
         if refused_streak.iter().filter(|f| **f == fingerprint).count() >= REPEATED_REFUSAL_LIMIT {
             store
-                .append(
+                .append_event(
                     Some(run_id),
-                    "loop.detected",
-                    serde_json::json!({"step": step, "action": fingerprint}),
+                    &poorai_domain::RunEvent::LoopDetected {
+                        step,
+                        action: fingerprint.clone(),
+                    },
                 )
                 .map_err(|e| e.to_string())?;
             request.messages.push(poorai_domain::ChatMessage {
@@ -2055,15 +2196,17 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                     // already done.
                     let denial = format!("a person refused this: {description}");
                     store
-                        .append(
+                        .append_event(
                             Some(run_id),
-                            "tool.action",
-                            serde_json::json!({
-                                "action": action,
-                                "status": "denied",
-                                "outcome_class": "policy_denial",
-                                "denial": denial,
-                            }),
+                            &poorai_domain::RunEvent::ToolAction {
+                                action: serde_json::to_value(&action).unwrap_or_default(),
+                                status: poorai_domain::ToolActionStatus::Denied,
+                                outcome_class: "policy_denial".into(),
+                                outcome: None,
+                                denial: Some(denial.clone()),
+                                failure: None,
+                                failure_category: None,
+                            },
                         )
                         .map_err(|e| e.to_string())?;
                     refused_streak.push(action_fingerprint(&action));
@@ -2128,15 +2271,14 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                 }
                 checks.push(adopted.clone());
                 store
-                    .append(
+                    .append_event(
                         Some(run_id),
-                        "verifier.adopted",
-                        serde_json::json!({
-                            "step": step,
-                            "executable": adopted.0,
-                            "args": adopted.1,
-                            "source": "proposed by the deployment and approved by a person",
-                        }),
+                        &poorai_domain::RunEvent::VerifierAdopted {
+                            step,
+                            executable: adopted.0.clone(),
+                            args: adopted.1.clone(),
+                            source: "proposed by the deployment and approved by a person".into(),
+                        },
                     )
                     .map_err(|e| e.to_string())?;
             }
@@ -2183,10 +2325,12 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                 })
                 .collect();
             store
-                .append(
+                .append_event(
                     Some(run_id),
-                    "verification.interim",
-                    serde_json::json!({"step": step, "passing": failing.is_empty()}),
+                    &poorai_domain::RunEvent::VerificationInterim {
+                        step,
+                        passing: failing.is_empty(),
+                    },
                 )
                 .map_err(|e| e.to_string())?;
             if failing.is_empty() {
@@ -2235,17 +2379,16 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
         }
         if window_made_no_progress(&progress_window) {
             store
-                .append(
+                .append_event(
                     Some(run_id),
-                    "no_progress.detected",
-                    serde_json::json!({
-                        "step": step,
-                        "window": NO_PROGRESS_WINDOW,
-                        "actions": progress_window
+                    &poorai_domain::RunEvent::NoProgressDetected {
+                        step,
+                        window: NO_PROGRESS_WINDOW,
+                        actions: progress_window
                             .iter()
-                            .map(|(fingerprint, _, _)| fingerprint)
-                            .collect::<Vec<_>>(),
-                    }),
+                            .map(|(fingerprint, _, _)| fingerprint.clone())
+                            .collect(),
+                    },
                 )
                 .map_err(|e| e.to_string())?;
             // Said plainly and once per window, then the window is cleared so

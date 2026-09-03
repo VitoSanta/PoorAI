@@ -785,11 +785,33 @@ fn show_session(name: &str) -> Result<serde_json::Value, SafeError> {
         .map(|event| event.payload["version_control"].clone())
         .unwrap_or(serde_json::Value::Null);
     let now = version_control_state(&root);
+    // A run that recorded no terminal event stopped without saying how: a
+    // crash, a kill, or a machine going away. Every other exit writes one,
+    // including an interruption. Surfacing it here is what makes it a fact a
+    // person can act on rather than something buried in the log.
+    let interrupted = runs
+        .last()
+        .and_then(|run_id| store.typed_events_for_run(*run_id).ok())
+        .map(|events| poorai_orchestrator::RunState::replay(&events))
+        .filter(poorai_orchestrator::RunState::interrupted)
+        .map(|state| {
+            serde_json::json!({
+                "run": runs.last().map(ToString::to_string),
+                "state": format!("{:?}", state.state),
+                "actions_spent": state.actions_spent,
+                "files_changed": state.changed_files.len(),
+                "adopted_verifiers": state.adopted_verifiers,
+                "plan_steps_total": state.plan.len(),
+                "plan_steps_done": state.steps_done.len(),
+                "context_tokens": state.context_tokens,
+            })
+        });
     Ok(serde_json::json!({
         "name": name,
         "runs": runs.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
         "opened_on": opened_at,
         "workspace_now": now,
+        "interrupted_run": interrupted,
         "ledger": ledger,
     }))
 }

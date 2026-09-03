@@ -45,6 +45,38 @@ impl Store {
         self.connection.execute_batch("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY); CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, run_id TEXT, event_type TEXT NOT NULL, payload TEXT NOT NULL, at TEXT NOT NULL, previous_hash TEXT, event_hash TEXT NOT NULL UNIQUE); INSERT OR IGNORE INTO schema_migrations(version) VALUES (1);")?;
         Ok(())
     }
+    /// Appends a typed event.
+    ///
+    /// The preferred entry point: the event type and its payload are derived
+    /// from one value rather than written as a literal and a hand-built object
+    /// at each call site, so two places recording the same event cannot
+    /// disagree about its shape.
+    pub fn append_event(
+        &self,
+        run_id: Option<Id>,
+        event: &poorai_domain::RunEvent,
+    ) -> Result<EventRecord, StoreError> {
+        self.append(run_id, event.event_type(), event.payload())
+    }
+
+    /// Reads a run's events back as typed values.
+    ///
+    /// An event this build does not know is skipped: it was written by another
+    /// version, and a reducer that guesses at it resumes into a state nothing
+    /// recorded.
+    pub fn typed_events_for_run(
+        &self,
+        run_id: Id,
+    ) -> Result<Vec<poorai_domain::RunEvent>, StoreError> {
+        Ok(self
+            .events_for_run(run_id)?
+            .iter()
+            .filter_map(|record| {
+                poorai_domain::RunEvent::from_stored(&record.event_type, &record.payload)
+            })
+            .collect())
+    }
+
     pub fn append(
         &self,
         run_id: Option<Id>,

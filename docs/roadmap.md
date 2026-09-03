@@ -445,7 +445,6 @@ The four items that had to be true before another campaign, and are now.
 
 | Item | What is wrong now | What closing it looks like |
 |---|---|---|
-| Resume is continuity, not a checkpoint | A session carries facts forward; a crashed run restarts from a summary rather than from the state it was in | Run state is a typed projection of the event log through one reducer, and a checkpoint is resumable |
 
 ### P1, the mechanical half — 2026-09-03
 
@@ -523,6 +522,20 @@ The rates and the limit they produced are recorded in `run.started`, so a result
 
 This is the narrow version of the adaptation. What is still not built is the rest of what `model-profiles.md` lists: a per-deployment retry policy, a tool schema narrowed for a deployment that struggles with the full one, and reasoning escalation when a task proves hard.
 
+### Typed events, and a run rebuilt from its own log — 2026-09-03
+
+The log carried `(&str, serde_json::Value)`: the type was a string literal at each call site and the payload was whatever that site happened to build. Nothing checked that two places recording the same event agreed on its shape, and nothing reading it could rely on a field being there — every reader was a `payload["x"]` lookup that silently yields null when it is wrong.
+
+`RunEvent` closes the set: twenty-two variants, each deriving both its stored type and its payload, so the two cannot drift. The stored `event_type` column is unchanged and old artifacts still read. Variants carrying genuinely open data — a provenance bag, a tool outcome whose shape belongs to the tool — keep a `Value` for that field and are typed around it, which is the honest boundary: the run's own state is typed, and evidence produced elsewhere is carried. An event this build does not know is skipped rather than guessed at, because a reducer that invents a variant resumes a run into a state nothing recorded.
+
+**A session carried facts forward; nothing resumed.** `TaskCheckpoint` was persisted on every transition and never read back, so "all state transitions are evented and resumable" described half a mechanism. `RunState::replay` is the other half — a projection folded from the events in order, with no second source of truth beside the log. It recovers the state machine's position, the actions already charged, the files written with their latest hashes, the verifiers a person adopted, the plan and its recorded steps, and the context after any downgrade.
+
+Four things it gets right because the log records them and only because it does. A denied attempt costs no action on replay, the same rule the live loop applies, so a resumed budget matches the one that was being spent. A file's latest hash wins, not every hash it ever had — resuming with a stale one is the loop this project already closed once. The context is the one after any tier downgrade, since resuming at the tier that failed reproduces the failure. And a verifier a person approved survives, because asking again would be asking someone to authorise the same command twice for the same work.
+
+A run that ended is reported, not resumed: every exit writes a terminal event, an interruption included, so the absence of one is the signature of a crash or a machine going away. `session show` surfaces it.
+
+**Still not built:** the loop does not yet *start* from a replayed state. The state is recoverable and visible; handing it to a new run as its starting point is the remaining step, and it is now a small one.
+
 ### P2 — an agent for whole codebases
 
 | Item | What is wrong now | What closing it looks like |
@@ -532,7 +545,7 @@ This is the narrow version of the adaptation. What is still not built is the res
 | Diagnostics are text | Compiler and test output reaches the deployment as bounded prose; nothing maps a failure to a file and line | Typed diagnostics per verifier, so recovery targets a location rather than a paragraph |
 | Tool history is text in a chat | `ChatMessage` carries a role and a string; calls and results are serialised JSON with no call ids, so a protocol-sensitive deployment can lose the pairing | Native tool-call and tool-result messages with ids, matching what the backend's own protocol expects |
 | A plan is a list, not a graph | Steps are claimed, reconciled and never verified individually | Subgoals with their own local verifiers, and replanning driven by their outcomes |
-| The event log is append-only by convention | The API only appends, but SQLite permits `UPDATE` and `DELETE` and no verifier walks the chain; the chain is global, so a run's events depend on runs interleaved with it | A per-run chain under a global root, a chain verifier, real migrations and an artifact table |
+| The event log is append-only by convention | The API only appends, but SQLite permits `UPDATE` and `DELETE` and no verifier walks the chain; the chain is global, so a run's events depend on runs interleaved with it | A per-run chain under a global root, a chain verifier, real migrations and an artifact table. The typed events this needed now exist. |
 | Calibration measures allocation, not occupancy | A tier is qualified by a prompt of one token and pressure sampled before generation, so "262144 is nearly free" describes an allocation | A ladder that fills the context and samples peak resident memory during generation |
 | Pre-existing failures make some tasks impossible | The deployment is told which checks were already failing, and completion still requires every check to pass — so a task in a repository with an unrelated broken test cannot be completed correctly | Completion judged against the baseline: no regression and the targeted check fixed, rather than a green suite |
 | Every edit re-runs every selected check | Verification is not narrowed to what the edit could have affected, so a large suite is paid in full after each change | Targeted check first, broader suite on escalation, as `verification-recovery.md` already specifies |

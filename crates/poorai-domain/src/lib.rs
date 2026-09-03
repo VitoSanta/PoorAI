@@ -662,3 +662,255 @@ mod tests {
         assert!(e.validate_against(Some(&p)).is_err());
     }
 }
+
+// ---------------------------------------------------------------- run events
+
+/// Everything a run records, as a closed set.
+///
+/// The log carried `(&str, serde_json::Value)`: the type was a string literal
+/// at each call site and the payload was whatever that site happened to build.
+/// Nothing checked that two sites writing the same event agreed on its shape,
+/// and nothing reading the log could rely on a field being there -- which is
+/// why every reader so far has been a `payload["x"]` lookup that silently
+/// yields null.
+///
+/// Typing them is the prerequisite for three things this project has written
+/// down and not built: resuming a run from its own log rather than from a
+/// summary, verifying a per-run hash chain, and a replay report. A reducer over
+/// `serde_json::Value` would have to re-derive the shape at every match arm and
+/// would be wrong in exactly the cases that matter.
+///
+/// Variants that carry genuinely open data -- a provenance bag, a tool outcome
+/// whose shape belongs to the tool -- keep a `Value` for that field and are
+/// typed around it. That is the honest boundary: the run's own state is typed,
+/// and evidence produced elsewhere is carried.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum RunEvent {
+    /// Opening provenance: profile, digest, hardware, approvals, evidence.
+    RunStarted(serde_json::Value),
+    SessionOpened {
+        session: String,
+    },
+    TaskStarted(serde_json::Value),
+    TaskTransition(TaskCheckpointRecord),
+    TaskPlan {
+        steps: Vec<String>,
+        #[serde(default)]
+        note: Option<String>,
+    },
+    PlanReconciled {
+        steps_total: usize,
+        steps_recorded_done: usize,
+        steps_outstanding: Vec<String>,
+    },
+    TurnGenerated {
+        step: u8,
+        turn: u32,
+        metrics: Option<GenerationMetrics>,
+        tokens_per_second: Option<f64>,
+        thinking_chars: usize,
+        content_chars: usize,
+        #[serde(default)]
+        prompt_delivery: Option<serde_json::Value>,
+    },
+    ActionMalformed {
+        step: u8,
+        problem: String,
+    },
+    ApprovalDecision {
+        step: u8,
+        approval: String,
+        description: String,
+        decision: String,
+    },
+    /// One tool attempt, allowed or not. `outcome` carries whatever the tool
+    /// returned; the fields around it are the run's own record of what
+    /// happened, which is what the reducer and the metrics read.
+    ToolAction {
+        action: serde_json::Value,
+        status: ToolActionStatus,
+        outcome_class: String,
+        #[serde(default)]
+        outcome: Option<serde_json::Value>,
+        #[serde(default)]
+        denial: Option<String>,
+        #[serde(default)]
+        failure: Option<String>,
+        #[serde(default)]
+        failure_category: Option<String>,
+    },
+    VerifierAdopted {
+        step: u8,
+        executable: String,
+        args: Vec<String>,
+        source: String,
+    },
+    VerificationBaseline(serde_json::Value),
+    VerificationInterim {
+        step: u8,
+        passing: bool,
+    },
+    VerificationResult {
+        verified: bool,
+        verifiable: bool,
+        after: serde_json::Value,
+        comparison: serde_json::Value,
+        /// Checks already failing before the run touched anything, by
+        /// command. A completion is judged against this rather than against a
+        /// green suite.
+        #[serde(default)]
+        failing_before_the_run: Vec<String>,
+    },
+    TaskRecovery(serde_json::Value),
+    ContextCompacted(serde_json::Value),
+    ContextTierChanged {
+        previous_context_tokens: u32,
+        context_tokens: u32,
+        evidence: String,
+        provider_error: String,
+        attempt: u8,
+    },
+    ContextDeliveryDiverged {
+        step: u8,
+        turn: u32,
+        concern: String,
+        delivery: serde_json::Value,
+    },
+    LoopDetected {
+        step: u8,
+        action: String,
+    },
+    NoProgressDetected {
+        step: u8,
+        window: usize,
+        actions: Vec<String>,
+    },
+    TaskComplete {
+        step: u8,
+        verified: bool,
+    },
+    TaskFailed {
+        reason: String,
+        #[serde(default)]
+        detail: Option<serde_json::Value>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolActionStatus {
+    Allowed,
+    Denied,
+    Failed,
+}
+
+/// A persisted state transition, as the log records it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskCheckpointRecord {
+    pub id: Id,
+    pub state: String,
+    pub detail: String,
+    pub at: DateTime<Utc>,
+}
+
+impl RunEvent {
+    /// The stored `event_type`, unchanged from what each call site used to
+    /// write as a literal. The column keeps its meaning and old artifacts keep
+    /// reading.
+    pub fn event_type(&self) -> &'static str {
+        match self {
+            Self::RunStarted(_) => "run.started",
+            Self::SessionOpened { .. } => "session.opened",
+            Self::TaskStarted(_) => "task.started",
+            Self::TaskTransition(_) => "task.transition",
+            Self::TaskPlan { .. } => "task.plan",
+            Self::PlanReconciled { .. } => "plan.reconciled",
+            Self::TurnGenerated { .. } => "turn.generated",
+            Self::ActionMalformed { .. } => "action.malformed",
+            Self::ApprovalDecision { .. } => "approval.decision",
+            Self::ToolAction { .. } => "tool.action",
+            Self::VerifierAdopted { .. } => "verifier.adopted",
+            Self::VerificationBaseline(_) => "verification.baseline",
+            Self::VerificationInterim { .. } => "verification.interim",
+            Self::VerificationResult { .. } => "verification.result",
+            Self::TaskRecovery(_) => "task.recovery",
+            Self::ContextCompacted(_) => "context.compacted",
+            Self::ContextTierChanged { .. } => "context.tier_changed",
+            Self::ContextDeliveryDiverged { .. } => "context.delivery_diverged",
+            Self::LoopDetected { .. } => "loop.detected",
+            Self::NoProgressDetected { .. } => "no_progress.detected",
+            Self::TaskComplete { .. } => "task.complete",
+            Self::TaskFailed { .. } => "task.failed",
+        }
+    }
+
+    /// The payload column: the variant's own fields, without the tag.
+    ///
+    /// A variant wrapping a bare value writes that value, so a payload written
+    /// before this type existed still deserialises into the same variant.
+    pub fn payload(&self) -> serde_json::Value {
+        match self {
+            Self::RunStarted(value)
+            | Self::TaskStarted(value)
+            | Self::VerificationBaseline(value)
+            | Self::TaskRecovery(value)
+            | Self::ContextCompacted(value) => value.clone(),
+            other => {
+                let mut value = serde_json::to_value(other).unwrap_or_default();
+                if let Some(object) = value.as_object_mut() {
+                    object.remove("event");
+                }
+                value
+            }
+        }
+    }
+
+    /// Reads a stored record back into its variant.
+    ///
+    /// `None` for an event this build does not know, which is a record written
+    /// by another version rather than a corrupt one -- a reducer skips it and
+    /// says so instead of guessing.
+    pub fn from_stored(event_type: &str, payload: &serde_json::Value) -> Option<Self> {
+        let wrapped = match event_type {
+            "run.started" => return Some(Self::RunStarted(payload.clone())),
+            "task.started" => return Some(Self::TaskStarted(payload.clone())),
+            "verification.baseline" => {
+                return Some(Self::VerificationBaseline(payload.clone()));
+            }
+            "task.recovery" => return Some(Self::TaskRecovery(payload.clone())),
+            "context.compacted" => return Some(Self::ContextCompacted(payload.clone())),
+            other => other,
+        };
+        let mut value = payload.clone();
+        value.as_object_mut()?.insert(
+            "event".into(),
+            serde_json::Value::String(tag_for(wrapped)?.to_string()),
+        );
+        serde_json::from_value(value).ok()
+    }
+}
+
+/// The serde tag for a stored event type.
+fn tag_for(event_type: &str) -> Option<&'static str> {
+    Some(match event_type {
+        "session.opened" => "session_opened",
+        "task.transition" => "task_transition",
+        "task.plan" => "task_plan",
+        "plan.reconciled" => "plan_reconciled",
+        "turn.generated" => "turn_generated",
+        "action.malformed" => "action_malformed",
+        "approval.decision" => "approval_decision",
+        "tool.action" => "tool_action",
+        "verifier.adopted" => "verifier_adopted",
+        "verification.interim" => "verification_interim",
+        "verification.result" => "verification_result",
+        "context.tier_changed" => "context_tier_changed",
+        "context.delivery_diverged" => "context_delivery_diverged",
+        "loop.detected" => "loop_detected",
+        "no_progress.detected" => "no_progress_detected",
+        "task.complete" => "task_complete",
+        "task.failed" => "task_failed",
+        _ => return None,
+    })
+}
