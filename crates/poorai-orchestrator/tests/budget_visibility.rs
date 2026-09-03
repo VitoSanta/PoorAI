@@ -85,6 +85,7 @@ fn run(max_actions: u8) -> Vec<String> {
         messages: vec![ChatMessage {
             role: "user".into(),
             content: "fix it".into(),
+            ..Default::default()
         }],
         context_tokens: 8192,
         tools: None,
@@ -284,6 +285,7 @@ mod history {
             messages: vec![ChatMessage {
                 role: "user".into(),
                 content: "fix it".into(),
+                ..Default::default()
             }],
             context_tokens: 8192,
             tools: None,
@@ -413,6 +415,7 @@ mod already_failing {
             messages: vec![ChatMessage {
                 role: "user".into(),
                 content: "fix it".into(),
+                ..Default::default()
             }],
             context_tokens: 8192,
             tools: None,
@@ -530,6 +533,7 @@ mod turn_cost {
             messages: vec![ChatMessage {
                 role: "user".into(),
                 content: "go".into(),
+                ..Default::default()
             }],
             context_tokens: 8192,
             tools: None,

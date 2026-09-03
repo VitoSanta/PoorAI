@@ -55,6 +55,7 @@ fn request() -> ModelRequest {
         messages: vec![ChatMessage {
             role: "user".into(),
             content: "fix it".into(),
+            ..Default::default()
         }],
         context_tokens: 4096,
         tools: None,

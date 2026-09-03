@@ -230,6 +230,7 @@ pub fn compile(sections: Vec<Section>, context_tokens: u32) -> (Vec<ChatMessage>
         messages.push(ChatMessage {
             role: section.kind.role().into(),
             content: content.to_string(),
+            ..Default::default()
         });
     }
 

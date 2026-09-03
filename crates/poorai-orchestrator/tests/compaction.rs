@@ -79,10 +79,12 @@ fn run_until_compaction(root: &Path) -> (Store, poorai_domain::Id, ModelRequest)
             ChatMessage {
                 role: "system".into(),
                 content: poorai_orchestrator::AGENT_SYSTEM_PROMPT.into(),
+                ..Default::default()
             },
             ChatMessage {
                 role: "user".into(),
                 content: "replace MARKER".into(),
+                ..Default::default()
             },
         ],
         // Small enough that a few large reads exceed half of it.

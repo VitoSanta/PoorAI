@@ -75,6 +75,7 @@ fn run(malformed: usize, max_actions: u8) -> (Store, poorai_domain::Id) {
         messages: vec![ChatMessage {
             role: "user".into(),
             content: "look".into(),
+            ..Default::default()
         }],
         context_tokens: 8192,
         tools: None,
@@ -183,6 +184,7 @@ fn a_deployment_stammering_below_the_consecutive_limit_is_still_bounded() {
         messages: vec![ChatMessage {
             role: "user".into(),
             content: "look".into(),
+            ..Default::default()
         }],
         context_tokens: 8192,
         tools: None,
@@ -260,6 +262,7 @@ fn a_deployment_that_never_calls_anything_is_stopped() {
         messages: vec![ChatMessage {
             role: "user".into(),
             content: "look".into(),
+            ..Default::default()
         }],
         context_tokens: 8192,
         tools: None,

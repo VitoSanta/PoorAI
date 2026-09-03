@@ -96,6 +96,7 @@ fn run(bad: usize, max_actions: u8) -> (Store, poorai_domain::Id, String, Result
         messages: vec![ChatMessage {
             role: "user".into(),
             content: "fix it".into(),
+            ..Default::default()
         }],
         context_tokens: 8192,
         tools: None,

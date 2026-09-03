@@ -59,6 +59,7 @@ fn request(
         messages: vec![ChatMessage {
             role: "user".into(),
             content: "hi".into(),
+            ..Default::default()
         }],
         context_tokens: 4096,
         tools: None,

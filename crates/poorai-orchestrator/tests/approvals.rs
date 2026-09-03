@@ -185,6 +185,7 @@ fn gated_run(answers: Vec<ApprovalDecision>) -> (Store, poorai_domain::Id, Strin
         messages: vec![ChatMessage {
             role: "user".into(),
             content: "bump".into(),
+            ..Default::default()
         }],
         context_tokens: 4096,
         tools: None,

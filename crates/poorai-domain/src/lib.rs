@@ -429,10 +429,36 @@ pub struct ModelRequest {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sampling: BTreeMap<String, serde_json::Value>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChatMessage {
     pub role: String,
     pub content: String,
+    /// The tool calls this assistant turn made, kept structurally.
+    ///
+    /// A turn that proposed an action was recorded as a string, so the next
+    /// request carried the deployment's own call back to it as prose it had to
+    /// re-read rather than as the call it made. A backend whose protocol pairs
+    /// a call with its result cannot do that pairing from text.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolCall>,
+    /// Which call this tool message answers.
+    ///
+    /// Without it, a run of results answers a run of calls by position, and
+    /// position is exactly what compaction changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+}
+
+impl ChatMessage {
+    /// A message that carries only text, which is most of them.
+    pub fn text(role: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: role.into(),
+            content: content.into(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+        }
+    }
 }
 /// Provider-neutral tool invocation requested by a model.
 ///

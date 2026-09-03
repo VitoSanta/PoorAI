@@ -26,15 +26,6 @@ pub enum ToolError {
     Timeout,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ToolCapability {
-    ReadFile,
-    Search,
-    ListTree,
-    ApplyPatch,
-    GitDiff,
-    RunCommand,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "capability", rename_all = "snake_case")]
 pub enum ActionProposal {
     Complete {

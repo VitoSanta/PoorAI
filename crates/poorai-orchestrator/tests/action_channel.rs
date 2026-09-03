@@ -412,3 +412,43 @@ fn the_system_prompt_has_no_broken_spacing() {
     assert!(!prompt.contains("  "), "double space in the prompt");
     assert!(!prompt.contains(".T") && !prompt.contains("sthe"));
 }
+
+/// A turn that proposed an action was recorded as a string, so the next
+/// request carried the deployment's own call back to it as prose it had to
+/// re-read rather than as the call it made. A backend whose protocol pairs a
+/// call with its result cannot do that pairing from text.
+#[tokio::test]
+async fn an_assistant_turn_carries_its_calls_structurally() {
+    let message = poorai_domain::ChatMessage {
+        role: "assistant".into(),
+        content: String::new(),
+        tool_calls: vec![poorai_domain::ToolCall {
+            name: "read_file".into(),
+            arguments: serde_json::json!({"path": "a.rs"}),
+            id: Some("call-1".into()),
+        }],
+        tool_call_id: None,
+    };
+    let wire = serde_json::to_value(&message).unwrap();
+    assert_eq!(wire["tool_calls"][0]["name"], "read_file");
+    // A text-only message carries neither field, so nothing changes for a
+    // backend that has no use for them.
+    let plain = poorai_domain::ChatMessage::text("user", "fix it");
+    let wire = serde_json::to_value(&plain).unwrap();
+    assert!(wire.get("tool_calls").is_none(), "{wire}");
+    assert!(wire.get("tool_call_id").is_none(), "{wire}");
+}
+
+/// Without an id, a run of results answers a run of calls by position -- and
+/// position is exactly what compaction changes.
+#[tokio::test]
+async fn a_tool_result_names_the_call_it_answers() {
+    let answer = poorai_domain::ChatMessage {
+        role: "tool".into(),
+        content: "{}".into(),
+        tool_calls: Vec::new(),
+        tool_call_id: Some("call-1".into()),
+    };
+    let wire = serde_json::to_value(&answer).unwrap();
+    assert_eq!(wire["tool_call_id"], "call-1");
+}

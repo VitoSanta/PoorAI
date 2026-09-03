@@ -85,6 +85,7 @@ fn run() -> (Store, poorai_domain::Id, Vec<Vec<ChatMessage>>) {
         messages: vec![ChatMessage {
             role: "user".into(),
             content: "fix it".into(),
+            ..Default::default()
         }],
         context_tokens: 8192,
         tools: None,
@@ -252,6 +253,7 @@ fn a_claim_beyond_the_plan_is_not_counted_as_progress() {
         messages: vec![ChatMessage {
             role: "user".into(),
             content: "fix it".into(),
+            ..Default::default()
         }],
         context_tokens: 8192,
         tools: None,
@@ -357,6 +359,7 @@ fn the_plan_survives_compaction() {
         messages: vec![ChatMessage {
             role: "user".into(),
             content: "fix it".into(),
+            ..Default::default()
         }],
         context_tokens: 8192,
         tools: None,

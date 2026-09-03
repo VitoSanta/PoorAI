@@ -61,6 +61,7 @@ fn run(max_actions: u8) -> (Store, poorai_domain::Id) {
         messages: vec![ChatMessage {
             role: "user".into(),
             content: "fix it".into(),
+            ..Default::default()
         }],
         context_tokens: 8192,
         tools: None,
@@ -227,6 +228,7 @@ mod no_progress {
             messages: vec![ChatMessage {
                 role: "user".into(),
                 content: "fix it".into(),
+                ..Default::default()
             }],
             context_tokens: 8192,
             tools: None,

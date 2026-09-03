@@ -960,6 +960,7 @@ mod tests {
                 messages: vec![poorai_domain::ChatMessage {
                     role: "user".into(),
                     content: "hello".into(),
+                    ..Default::default()
                 }],
             })
             .await
@@ -1035,6 +1036,7 @@ mod tests {
                     messages: vec![poorai_domain::ChatMessage {
                         role: "user".into(),
                         content: "hello".into(),
+                        ..Default::default()
                     }],
                 },
                 cancel.clone(),

@@ -887,58 +887,6 @@ pub struct TaskRunResult {
     pub action_outcome: serde_json::Value,
 }
 
-pub async fn run_single_action<P: ModelProvider>(
-    store: &Store,
-    provider: &P,
-    run_id: poorai_domain::Id,
-    request: poorai_domain::ModelRequest,
-    policy: &ToolPolicy,
-    checks: &[(String, Vec<String>)],
-) -> Result<TaskRunResult, String> {
-    let before = poorai_verify::baseline(policy, checks)
-        .await
-        .map_err(|e| e.to_string())?;
-    store
-        .append(
-            Some(run_id),
-            "verification.baseline",
-            serde_json::to_value(&before).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
-    let reply =
-        poorai_provider::collect_reply(provider.chat(request).await.map_err(|e| e.to_string())?)
-            .await
-            .map_err(|e| e.to_string())?;
-    let action = action_from_reply(&reply)?;
-    let outcome = execute_action(store, run_id, policy, action)
-        .await
-        .map_err(|error| error.to_string())?;
-    let after = poorai_verify::baseline(policy, checks)
-        .await
-        .map_err(|e| e.to_string())?;
-    let comparison = poorai_verify::compare(&before, &after);
-    let verifiable = !after.checks.is_empty();
-    let verified = verifiable
-        && after
-            .checks
-            .iter()
-            .all(|check| check.result.exit_code == Some(0))
-        && comparison.regression_free;
-    store
-        .append(
-            Some(run_id),
-            "verification.result",
-            serde_json::json!({"after":after,"comparison":comparison,"verified":verified}),
-        )
-        .map_err(|e| e.to_string())?;
-    Ok(TaskRunResult {
-        run_id,
-        verified,
-        verifiable,
-        action_outcome: outcome,
-    })
-}
-
 /// What a person decided when asked to authorise an action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -1115,6 +1063,17 @@ pub struct RunTuning {
     /// machine and ends on a saturated one recorded nothing about the
     /// difference -- which is the difference that explains its timings.
     pub host: Option<std::sync::Arc<dyn HostProbe>>,
+    /// The broader suite, run once at completion.
+    ///
+    /// `verification-recovery.md` has always specified "rerun the narrow
+    /// check, then escalation check", and there was no escalation: the same
+    /// set ran after every edit and again at the end. The narrow check is what
+    /// an edit is worth paying for, and the full suite is what a completion
+    /// is.
+    ///
+    /// Empty means the targeted checks are the whole suite, which is the
+    /// common case and is not an escalation that was skipped.
+    pub full_checks: Vec<(String, Vec<String>)>,
 }
 
 impl Default for RunTuning {
@@ -1123,6 +1082,7 @@ impl Default for RunTuning {
             malformed_call_limit: MALFORMED_CALL_LIMIT,
             turn_timeout: None,
             host: None,
+            full_checks: Vec::new(),
         }
     }
 }
@@ -1134,6 +1094,7 @@ impl std::fmt::Debug for RunTuning {
             .field("malformed_call_limit", &self.malformed_call_limit)
             .field("turn_timeout", &self.turn_timeout)
             .field("host", &self.host.is_some())
+            .field("full_checks", &self.full_checks.len())
             .finish()
     }
 }
@@ -1663,6 +1624,7 @@ fn compact_history(
     kept.push(poorai_domain::ChatMessage {
         role: "tool".into(),
         content: ledger,
+        ..Default::default()
     });
     // The decomposition outlives the messages that carried it. Compaction is
     // exactly when a long task most needs its plan, and dropping it here is
@@ -1680,6 +1642,7 @@ fn compact_history(
                 plan.len(),
                 plan.outstanding().join("\n")
             ),
+            ..Default::default()
         });
     }
     request.messages = kept;
@@ -1920,6 +1883,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                  and say so. Call record_progress as you finish each step.\n{}",
                 numbered_plan(&plan)
             ),
+            ..Default::default()
         });
     }
     let mut refused_streak: Vec<String> = Vec::new();
@@ -1984,6 +1948,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                          rather than changing unrelated code to chase it.",
             })
             .to_string(),
+            ..Default::default()
         });
     }
     // The budget counts actions, not turns. A malformed call performs nothing
@@ -2153,14 +2118,19 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                 )
                 .map_err(|e| e.to_string())?;
         }
+        // The deployment's own turn, carried structurally rather than as prose
+        // about itself. A reply that was only a tool call used to come back as
+        // a JSON string the deployment had to re-read; a backend whose
+        // protocol pairs a call with its result cannot do that pairing from
+        // text.
         request.messages.push(poorai_domain::ChatMessage {
             role: "assistant".into(),
-            content: if reply.content.trim().is_empty() {
-                serde_json::json!({"tool_calls": reply.tool_calls}).to_string()
-            } else {
-                reply.content.clone()
-            },
+            content: reply.content.clone(),
+            tool_calls: reply.tool_calls.clone(),
+            tool_call_id: None,
         });
+        // The id the next tool message answers, where the deployment gave one.
+        let answering = reply.tool_calls.first().and_then(|call| call.id.clone());
         // A malformed call is a mistake the deployment can correct, and it can
         // only correct one it is told about. Ending the run instead discards
         // whatever work is already done and reports the harness's silence as
@@ -2197,7 +2167,8 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                         "hint": "Your tool call did not match the schema you were given.                                  Check the required arguments and their types, then call again.",
                     })
                     .to_string(),
-                });
+                ..Default::default()
+            });
                 continue;
             }
         };
@@ -2243,7 +2214,22 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                     },
                 )
                 .map_err(|e| e.to_string())?;
-            let after = poorai_verify::baseline(&policy, &checks)
+            // The escalation. An edit is worth the narrow check; a completion
+            // is worth the whole suite, and running the broad one after every
+            // edit would spend most of a run on a question only the last edit
+            // actually asks.
+            let final_checks: Vec<(String, Vec<String>)> = if tuning.full_checks.is_empty() {
+                checks.clone()
+            } else {
+                let mut escalated = checks.clone();
+                for check in &tuning.full_checks {
+                    if !escalated.contains(check) {
+                        escalated.push(check.clone());
+                    }
+                }
+                escalated
+            };
+            let after = poorai_verify::baseline(&policy, &final_checks)
                 .await
                 .map_err(|e| e.to_string())?;
             let comparison = poorai_verify::compare(&before, &after);
@@ -2387,6 +2373,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                     "failing_checks": failing_diagnostics,
                 })
                 .to_string(),
+                ..Default::default()
             });
             task_state = persist_transition(
                 store,
@@ -2416,6 +2403,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                 content: format!(
                     "{{\"stop\":\"You have proposed this same action {REPEATED_REFUSAL_LIMIT}                      times and it has been refused every time. It will not succeed on another                      attempt. Read the refusal, then do something different: re-read the file to                      get its current hash, or call complete if the work is done.\"}}"
                 ),
+                ..Default::default()
             });
             refused_streak.clear();
             continue;
@@ -2468,6 +2456,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                     request.messages.push(poorai_domain::ChatMessage {
                         role: "tool".into(),
                         content: serde_json::json!({"denied": denial}).to_string(),
+                        ..Default::default()
                     });
                     continue;
                 }
@@ -2667,6 +2656,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                     )
                 })
                 .to_string(),
+                ..Default::default()
             });
             progress_window.clear();
         }
@@ -2726,7 +2716,8 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                             )
                         })
                         .to_string(),
-                    });
+                ..Default::default()
+            });
                 }
             }
         }
@@ -2757,6 +2748,11 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
         request.messages.push(poorai_domain::ChatMessage {
             role: "tool".into(),
             content: serde_json::json!({"result": result, "status": status}).to_string(),
+            // Which call this answers. Without it a run of results answers a
+            // run of calls by position, and position is exactly what
+            // compaction changes.
+            tool_call_id: answering.clone(),
+            ..Default::default()
         });
         // An explicit checkpoint, between actions, where the history is whole
         // and the next request has not been built yet.
@@ -2872,7 +2868,8 @@ pub async fn plan_task<P: ModelProvider>(
         content: format!(
             "Before acting, call plan with the steps you will take, at most {MAX_PLAN_STEPS}.              Be concrete: name the files and what changes in each."
         ),
-    });
+                ..Default::default()
+            });
     let reply =
         poorai_provider::collect_reply(provider.chat(planning).await.map_err(|e| e.to_string())?)
             .await
@@ -3227,6 +3224,7 @@ async fn calibration_sample<P: ModelProvider>(
         messages: vec![poorai_domain::ChatMessage {
             role: "user".into(),
             content: CALIBRATION_PROMPT.into(),
+            ..Default::default()
         }],
     };
     // Backend state is captured per sample: a tier measured against a freshly
@@ -3575,28 +3573,6 @@ mod tests {
         async fn chat(&self, _: ModelRequest) -> Result<ModelStream, ProviderError> {
             Ok(Box::pin(stream::iter([Ok(ModelChunk {
                 content: "OK".into(),
-                thinking: None,
-                tool_calls: Vec::new(),
-                metrics: None,
-                done: true,
-            })])))
-        }
-    }
-    struct ActionProvider;
-    #[async_trait]
-    impl ModelProvider for ActionProvider {
-        async fn inspect(
-            &self,
-            _: &DeploymentDescriptor,
-        ) -> Result<ModelInspection, ProviderError> {
-            unreachable!()
-        }
-        async fn runtime_state(&self) -> Result<BackendState, ProviderError> {
-            unreachable!()
-        }
-        async fn chat(&self, _: ModelRequest) -> Result<ModelStream, ProviderError> {
-            Ok(Box::pin(stream::iter([Ok(ModelChunk {
-                content: r#"{"capability":"read_file","path":"fixture.txt"}"#.into(),
                 thinking: None,
                 tool_calls: Vec::new(),
                 metrics: None,
@@ -4006,39 +3982,6 @@ mod tests {
         assert_eq!(store.events_for_run(run_id).unwrap().len(), 1);
     }
     #[tokio::test]
-    async fn locked_smoke_controller_verifies_one_action() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("fixture.txt"), "safe").unwrap();
-        let policy = ToolPolicy {
-            root: root.path().to_path_buf(),
-            extra_readable: Vec::new(),
-            allow_commands: vec!["true".into()],
-            output_limit: 1024,
-            timeout: Duration::from_secs(10),
-            sandbox: poorai_tools::SandboxPolicy::Disabled,
-            approvals: Vec::new(),
-        };
-        let store = Store::open(":memory:").unwrap();
-        let request = ModelRequest {
-            deployment: deployment(),
-            context_tokens: 32,
-            tools: None,
-            seed: None,
-            sampling: Default::default(),
-            messages: vec![poorai_domain::ChatMessage {
-                role: "user".into(),
-                content: "read the fixture".into(),
-            }],
-        };
-        let checks = vec![("true".into(), Vec::new())];
-        let result =
-            run_single_action(&store, &ActionProvider, new_id(), request, &policy, &checks)
-                .await
-                .unwrap();
-        assert!(result.verified);
-        assert_eq!(store.events_for_run(result.run_id).unwrap().len(), 3);
-    }
-    #[tokio::test]
     async fn locked_smoke_recovers_then_verifies() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("marker"), "pass").unwrap();
@@ -4078,6 +4021,7 @@ mod tests {
             messages: vec![poorai_domain::ChatMessage {
                 role: "user".into(),
                 content: "make the marker pass its verifier".into(),
+                ..Default::default()
             }],
         };
         let checks = vec![("sh".into(), vec!["check.sh".into()])];
@@ -4189,18 +4133,22 @@ mod tests {
                 poorai_domain::ChatMessage {
                     role: "system".into(),
                     content: "system".into(),
+                    ..Default::default()
                 },
                 poorai_domain::ChatMessage {
                     role: "tool".into(),
                     content: "prior session ledger".into(),
+                    ..Default::default()
                 },
                 poorai_domain::ChatMessage {
                     role: "user".into(),
                     content: "the actual task".into(),
+                    ..Default::default()
                 },
                 poorai_domain::ChatMessage {
                     role: "assistant".into(),
                     content: "discard me".into(),
+                    ..Default::default()
                 },
             ],
         };
@@ -4367,6 +4315,7 @@ mod tests {
             messages: vec![poorai_domain::ChatMessage {
                 role: "user".into(),
                 content: "do work".into(),
+                ..Default::default()
             }],
         };
         // 4096 is not offered: only a measured point may be retried at.
@@ -4423,6 +4372,7 @@ mod tests {
             messages: vec![poorai_domain::ChatMessage {
                 role: "user".into(),
                 content: "do work".into(),
+                ..Default::default()
             }],
         };
         assert!(
@@ -4486,6 +4436,7 @@ mod tests {
             messages: vec![poorai_domain::ChatMessage {
                 role: "user".into(),
                 content: "do work".into(),
+                ..Default::default()
             }],
         };
         let result = run_action_loop_with_prompt(
@@ -4550,6 +4501,7 @@ mod tests {
             messages: vec![poorai_domain::ChatMessage {
                 role: "user".into(),
                 content: "do work".into(),
+                ..Default::default()
             }],
         };
         // DenyWithoutAsking is the default, and the unattended case.
@@ -4617,6 +4569,7 @@ mod tests {
             messages: vec![poorai_domain::ChatMessage {
                 role: "user".into(),
                 content: "do work".into(),
+                ..Default::default()
             }],
         };
         let result = run_action_loop(&store, &provider, run_id, request, &policy, &checks, 3)
@@ -4666,6 +4619,7 @@ mod tests {
             messages: vec![poorai_domain::ChatMessage {
                 role: "user".into(),
                 content: "do work".into(),
+                ..Default::default()
             }],
         };
         assert!(

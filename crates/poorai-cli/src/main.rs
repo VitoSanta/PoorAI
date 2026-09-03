@@ -883,6 +883,7 @@ async fn probe_context_boundary(
             messages: vec![ChatMessage {
                 role: "user".into(),
                 content: prompt.clone(),
+                ..Default::default()
             }],
         };
         match provider.chat(request).await {
@@ -1010,12 +1011,14 @@ async fn probe_edit_once(
             ChatMessage {
                 role: "system".into(),
                 content: "Take exactly one action by calling one of the provided tools.".into(),
+                ..Default::default()
             },
             ChatMessage {
                 role: "user".into(),
                 content: format!(
                     "File probe.rs contains:\n{original}\nIts artifact_hash is {expected_hash}.                      Call apply_replace on probe.rs so value() returns 2, passing that hash as                      expected_hash."
                 ),
+                ..Default::default()
             },
         ],
     };
@@ -1943,6 +1946,7 @@ async fn probe_cancellation(
         messages: vec![ChatMessage {
             role: "user".into(),
             content: CANCEL_PROMPT.into(),
+            ..Default::default()
         }],
     };
     let started = std::time::Instant::now();
@@ -2007,6 +2011,7 @@ async fn inspect(
             messages: vec![ChatMessage {
                 role: "user".into(),
                 content: "Reply with OK.".into(),
+                ..Default::default()
             }],
         };
         match drain_probe(provider.chat(request).await, None).await {
@@ -2061,6 +2066,7 @@ async fn inspect(
                     role: "user".into(),
                     content: "Call the probe_echo tool with value 'ok'. Do not answer in prose."
                         .into(),
+                    ..Default::default()
                 }],
             };
             match drain_probe(provider.chat(tool_request).await, Some(PROBE_TOOL)).await {
@@ -2766,6 +2772,9 @@ async fn prepare_profiled_run(
             host: Some(std::sync::Arc::new(MacosHostProbe {
                 free_percent_floor: 20,
             })),
+            // "Rerun the narrow check, then escalation check": the targeted
+            // set after an edit, the whole suite once, at completion.
+            full_checks: poorai_verify::discover_checks(&root, "full").unwrap_or_default(),
         },
     )
     .await

@@ -540,9 +540,7 @@ A run that ended is reported, not resumed: every exit writes a terminal event, a
 
 | Item | What is wrong now | What closing it looks like |
 |---|---|---|
-| Tool history is text in a chat | `ChatMessage` carries a role and a string; calls and results are serialised JSON with no call ids, so a protocol-sensitive deployment can lose the pairing | Native tool-call and tool-result messages with ids, matching what the backend's own protocol expects |
 | Calibration measures allocation, not occupancy | A tier is qualified by a prompt of one token and pressure sampled before generation, so "262144 is nearly free" describes an allocation | A ladder that fills the context and samples peak resident memory during generation |
-| Every edit re-runs every selected check | Verification is not narrowed to what the edit could have affected, so a large suite is paid in full after each change | Targeted check first, broader suite on escalation, as `verification-recovery.md` already specifies |
 
 ### Reorganising, seeing, and not being blocked by someone else's failure — 2026-09-03
 
@@ -642,6 +640,14 @@ Fixing the compaction path found a defect: the outstanding steps were being numb
 
 Preparing a child process now happens in one place. A second way of starting one is a second chance to forget the sandbox, the scratch directory or the cleared environment, and a long-running service goes through exactly the same path a check does. The existing sandbox and approval fixtures pass unchanged, which is what says the refactor narrowed nothing.
 
+### The last of the backlog — 2026-09-03
+
+**The conversation is structural.** A turn that proposed an action was recorded as a string, so the next request carried the deployment's own call back to it as prose it had to re-read rather than as the call it made — and a backend whose protocol pairs a call with its result cannot do that pairing from text. An assistant turn carries its calls, and a tool result names the call it answers. Without that id, a run of results answers a run of calls by position, and position is exactly what compaction changes. A text-only message carries neither field, so nothing changes for a backend with no use for them.
+
+**Verification escalates.** `verification-recovery.md` has always specified "rerun the narrow check, then escalation check", and there was no escalation: the same set ran after every edit and again at the end. The targeted set is what an edit is worth paying for; the whole suite is what a completion is worth, and it runs once. Where a repository's targeted and full checks are the same, nothing was skipped and nothing changes.
+
+**Two abstractions are gone.** `ToolCapability` was an enum that no longer matched the typed actions it was written for — two vocabularies for one concept, one of them wrong. `run_single_action` was a second production-shaped path beside the action loop with its own verification and terminal handling, so every rule added to the loop had to be remembered here too; the refusal to complete without a verifier had to be written twice, which is how it was noticed.
+
 ### P3 — a measurable beta
 
 | Item | What is wrong now | What closing it looks like |
@@ -654,8 +660,6 @@ Not new capability — code and configuration that exists, is not on the product
 
 | What | Why it should go |
 |---|---|
-| `ToolCapability` | An enum that no longer matches the typed actions it was written for. Two vocabularies for one concept, one of them wrong. |
-| `run_single_action` | A second production-shaped path beside the action loop, with its own verification and terminal handling. Every fix to the loop has to be remembered here, and the no-verifier rule had to be applied twice. |
 | Duplicated status prose | Milestone state is asserted in the gate table, in the status table and in a dozen document tails. Generated from one manifest, or written once. |
 | Configuration with no consumer | Fields that serialise, validate and reach nothing — `ReasoningControl` and `RuntimeSnapshot.loaded_models` were two of these until 2026-09-03, and the pattern is what made the audit necessary. A field that nothing reads should not exist. |
 
