@@ -50,6 +50,8 @@ What replaces it is escalation within a deployment — noticing from the audit t
 
 ## The language violation
 
+**Closed as of 2026-09-02; this section is kept as the record of what was wrong.** Check discovery reads an explicit declaration, then CI configuration, then a marker registry of fifteen build systems; symbol extraction recognises declaration keywords across eight languages; the command allowlist is derived from the repository. `roadmap.md` carries the measurement. The last paragraph of this section still holds: results measured on Rust and JavaScript repositories do not generalise until they are measured elsewhere, and `external-v1` is the only non-toy corpus so far.
+
 MASTER_SPEC requirement 6 says verification must be *appropriate to the repository*, and `repository-intelligence.md` requires the index to record *language/build manifests*. Both mean any repository. Three places assume otherwise:
 
 - **`discover_checks`** recognises `Cargo.toml` and a `package.json` with a test script. Everything else yields no checks, so an agent working on it cannot tell whether it succeeded.
@@ -59,3 +61,11 @@ MASTER_SPEC requirement 6 says verification must be *appropriate to the reposito
 The fix is a declarative registry of build systems keyed on marker files, a symbol extractor covering the common declaration forms, and an allowlist derived from what the repository actually is. A repository that matches nothing must be able to declare its own checks rather than being silently unverifiable.
 
 Until then, results on Rust and JavaScript repositories do not generalise, and no measurement in this repository has been taken on any other language.
+
+## Where this document is behind — 2026-09-03
+
+Items 1 and 2 of the ordered work are closed and the table above is stale in three rows: continuity across sessions exists (`--session`, `session list`, `session show`), any toolchain the project declares is now derivable rather than fixed, and the largest measured success is 33 actions provisioning a toolchain from nothing rather than 48 on a corpus task.
+
+What the audit of `cee5ebd` changed about the ordering is item 3. "Real decomposition" was written as the next thing to build; it now sits behind work that is less interesting and more load-bearing. A subgoal graph is worth building on a runtime whose state can be resumed, whose context is the one it measured, and whose completion means something — and until 2026-09-03 none of those three was true on the path a run actually took. The order is now: re-measure the corpus on the current harness, then resumable state, then decomposition on top of it. `roadmap.md` carries that as a backlog with what would settle each item.
+
+Item 5, usability, is unchanged and still last, with one addition: everything poorAI reports is `--json`, and the exit code is 4 for every failure whatever its cause. A caller scripting around poorAI cannot currently tell a policy denial from a provider being down.

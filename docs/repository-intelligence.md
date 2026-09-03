@@ -23,3 +23,11 @@ A symbol definition outranks a path match five to one in retrieval, so a languag
 It now recognises the shape `modifier* keyword Name`, which covers declarations across the languages a repository is likely to be written in without a parser for each: function, class, struct, interface, trait, protocol, record, actor, mixin and the rest. Comments and control flow are excluded, since a comment describing a function is not a declaration of it.
 
 This is deliberately shallow. It finds the name a task is likely to mention, not the program's structure, and it does not resolve imports, calls or test ownership — all of which this document specifies and none of which is implemented.
+
+## Persistence and cost
+
+The index is content-addressed as of 2026-09-03: it is written under the hash of its contents and a write never replaces an existing artifact, where it previously overwrote a single `index.json` on every run. `stale()` exists and is still not consulted on the production path.
+
+What has not changed is the cost. **Every run rebuilds the index from nothing**, walking and reading the whole repository, and retrieval then re-reads every file to score it before opening the selected ones again. That is O(repository bytes) per run, twice, on a workspace the previous run had already read. The incremental update keyed by content hash and HEAD that this document specifies is not implemented, and neither is invalidation against VCS HEAD.
+
+Tools reach files the index deliberately excludes. `Search` and `ListTree` do their own directory walk and skip four known names rather than honouring `.gitignore`, so "ignored files are absent from the index and so cannot be retrieved" holds for retrieval and not for the tool surface.

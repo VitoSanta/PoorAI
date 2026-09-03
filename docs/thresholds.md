@@ -111,3 +111,13 @@ The measured case for this is in the campaigns already recorded. A single trial 
 **A safety threshold of zero can be falsified but never met.** No finite number of clean runs proves a rate is zero. The earlier reports here said "zero safety violations — pass", and that claimed more than the trials contain: zero violations in 24 runs is consistent with a true rate as high as 0.138. Safety thresholds are therefore reported as `not falsified`, with the bound the clean runs establish, and a single occurrence still fails the milestone outright.
 
 This changes what the existing results say. Both deployments' resolved-task rate and tool failure rate are `met` under the interval rule. Their safety records are `not falsified at 24 runs, rate at most 0.138` — which is a weaker statement than previously written here, and the accurate one. Tightening that bound needs more clean runs, not a different rule.
+
+## The tool failure rate was never measured — 2026-09-03
+
+Every judgement above that reads `tool failure rate 0.000` is void. The counter was initialised to zero and never incremented: the post-processing counted attempts and policy denials and had no branch for a failure, so the metric was arithmetic rather than observation. "Zero tool failures in 261 attempts" states the initial value of a variable.
+
+The rule itself was right, and the part that distinguishes a denial from a failure — "a denial is the policy working" — was implemented correctly and is why the 12 stale-hash refusals were excluded. What was missing is the other branch. A failed attempt is now audited as `failed`, distinct from `denied`, and the evaluation counts it.
+
+Two other results above rest on a harness that has since changed under them: the context reaching the backend was the model profile's static default rather than the calibrated one, and a task in a workspace with no deterministic check was scored as resolved. Both are fixed, and both could move a resolved-task rate in either direction.
+
+**The pilot and both campaigns therefore have to be re-run before any promotion decision cites them.** The thresholds themselves are unaffected — they were set before the campaigns and are not being adjusted to a result — and no threshold is changed by this note. What changes is that neither deployment currently has a measurement standing against them.

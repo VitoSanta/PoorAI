@@ -17,3 +17,21 @@ Evaluation runs therefore record both the seed and the temperature. Repeated tri
 The task workspace does not survive the run, so anything the run did that is not carried into the report is lost. Each outcome records a count per event type — tool actions, compaction, plans, named loops, malformed calls, approval decisions — so whether the history was compacted or a loop was named is something a reader can see rather than infer.
 
 This gap was found by not being able to answer a simple question about a completed run: a 58-action task finished successfully and there was no way to tell whether compaction had ever run.
+
+## Provenance, as implemented
+
+`EvaluationRun` was the normative contract at the top of this document, and until 2026-09-03 the runner did not build one: it wrote a `SuiteReport`, a parallel shape carrying no run id, no runtime snapshot, no calibration or strategy identity and no harness revision. Comparisons were therefore being made against a contract nothing enforced.
+
+A run now writes a validated `EvaluationRun` beside its report, carrying corpus revision, task set, execution profile, model digest, deployment fingerprint, hardware compatibility key, harness revision, seed, a hash over the outcomes and hashes of both report artifacts. Reports are content-addressed by their own hash and a write refuses to overwrite an existing artifact, so two runs of the same suite no longer collide on a filename.
+
+## Reading the recorded campaigns
+
+**The campaigns in the roadmap predate three fixes that touch what they measured, and have to be re-run before they are quoted again.**
+
+- `tool_failures` was initialised to zero and never incremented. "Zero tool failures in 261 attempts" was arithmetic, not a measurement. A failed attempt is now audited as `failed` distinctly from a policy denial and is counted.
+- The context sent to the backend was the model profile's static default rather than the calibrated one, so a campaign describing a 32768-token profile may have been running at 262144.
+- A task in a workspace with no checks completed successfully. Under the current rule it fails.
+
+## Still open
+
+One invocation carries one seed and destroys its workspace, so a multi-seed campaign is several invocations by hand and the traces do not survive. A provider failure is still recognised by searching the error text. A `PolicyAttack` task counts as resolved when the attack does not succeed, which a deployment that does nothing at all also achieves. Corpus preparation and external verifiers execute outside the tool policy — see `tool-runtime.md`. Total tokens, time to first token, throughput, peak resident memory, context occupancy and loop counts are not first-class metrics.

@@ -43,3 +43,29 @@ Refusals carry what the refusal already knew. A stale hash names the hash the fi
 ## The command allowlist
 
 The allowlist is derived from the repository — the executables named by an explicit `.poorai/checks.json`, by CI configuration, or by the build systems whose markers are present — never a fixed list. Common aliases travel with what a repository declares: `python3` admits `python` and the reverse, `pytest` and `poetry` admit the interpreter they run under, `npm` admits `node` and `npx`, `flutter` admits `dart`. A project whose declared check runs `python3` denying `python` refuses the interpreter it already permits, and did cost a measured run an action.
+
+## Bounds that hold while output is being produced
+
+A limit applied after the fact bounds the report, not the process. Command output, HTTP bodies and file reads were each materialised whole and truncated afterwards, so a command printing without end was bounded only by the machine. stdout and stderr are now drained incrementally with bounded retention, and the result still carries the hash of the **whole** output and a flag saying it was truncated — the caller learns that something was cut, and the hash still identifies what was produced.
+
+A timeout kills the process group rather than the process. A child that outlives the tool it was spawned by is a process still writing to the workspace after the run stopped watching, which the hash guard on the next edit would then blame on the workspace being stale.
+
+`FetchUrl` streams under a byte cap rather than reading a body to completion, and the provider's NDJSON reader decodes UTF-8 across chunk boundaries instead of per chunk, with a cap on a single line. Decoding per chunk corrupted any code point that spanned two of them.
+
+## What the surface still does not have
+
+`Search` and `ListTree` walk `read_dir` and skip four known directory names. They do not honour `.gitignore`, which the repository index does — so a file that is excluded from retrieval on purpose, an environment file among them, is still reachable through a tool. One walker should serve both.
+
+There is no `mkdir`, `delete`, `move` or `rename`, no read-only `git status` or `diff`, and no multi-hunk patch. A task that reorganises files cannot be expressed with what exists, and a task that needs to see what it has changed can only re-read files it remembers touching.
+
+The sandbox confines writing and denies the network; it does not confine **reading**. Nine known credential paths are denied and everything else on the host is legible to a sandboxed command. Under `--provision`, which grants an arbitrary executable and a network together, that is the shape of an exfiltration and the flag's help says so.
+
+`git clean` is not gated. `reset --hard` requires the history-rewriting approval and the comment beside it names `git clean -fd` as the other way to discard uncommitted work — which nothing checks. The gate should be on the effect, as publishing and history rewriting already are.
+
+`ListTree` returns the walk in directory order rather than sorted, so two listings of an unchanged workspace can differ. A tool whose output feeds a prompt should be deterministic.
+
+A tool outcome is allowed, denied or failed. A timeout, an I/O failure, a non-zero exit and a protocol failure all land in the last of those, which is enough to count a failure and not enough to diagnose one.
+
+`ToolCapability` is an enum left over from an earlier design and no longer corresponds to the typed actions above. It is two vocabularies for one concept, and one of them is wrong.
+
+Evaluation is the exception to all of this: corpus materialisation and external verifiers shell out directly, with no sandbox, timeout or output cap. A corpus file describes commands, and today those commands run outside the boundary this document is about.

@@ -55,3 +55,19 @@ A call naming a real tool with arguments that do not match its schema is a mista
 Measured before the change: five of thirteen evaluation runs ended this way, three of them the entire generation suite, in each case with actions still unspent.
 
 Three consecutive malformed calls do end the run. A deployment that cannot form a valid call after being told three times what was wrong is not going to, and the budget is better spent failing.
+
+## The state machine is the loop's, not the dry run's
+
+`Discover → Profile → Index → Plan → Act → Verify → {Complete | Recover | Failed}` was, until 2026-09-03, traversed by `prepare_dry_run` and by nothing else: the production loop emitted its own events and never entered the typed machine. Every production transition now persists a `TaskCheckpoint` as `task.transition` — including the ones that are easy to forget, a planning failure, a baseline failure, a provider failure, and an interrupted run, each of which used to end with no terminal recorded at all.
+
+"Every transition has a typed event and durable checkpoint" is therefore true now. The second half of that sentence's promise is not: nothing reads those checkpoints back to resume a run. See `memory-state.md`.
+
+## Where the loop still cannot see
+
+**Non-progress is detected as repetition of a refused action, and nothing else.** Three identical denials are named; three successful reads in a circle are not, nor are identical searches, an edit followed by its revert, or a command that changes nothing. The signal that would catch those is a window over the workspace hash, the state of the checks and the diagnostics being produced, rather than over the proposals alone.
+
+**A plan is a list of claims, not a graph.** `record_progress` records what the deployment says it finished and the harness verifies none of it independently, by design. Subgoals carrying their own verifiers — where finishing a step is something the harness can check — is the thing that would make a long task tractable, and it does not exist.
+
+**A completion is refused where nothing can verify it.** A repository with no discoverable checks used to complete successfully; it now fails, naming the absent verifier. See `verification-recovery.md`.
+
+**A reply carrying more than one native call is refused** rather than having its first call executed, so "one tool call at a time" is enforced rather than assumed.

@@ -12,17 +12,22 @@
 
 Threshold values are set before M5 based on baseline measurements. No milestone is advanced merely because a demo works.
 
-## Current implementation status — 2026-09-01
+**The table above is the gate as it was declared, and its wording is historical.** Where it and the status table below disagree, the status table is the current reading: the audit of `cee5ebd` found several of these criteria met by components that the production path did not reach, and the M6 row in particular quotes a tool-failure count that was never measured. Read the two together, and *What remains* at the end of this document for what is not built at all.
+
+## Current implementation status — 2026-09-03
+
+This table is the one place to read for state; the dated sections below are the record of how it got there and are not amended after the fact. Every row was reassessed against the audit of `cee5ebd` and the hardening pass that followed it. **Nothing in this table has been measured against a live deployment since that pass**: the running campaign was stopped to make the changes, and the numbers recorded in the sections below were produced by a harness that has since changed in ways that touch what they measured.
 
 | Milestone | Status | Evidence recorded | What remains before advancement |
 |---|---|---|---|
-| M0 Foundation | **Completed** | Cargo workspace; versioned domain contracts; SQLite hash-chained event log; JSON CLI. 18 property tests cover serde round-trips, `Observation` variant integrity, deployment fingerprint sensitivity, UUIDv7 ordering, hash determinism, calibration sampling floors and execution-profile authorisation. `cargo fmt --all`, `cargo test --workspace` (71 tests) and `cargo clippy --workspace --all-targets -- -D warnings` all pass. | Maintain the invariant suite as schemas gain fields; every new persisted contract needs its round-trip property. |
-| M1 Discovery | **In progress** | `poorai doctor --json` captured the local Mac hardware facts and Ollama `/api/ps`. `models inspect --probe` runs the capability suite against all seven target deployments with a persisted artifact each (see below). Hermetic adapter fixtures cover structural tool-call and thinking parsing, metadata pruning, and NDJSON ordering; probe-policy tests cover drain, trial aggregation and cancellation. | Calibrate the trial count against measured variance (three trials did not reproduce a known intermittency); `context_boundary` and `edit` remain blocked on M2 and M4 respectively. |
-| M2 Calibration | **In progress** | Three-sample context ladder, raw artifact hashes, compatible-point selection, persisted calibration artifacts and invalidation gate; profiled runs capture fresh backend state and memory pressure when observable. | Record actual target-model calibration runs; capture backend/runtime snapshots per sample; stable-point pressure and generation-rate metrics; invalidation tests. |
-| M3 Safe execution | **In progress** | Full gitignore semantics (negation, anchoring, `**`, directory-only patterns, nested files, character classes) delegated to the ripgrep `ignore` walker, with poorAI policy exclusions layered on top. Every tool attempt is audited, denied as well as allowed, inside the hash chain. 33 adversarial fixtures cover traversal, symlink escape, secret redaction, command allowlist, network denial, output bounds, timeout, stale hashes, binary files, malformed proposals and prompt injection. | Malformed-provider-reply and flaky-verification fixtures; sandbox/process boundary for tool execution; approval gates for dependency changes, history rewriting and publishing. |
-| M4 Agent task loop | **Completed** | Multi-step bounded controller: baseline → typed model action → policy-controlled tool → audit → verification → bounded recovery → terminal event. Hermetic smoke tests cover success and fail → recovery → repair → verified success. | Maintain M4 tests while extending model capabilities; do not expand tool authority without M3 policy/audit coverage. |
-| M5 Evaluation | **Not started** | `EvaluationRun` schema exists. | Frozen-corpus loader, reproducible runner, reports and two-model laboratory comparison with artifacts. |
-| M6 Beta | **In progress** | See the row above; superseded by it. |
+| M0 Foundation | **Completed** | Cargo workspace; versioned domain contracts; SQLite hash-chained event log; JSON CLI. Property tests cover serde round-trips, `Observation` variant integrity, deployment fingerprint sensitivity, UUIDv7 ordering, hash determinism, calibration sampling floors, execution-profile authorisation and typed execution budgets. `cargo fmt --all`, `cargo test --workspace` and `cargo clippy --workspace --all-targets -- -D warnings` all pass. | Compare persisted artifacts against `SCHEMA_VERSION` on load; enforce append-only in the store rather than only in its API, and chain per run under a global root. |
+| M1 Discovery | **Completed for the seven target deployments** | `poorai doctor --json` captures host and backend facts. `models inspect --probe` runs the full capability suite against all seven deployments with a content-addressed, non-overwritable artifact each. A run now *requires* a matching artifact rather than trusting a tag. | Cancellation is asserted by dropping a stream, which does not show the backend stopped — it needs a handle on the provider trait and a fixture over the closed connection. The trial count is still not calibrated against measured variance. |
+| M2 Calibration | **Completed as allocation, not as occupancy** | Seven deployments calibrated across a 2048–32768 ladder, three repetitions per tier, shuffled from a recorded seed, raw samples persisted, invalidation tested across all four keys. The calibrated context is now the context the request carries; nothing may substitute a static default for it. | The ladder qualifies a tier with a one-token reply and samples pressure before generation, so it measures what can be allocated, not what a full context costs. Linux and Windows host probes. |
+| M3 Safe execution | **Completed for writes and execution; reads are not confined** | Gitignore semantics via the ripgrep `ignore` walker in the index; every tool attempt audited allowed or denied inside the hash chain; macOS seatbelt confining writes and denying network; approval gates granted by nobody by default; bounded incremental I/O with process-group kill on timeout. | `Search` and `ListTree` walk `read_dir` and do not honour gitignore, so a file excluded from retrieval is still reachable through a tool. The sandbox denies writing outside the workspace but not reading; `ToolchainInstall` with `NetworkAccess` is an arbitrary executable with a network. Evaluation setup and external verifiers run outside the policy entirely. Linux and Windows adapters. |
+| M4 Agent task loop | **Completed as a single-model, single-action loop** | Baseline → typed action → policy-controlled tool → audit → verification → classified recovery → terminal, with every transition persisted as `task.transition`. Completion is refused where no deterministic verifier exists. Recovery reproduces the failing check before classifying it and draws its budget from the execution profile. | Non-progress is detected only as repeated refusals. A crash resumes from a summary, not from a checkpoint. A plan is a list of claims rather than a graph of independently verified subgoals. |
+| M5 Evaluation | **Completed as a runner; provenance only now emitted** | Frozen corpus as data, hidden verifiers, reproducible runner, JSON and Markdown reports, Wilson intervals, pinned external repositories, and a validated `EvaluationRun` written beside every report. | The recorded campaigns predate the tool-failure counter, the context fix and the verifier gate, so they have to be re-run before being quoted. One invocation still carries one seed and destroys its workspace. |
+| M6 Beta | **Not ready** | The thresholds were met by two deployments on a harness that has since changed under three of the metrics it reported. | Re-measure `m5-frozen-v1` and `external-v1` on the current tree; decide how many trials constitute a result; observability, service lifecycle and usability are untouched. See *What remains* at the end of this document. |
+
 
 ### Capability probe results — 2026-09-01
 
@@ -362,6 +367,38 @@ Still open: the accumulated diff. The ledger names the files a session changed a
 
 Also open from earlier measurement: the action budget of 8 is an undefended constant that binds outcomes, the trial count that constitutes a result is unstated, and the safety record is not falsified rather than met — zero violations in 24 runs bounds the rate at 0.138 and no finite number of clean runs proves it is zero.
 
+### Audit hardening — 2026-09-03
+
+An external audit read the tree at `cee5ebd` and named a shape worth recording: several guarantees existed as types, documents or isolated components while the path a real run takes went around them. Everything below changes that path. All of it is covered by hermetic tests; **none of it has been measured against a live deployment**, because the running campaign was stopped to make these changes and no model run has happened since.
+
+**A model run holds a host-wide lease.** `ExecutionProfile.concurrency = 1` was a field nobody enforced: two `poorai` processes could each load a 30B deployment on a machine that fits one, and the second run's numbers would describe a saturated host rather than a model. `ModelRuntimeLease` is taken by atomic file creation outside any repository, so two workspaces contend for the same host, and it records the operation holding it so a refusal can say what to wait for. A lease whose owning process no longer exists is reclaimed; the retry, not the check, arbitrates the race. `run`, `calibrate`, `eval` and the live capability probes all take it.
+
+**The context that was measured is the context that is sent.** Calibration produced `execution.context_tokens` and the run recorded it, then the request builder substituted `ModelProfile`'s static default — 262144 for four of the seven deployments. A profile calibrated at 32768 could authorise a 262144-token request, and the log named a number the backend never saw. The request now carries the resolved execution context and nothing may overwrite it.
+
+**Runtime state participates in admission.** `snapshot()` built `loaded_models` as an empty vector, discarding what `/api/ps` had just reported, and profile selection never received the snapshot at all. Residency is preserved, and `select_compatible_profile_with_runtime` refuses an otherwise compatible profile when the host is observably under memory pressure.
+
+**A completion without a verifier is a failure, not a success.** With no checks the loop still appended `task.complete`, returned `Ok` and exited 0, with `verifiable: false` recorded beside it — a generated codebase could be reported as a completed task having been verified by nothing. Completion is now refused and the run persists `task.failed`. This is MASTER_SPEC rule 6 enforced rather than described, and it means both provisioning runs above are failures, which is what they were.
+
+**Compaction keeps the task on a resumed session.** It preserved the first two messages on the assumption that they were the system prompt and the task. On a resumed session the second message is the session ledger, so compaction kept the ledger and dropped the goal — exactly when context was under pressure. Messages are identified by what they are rather than by their index.
+
+**Recovery reproduces the failure it classifies.** `classify_with_reproduction` was implemented and tested and never called: the production branch assigned `FailureClass::Assertion` to every failed check, so an environment failure could authorise an edit. It is now the classifier the loop uses, the failing check's full diagnostics reach the deployment, and the recovery budget comes from `ExecutionProfile.budgets` — parsed as a typed `ExecutionBudgets` rather than free JSON — instead of a default constructed on the spot, which had also been counting reads and searches against the edit budget. A context retry steps down to the next *measured* calibration tier; where none is lower it stops rather than inventing one.
+
+**Bounded I/O, and a timeout that kills what it timed out on.** Command output, HTTP bodies and file reads were materialised whole and truncated afterwards, so a hostile or merely noisy producer bounded nothing. stdout and stderr are drained incrementally with bounded retention, keeping the whole-output hash and a truncation flag; a timeout or cancellation kills the process group, so a child cannot outlive the tool and go on writing to the workspace. The NDJSON reader decodes UTF-8 across chunk boundaries rather than per chunk and caps a single line, and `/api/show`, `/api/tags` and `/api/ps` are read under a body cap.
+
+**Artifacts are content-addressed and are not overwritten.** Model definitions were written as `<digest>.json`, so re-inspecting a deployment minted a new id and overwrote the earlier evidence — which is why the Qwen probe wrapper referenced a definition that no longer carried the probes it was written about. Indexes and CLI artifacts are content-addressed, and a write refuses to replace an artifact that exists.
+
+**Capability evidence gates a run.** A tag was enough to start one. `run` and `eval` now require an active probe artifact whose digest and deployment fingerprint match the deployment in front of them, and refuse a deployment that lacks an observed `chat`, `streaming`, `structured_tools`, `edit`, `cancellation` or `context_boundary`. `models inspect --probe` is a precondition rather than a report.
+
+**The state machine is on the production path.** `TaskState` and `TaskCheckpoint` were exercised by the dry run alone. Every production transition — `Plan → Act → Verify → Recover` and the terminals — is persisted as `task.transition`, including planning, baseline and provider failures, and an interrupted run records one.
+
+**Tool failures are counted.** `tool_failures` was initialised to zero and never incremented, so "zero tool failures in 261 attempts" was true by construction rather than by measurement. A failed attempt is now audited as `failed`, distinctly from a policy denial, and the evaluation counts it. **The safety and reliability numbers recorded above predate this fix and their tool-failure column should be read as unmeasured.**
+
+**Evaluation provenance is emitted.** `EvaluationRun` existed in the domain and in its tests while the runner wrote a parallel `SuiteReport`. A run now writes the validated `EvaluationRun` beside the report, carrying corpus revision, execution profile, model digest, deployment fingerprint, hardware key, harness revision, seed, outcome hash and artifact hashes.
+
+**Two smaller ones.** `ReasoningControl::Think` was serialised into a profile and never reached Ollama; it is now the request's own `think` field. A reply carrying more than one native call is refused rather than partially executed.
+
+Verified by `cargo test --workspace`, with the two network tests still ignored. The next campaign has to be re-run from the beginning: the harness under it is not the harness the numbers above were measured on.
+
 ### Current safety boundary
 
 `poorai run` executes for real. A non-dry run requires an explicit `--model` and a `--profile` pointing at a calibration artifact, and refuses to proceed unless that calibration still matches the model digest, deployment fingerprint, hardware compatibility key and harness revision in force. An artifact recording a refused calibration authorises nothing.
@@ -379,3 +416,86 @@ Three defects were found by running it rather than by reasoning about it:
 - A denied action ended the run. The deployment had already fixed the bug, then proposed a second edit with a stale hash; the refusal — which literally says "reread before editing" — discarded the correct work. A denial is now returned to the deployment as a tool result, and the action budget rather than the first refusal is what bounds the loop.
 
 A fourth was found by reading the audit: the loop minted its own run identifier, so a run's provenance and its actions were recorded under different ids and `report` showed only half the trail.
+
+## What remains — 2026-09-03
+
+The audit's findings that the hardening pass did **not** close, ordered by what would have to be true before the next thing is worth building. Each names the observable that would settle it, so a reader can tell an unfinished item from an unmeasured one. Nothing here is scheduled; this is the backlog the milestone rows above are judged against.
+
+### P0 — before the next measurement campaign
+
+| Item | What is wrong now | What closing it looks like |
+|---|---|---|
+| Evaluation setup runs outside the tool policy | `materialise` and the external verifiers shell out through `std::process::Command` with no sandbox, timeout or output cap, so a corpus file can run host-level commands — the one path that goes around the whole M3 boundary | Corpus preparation is a separate, approved step with a content-addressed download cache; setup and verifiers run under a broker with their own bounded policy |
+| "Local" is a default, not a guarantee | The endpoint accepts any HTTP(S) URL and redirects are followed, so prompts and repository contents can leave the host without anything asking | Loopback or a unix socket by default; a remote provider needs an explicit grant, and redirects are refused as they are in `FetchUrl` |
+| The believed prompt is never checked against the sent one | Budgeting estimates at four characters per token and nothing compares it with the backend's `prompt_eval_count` — which is the only signal a `truncated_silently` deployment gives | Every turn asserts reported prompt tokens against what the budget believed it sent, and events the divergence |
+| Campaign numbers predate the harness under them | Tool failures were uncounted, the context sent was not the context calibrated, and completion without a verifier scored as success | One re-run of `m5-frozen-v1` and `external-v1` on the current tree before any result here is quoted again |
+| A reply can end without ending | `collect_reply` accepts EOF with no terminal `done` chunk, and returns a partial reply rather than an error when it hits `MAX_REPLY_CHUNKS` — so a connection dropped mid-generation becomes a valid short answer | A terminal chunk is required, and hitting the cap is a `Truncated` error; an HTTP 200 body carrying a top-level `error` is a provider error, not an empty reply |
+
+### P1 — closing M1–M4 against their own contracts
+
+| Item | What is wrong now | What closing it looks like |
+|---|---|---|
+| A repository with no checks can only fail | Completion is refused where nothing verifies, which is right, and leaves no way forward: the agent cannot propose a check, because a command nobody authorised is not a verifier | A verifier the run can be given, or one the agent proposes and a person approves through the existing approval path — the two toolchain-provisioning runs are the case this would unblock |
+| Cancellation is not demonstrated | `ProviderError::Cancelled` is never constructed and the trait exposes no cancellation handle; the probe drops the stream and calls `/api/ps` alive, which does not show the backend stopped | An explicit cancellation handle on the provider trait, and a fixture asserting the connection closed and generation stopped server-side |
+| `Search` and `ListTree` do not honour `.gitignore` | The indexer uses the ripgrep `ignore` walker; the tools walk `read_dir` and skip four known directory names, so an ignored file absent from retrieval is still reachable through a tool | One walker behind both, with the same policy exclusions |
+| Resume is continuity, not a checkpoint | A session carries facts forward; a crashed run restarts from a summary rather than from the state it was in | Run state is a typed projection of the event log through one reducer, and a checkpoint is resumable |
+| Non-progress is detected only as repeated refusals | Successful reads in a circle, identical searches, an edit and its revert, or commands that change nothing are all invisible | A no-progress window over workspace hash, check state and repeated diagnostics, not just consecutive denials |
+| Reading outside the workspace is not denied | seatbelt confines writes and denies nine known credential paths; everything else on the host is readable, and `ToolchainInstall` with `NetworkAccess` is an arbitrary executable with a network | Deny-read outside the workspace with a minimal allowlist for runtime and dylibs; provisioning in a separate process or VM |
+| The CLI says things it does not do | `report --format md` accepts only JSON, and every error exits 4 whatever its category | Either implement the documented surface or narrow the specification to what exists; the exit codes are already carried by `SafeError::category` |
+| Schema versions are not checked | `SCHEMA_VERSION` exists and no persisted artifact is compared against it | Loading an artifact of an unknown version refuses rather than deserialising what happens to fit |
+| A tool outcome has two shapes, not five | Attempts are now counted as allowed, denied or failed; a timeout, an I/O failure, a non-zero exit and a protocol failure are one bucket | `allowed_success`, `allowed_failure`, `policy_denial`, `timeout` and `protocol_failure` counted separately, with a mutation test that forces at least one fixture to increment the failure counter |
+| `git clean` discards work and is not gated | `reset --hard` requires an approval and the comment beside it names `git clean -fd`, which nothing checks | Destructive VCS subcommands gated by effect, the way publishing and history rewriting already are |
+| `ListTree` output is not ordered | The walk emits directory order, so two runs over an unchanged workspace can present the same tree differently | Sorted output, so a diff between two runs means something |
+| The capability gate is presence, not rate | A deployment observed at 2 of 3 on `edit` passes exactly as one observed at 3 of 3; the measured intermittency buys no defensive strategy | The rate is an input to the strategy — more trials, a narrower tool schema, or a refusal — rather than a number recorded and rounded to a boolean |
+| `ModelStrategy.max_actions` binds evaluations only | `poorai run` takes the CLI override or the execution profile, so the strategy declares a budget that the normal path ignores | One budget resolution shared by both paths |
+| A run does not record which strategy produced it | No strategy hash in the run, so two campaigns cannot be told apart by the policy they ran under | The strategy hash joins the calibration id and model digest in `run.started` |
+
+### P2 — an agent for whole codebases
+
+| Item | What is wrong now | What closing it looks like |
+|---|---|---|
+| The index is rebuilt from nothing every run | Every run walks and re-reads the whole repository, then re-reads the ranked files; cost is O(repository) per run and quality is lexical | An incremental content-addressed index in SQLite, invalidated by hash and HEAD, carrying import, call and test-ownership edges |
+| The filesystem surface is read, create, replace | No delete, move, rename or mkdir, no structured `git status`/`diff`, no multi-hunk patch and no structure-aware edit — a task that reorganises files cannot be expressed, and a change touching several places in one file is several whole-file rewrites | The missing capabilities under the existing policy and audit, read-only VCS first; a patch applying several hunks under one hash guard before anything parses a language |
+| Diagnostics are text | Compiler and test output reaches the deployment as bounded prose; nothing maps a failure to a file and line | Typed diagnostics per verifier, so recovery targets a location rather than a paragraph |
+| Tool history is text in a chat | `ChatMessage` carries a role and a string; calls and results are serialised JSON with no call ids, so a protocol-sensitive deployment can lose the pairing | Native tool-call and tool-result messages with ids, matching what the backend's own protocol expects |
+| A plan is a list, not a graph | Steps are claimed, reconciled and never verified individually | Subgoals with their own local verifiers, and replanning driven by their outcomes |
+| The event log is append-only by convention | The API only appends, but SQLite permits `UPDATE` and `DELETE` and no verifier walks the chain; the chain is global, so a run's events depend on runs interleaved with it | A per-run chain under a global root, a chain verifier, real migrations and an artifact table |
+| Calibration measures allocation, not occupancy | A tier is qualified by a prompt of one token and pressure sampled before generation, so "262144 is nearly free" describes an allocation | A ladder that fills the context and samples peak resident memory during generation |
+| Pre-existing failures make some tasks impossible | The deployment is told which checks were already failing, and completion still requires every check to pass — so a task in a repository with an unrelated broken test cannot be completed correctly | Completion judged against the baseline: no regression and the targeted check fixed, rather than a green suite |
+| Every edit re-runs every selected check | Verification is not narrowed to what the edit could have affected, so a large suite is paid in full after each change | Targeted check first, broader suite on escalation, as `verification-recovery.md` already specifies |
+| The context is one message, budgeted by estimate | Repository excerpts and the task share a user message; quotas are constants at four characters per token | A `ContextCompiler` taking typed sections and returning a compiled prompt with per-section estimated and reported cost, hashes, truncation decisions and an output reserve |
+
+### P3 — a measurable beta
+
+| Item | What is wrong now | What closing it looks like |
+|---|---|---|
+| Observability is a seven-line crate | `poorai-observe` hashes a payload and is not a dependency of the runtime; there is no JSONL replay, no resource sampling, no latency histogram, no retention policy | Typed events exported as JSONL, replayable into a report, with resource samples per turn |
+| Services and ports are unmanaged | `LocalService` exists and nothing uses it; there is no spawn/wait/terminate, port reservation or cleanup | A process supervisor owning service lifetime, and a corpus task that starts several services and exercises them together |
+| A campaign is a single seed by hand | One invocation carries one seed, the workspace is destroyed, and traces do not survive | An orchestrator that serialises multi-seed campaigns per deployment under the runtime lease and keeps their traces |
+| Status is written by hand in three places | This roadmap has declared the same milestone complete and in progress; older documents describe as absent what exists | Milestone status generated from a versioned manifest, with historical notes kept as dated reports rather than as claims |
+| The model is never unloaded on purpose | No keep-alive or unload policy, so residency between runs is whatever Ollama last decided | Residency is a decision the lease holder makes and records |
+| Resource use is sampled once, at admission | Memory pressure is read before the run; nothing samples RAM, VRAM or thermal pressure while it is generating | Per-turn resource samples in the event log, which is also what a peak-memory metric needs |
+| A 900-second turn cannot be cut short | The timeout was raised so slowness stops being reported as failure, and there is no strong cancellation to end a turn that is going nowhere | Follows the cancellation handle in P1 |
+| Evaluation metrics stop at counts | No total tokens, time to first token, throughput, peak resident memory, context occupancy, retry count or loop count as first-class metrics; a provider failure is recognised by searching the error text; a `PolicyAttack` counts as resolved when the deployment does nothing at all | Typed outcomes carrying those metrics, a typed provider-failure class, and an attack task that requires the legitimate work to have been done as well as the attack refused |
+| Results are not under version control | `.poorai` is gitignored, so the artifacts a campaign is judged on live only on the machine that ran it | A published results directory, or an artifact store with the reports committed |
+
+### Removals
+
+Not new capability — code and configuration that exists, is not on the production path, and makes the tree read as more finished than it is. Each is a deletion or a merge, and each currently costs a reader time.
+
+| What | Why it should go |
+|---|---|
+| `ToolCapability` | An enum that no longer matches the typed actions it was written for. Two vocabularies for one concept, one of them wrong. |
+| `run_single_action` | A second production-shaped path beside the action loop, with its own verification and terminal handling. Every fix to the loop has to be remembered here, and the no-verifier rule had to be applied twice. |
+| Duplicated status prose | Milestone state is asserted in the gate table, in the status table and in a dozen document tails. Generated from one manifest, or written once. |
+| Configuration with no consumer | Fields that serialise, validate and reach nothing — `ReasoningControl` and `RuntimeSnapshot.loaded_models` were two of these until 2026-09-03, and the pattern is what made the audit necessary. A field that nothing reads should not exist. |
+
+A guard against the class rather than the instances: a field that no production path reads is a defect, and the cheapest place to catch it is a test that fails when a declared value does not reach the request, the policy or the decision it names.
+
+### Work the harness should absorb from the model
+
+The division this project should hold to: the deployment decides semantics — what is wrong, what to change, which fix is right — and the harness does the mechanical work. Several things on the model's side of that line today are mechanical, and each one costs actions from a budget meant for thinking.
+
+Manifest and dependency discovery, finding the call sites and tests related to a file, ranking and de-duplicating what goes into the context, token accounting, selecting which checks a change requires, correlating a diagnostic to a file and a line, generating a diff, counting edits and recovery attempts, classifying a failure, reproducing a flaky one, detecting that a run has stopped progressing, and retrying at a lower context tier — all of these are the runtime's to do, and several are the P1 and P2 rows above under a different name.
+
+Two boundaries are deliberate. **Which semantic correction to make stays the deployment's**, and inferring that a plan step is finished stays out of the harness — the harness recording that work happened would be the harness doing it. **Whether the conclusion is accepted is the harness's**, and that one moved on 2026-09-03: a completion is now refused where nothing can verify it.

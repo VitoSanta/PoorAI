@@ -24,4 +24,16 @@ An approval not granted in advance is asked for at the moment it is needed, when
 
 A non-dry `run` requires `--model` and `--profile`, and refuses a calibration that no longer matches the model digest, deployment fingerprint, hardware compatibility key or harness revision in force. `--approve` grants effects that reach past the workspace; nothing is granted unless named, and a grant covers only what it names. `--turn-timeout-secs` (default 300) bounds one turn of the action loop, which carries more context each turn than the last.
 
-Commands default to the current repository but require an explicit resolved root in emitted records. Exit codes: 0 verified/success; 1 task or verification failed; 2 invalid input; 3 policy denied; 4 provider unavailable; 5 internal error. `--json` produces schema-versioned machine output. No command performs network access or dependency installation unless explicitly enabled.
+Commands default to the current repository but require an explicit resolved root in emitted records. `--json` produces schema-versioned machine output. No command performs network access or dependency installation unless explicitly enabled.
+
+A non-dry `run` and an `eval run` also require an active capability artifact for the deployment — one written by `models inspect --probe` whose model digest and deployment fingerprint match what is being addressed, and which observed `chat`, `streaming`, `structured_tools`, `edit`, `cancellation` and `context_boundary`. A tag that Ollama happens to serve is not evidence that the deployment can be driven.
+
+Any command that loads a model takes a host-wide runtime lease, so a second `run`, `calibrate`, `eval` or live probe is refused while the first holds it, naming the operation to wait for. The lease lives outside any repository: two workspaces on one machine contend for the same hardware.
+
+## Where this specification is ahead of the implementation
+
+Two claims here are not yet true, and are kept rather than quietly deleted because they are the intended surface.
+
+**Exit codes.** The specification calls for 0 verified/success; 1 task or verification failed; 2 invalid input; 3 policy denied; 4 provider unavailable; 5 internal error. The implementation returns 0 on success and **4 for every error**, whatever its category. The category is already carried on each error and is what the mapping would use.
+
+**`report --format`.** Only `json` is accepted. `eval run` does write a Markdown report beside its JSON one; `report` does not.

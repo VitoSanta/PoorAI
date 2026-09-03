@@ -33,3 +33,13 @@ Carrying hashes through matters: an edit planned before compaction is still vali
 The system prompt and the original task survive compaction because they are the instruction and the goal. Everything between them is reconstructible from the audit and is not worth its tokens.
 
 Token counts here are estimates at four characters per token, labelled as such in the `context.compacted` event. A backend that reports real counts is used where it does; this is not one of those places.
+
+## Resolution, as implemented
+
+There is one context number and it is the calibrated one. Until 2026-09-03 there were two: calibration produced `execution.context_tokens`, the run recorded that in `run.started`, and the request builder then substituted the static default declared for the tag in `strategies/models.json` — 262144 for four of the seven deployments. A profile calibrated at 32768 could therefore authorise a quarter-million-token request, and every log line, retrieval budget and compaction threshold downstream described a limit the backend never saw. The resolved execution profile is now what the request carries, and no model profile may overwrite it.
+
+Where a provider failure looks like a context failure, the retry steps down to the next **measured** calibration tier below the current one. Where no measured tier is lower, the run stops rather than halving a number to see what happens: an uncalibrated context is exactly what requirement 4 prohibits, and it is no more acceptable as a fallback than as a default.
+
+Compaction now identifies the messages it keeps by what they are rather than by their position. It previously kept the first two on the assumption that they were the system prompt and the task; on a session resumed with `--session`, the second message is the session ledger, so compaction preserved the ledger and discarded the goal — on a long run, at the moment context was most under pressure.
+
+**Still open.** The estimate is four characters per token and nothing compares it against the backend's reported `prompt_eval_count` after a turn. That comparison is the only signal a `truncated_silently` deployment offers, so until it exists the enforcement described above is bounded by the accuracy of an estimate. Repository excerpts and the task also still share one user message rather than being separately budgeted sections, and tool calls and their results travel as serialised JSON text rather than as the protocol's own typed messages.

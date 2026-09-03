@@ -111,3 +111,15 @@ Every declared strategy carries a rationale naming the measurement that prompted
 The measurements say the deployments differ in ways a strategy could address. One calls `list_tree` on all three trials of an edit probe instead of proposing an edit. One is the strongest repairer and writes a generated server that misses its contract. One is the weakest repairer and builds a working server in six actions. One emits a native tool call on two of three otherwise identical probes. And a single prompt change moved one deployment from 13 of 24 to 20 of 24 while leaving another unmoved at 17 — the same intervention, opposite effects.
 
 A single-prompt harness leaves that on the table. Building it is open work, and a strategy must be measured against the default rather than asserted, or it is an opinion with a schema.
+
+## The gate, and what reaches the backend — 2026-09-03
+
+**Capability evidence is now a precondition, not a report.** The matrix was described above as an eligibility gate and was not one: a run took a tag, read the digest from inspection, and offered the full tool schema to whatever answered. `run` and `eval run` now require an active artifact from `models inspect --probe` whose model digest and deployment fingerprint match the deployment being addressed, and refuse a deployment that has not been observed to do `chat`, `streaming`, `structured_tools`, `edit`, `cancellation` and `context_boundary`. A deployment recorded as `unknown` on edit — muse-glimmer, in the battery above — is refused rather than run and reported as having failed the task.
+
+This is the strict reading and it is deliberately blunt. It gates on presence, not on the measured rate, so a deployment observed at 2 of 3 passes exactly as one observed at 3 of 3 does. Using the rate — a defensive strategy for an intermittent deployment rather than a yes or no — is not built.
+
+**`ReasoningControl::Think` reaches Ollama.** It was declared for qwen, serialised into the profile, and dropped: neither `ModelRequest` nor the adapter's `ChatRequest` carried a `think` field, so the profile described a mode the backend was never told about. It is now the request's own field.
+
+**The declared context no longer wins.** `ModelProfile.context.default` used to be what the request carried whenever a profile existed for the tag, overriding the calibrated value — see `context-management.md`. The profile's context declaration is now a fact recorded about the tag, not an instruction to the request builder.
+
+**Still declared and unused:** `ModelStrategy.max_actions` is honoured by the evaluation runner and not by `poorai run`, which takes the CLI override or the execution profile's budget. There is no per-deployment retry policy, no differentiated tool schema, no output budget or stop sequence per tag, and no escalation of reasoning depth when a task proves hard. The strategy hash is not recorded in a run, so a comparison cannot say which strategy produced it.

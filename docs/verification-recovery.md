@@ -23,3 +23,21 @@ A repository matching none of the three yields no checks, and the run says it ve
 **What is still closed.** A project with no declaration, no CI configuration and no recognised marker cannot be verified, and there is no mechanism yet for the agent to read a README or a Makefile and work out how the project is checked. That is the remaining step toward genuinely any framework, and it carries a question this design has not answered: a check the agent proposes for itself is a command nobody authorised, so it would need the approval path rather than being run because it looked plausible.
 
 The command allowlist is derived from the same detection. A fixed list decides in advance which languages the agent can work in, and a project whose own toolchain is denied cannot be verified at all.
+
+## Recovery, as implemented
+
+**A failing check is reproduced before it is classified.** `classify_with_reproduction` re-runs the failed command and compares the two results, which is what separates a genuine assertion from a flake and from an environment failure. It was written, tested, and until 2026-09-03 never called: the production branch assigned `FailureClass::Assertion` to every failure it saw. The taxonomy above was real in the type system and absent from the loop, so an environment failure authorised an edit — the exact case the paragraph above forbids.
+
+**The budgets come from the execution profile.** Recovery previously constructed `RecoveryBudget::default()` at the call site and passed the run's total action count as the edit attempt count, so reads and searches consumed the edit-verify budget and the profile's declared numbers bound nothing. `ExecutionProfile.budgets` is now parsed as a typed `ExecutionBudgets` and it is what both the loop and recovery spend.
+
+**A context retry steps to a measured tier.** `RetryContextTier` selects the next calibration point below the current context. Where none is lower, recovery stops rather than choosing a smaller number by arithmetic.
+
+**The diagnostics reach the deployment.** Each failing check's command, exit code, both streams, duration, artifact hash and truncation flags are carried into the next turn, rather than the bare fact that something failed.
+
+## No verifier is a failure
+
+A repository matching none of the three sources yields no checks, and a run over it **cannot complete**. It previously recorded `task.complete`, returned success and exited 0, with `verifiable: false` noted beside it; a caller reading the exit code was told a task had succeeded that nothing had checked. The run now refuses the completion and persists `task.failed` naming the absent verifier.
+
+This is deliberately strict, and it costs something real: the two toolchain-provisioning runs recorded in the roadmap built correct programs in workspaces created from nothing, which by construction declare no checks. Under this rule they are failures. That is the honest reading — the deployment verified its own work against a specification and the harness cannot confirm it — and the way out is a verifier the run can be given or asked to approve, not a completion accepted on the deployment's word.
+
+**Still open, and now the first item of P1 in the roadmap rather than a P2 nicety.** An agent cannot propose a check for a project that declares none, because a command nobody authorised is not a verifier — so the refusal above is correct and leaves no way forward. The way out is a verifier the run can be given, or one the agent proposes and a person approves through the approval path that already exists for dependency changes and publishing. Diagnostics are bounded text rather than typed locations, so recovery aims at a paragraph rather than at a file and a line.
