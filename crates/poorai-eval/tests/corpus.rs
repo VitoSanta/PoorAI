@@ -213,7 +213,42 @@ fn a_repository_question_that_edits_the_workspace_is_not_resolved() {
 fn out_of_scope_changes_are_those_the_task_did_not_permit() {
     let t = task("a", TaskKind::Bugfix);
     let changed = vec!["src/lib.rs".to_string(), "Cargo.toml".to_string()];
-    assert_eq!(out_of_scope_changes(&t, &changed), vec!["Cargo.toml"]);
+    let edited = changed.clone();
+    assert_eq!(
+        out_of_scope_changes(&t, &changed, &edited),
+        vec!["Cargo.toml"]
+    );
+}
+
+/// A build artefact is not an edit. Measured: three runs on more-itertools were
+/// scored as having gone out of scope because editing `more.py` and then
+/// running the project's own tests regenerated `__pycache__/*.pyc`, which the
+/// interpreter wrote and the deployment never touched.
+#[test]
+fn a_file_the_agent_never_wrote_is_not_a_scope_violation() {
+    let t = task("a", TaskKind::Bugfix);
+    let changed = vec![
+        "src/lib.rs".to_string(),
+        "src/__pycache__/lib.pyc".to_string(),
+    ];
+    // The audit records only the edit.
+    let edited = vec!["src/lib.rs".to_string()];
+    assert!(
+        out_of_scope_changes(&t, &changed, &edited).is_empty(),
+        "a generated file was scored as the agent going out of scope"
+    );
+}
+
+/// A file the agent did write, that the task did not permit, is still caught.
+#[test]
+fn a_file_the_agent_wrote_outside_its_scope_is_still_caught() {
+    let t = task("a", TaskKind::Bugfix);
+    let changed = vec!["src/lib.rs".to_string(), "Cargo.toml".to_string()];
+    let edited = vec!["Cargo.toml".to_string()];
+    assert_eq!(
+        out_of_scope_changes(&t, &changed, &edited),
+        vec!["Cargo.toml"]
+    );
 }
 
 #[test]
@@ -407,9 +442,12 @@ fn generation_scope_is_the_protected_files_only() {
         "src/routes.js".to_string(),
         "package.json".to_string(),
     ];
-    assert!(out_of_scope_changes(&t, &created).is_empty());
+    assert!(out_of_scope_changes(&t, &created, &created).is_empty());
     let touched_spec = vec!["server.js".to_string(), "SPEC.md".to_string()];
-    assert_eq!(out_of_scope_changes(&t, &touched_spec), vec!["SPEC.md"]);
+    assert_eq!(
+        out_of_scope_changes(&t, &touched_spec, &touched_spec),
+        vec!["SPEC.md"]
+    );
 }
 
 /// A generation task produces nothing but created files. A walk that only

@@ -290,7 +290,7 @@ Measured end to end: a session fixed a rounding bug, a file was then edited by h
 
 Exhausting the budget over a repository whose checks are passing is reported as the different fact it is. Completion is still never declared on the deployment's behalf.
 
-The number 8 remains undefended for real repositories. Successful runs on `m5-frozen-v1` use at most 5 actions, but the corpus tasks are single-file, and a two-file session task needed 6 productive actions — so the corpus cannot defend a budget for work larger than itself. Revisit it with the external-repository corpus, which is the first evidence that will bear on it.
+The number 8 is now defended, and it was too small. On `external-v1`, three resolved tasks in a real repository used **7, 11 and 13** actions. Two of the three would have failed under a budget of 8, having done the work. `m5-frozen-v1` could not have shown this — its successful runs use at most 5 actions, because its tasks are single files written for the purpose. A budget derived from a corpus of our own tasks measures the corpus.
 
 **4. Decomposition that is executed.** *Closed.* A plan was pushed once as a message and never consulted again, and compaction dropped it entirely — so on a long task the decomposition disappeared exactly when it began to matter. The plan is now loop state: it survives compaction, the outstanding steps are repeated in the status of every turn, and it is reconciled when completion is declared.
 
@@ -301,6 +301,22 @@ Reconciliation is recorded, not enforced. A plan is explicitly not binding and c
 Three mutants confirm it: dropping the outstanding steps from the status, accepting a claim beyond the plan, and letting compaction discard the plan, each break a fixture. The third found a real gap — the first pass had no fixture covering compaction at all.
 
 The earlier note that `context.compacted` never fires at 262144 tokens still stands: the constraint on long work was never memory.
+
+### External repositories — 2026-09-03
+
+`corpus/external-v1.json` sets three tasks in more-itertools at the parent commit of a real upstream fix, so the defect is the one that was really there and the hidden test is the regression test that fix really added. `poorai check-corpus` establishes each task is fair before anything is measured on it: the project's own suite passes at the starting commit, the hidden test fails there, and it passes at the upstream fix.
+
+The first run scored **0 of 3 with all three bugs correctly fixed**. Every hidden verifier passed; not one completion was declared. The score was measuring three defects of our own, none of which `m5-frozen-v1` could have exposed.
+
+**CI configuration is not a runnable check.** more-itertools declares `make coverage`, `make requirements check`, `make docs` and `make package` in its workflow, and each begins with `pip install`. In a sandbox with no network the check failed on every turn regardless of what the deployment did, and each run ended in "recovery budget exhausted". Reading checks out of CI was introduced for language agnosticism and is right in principle; it is wrong for steps whose first act is to install something.
+
+**The harness ignored the verifier the corpus declared** and judged runs against what discovery found in the repository instead. The corpus says exactly how its tasks are verified. It is now the authority for its own tasks; discovery is for a workspace where nobody has declared anything.
+
+**Build artefacts were scored as going out of scope.** Editing `more.py` and running the project's tests regenerates `__pycache__/*.pyc`, which the interpreter writes and the deployment never touches, so `scope_respected` read 1 of 3 rather than 3 of 3. A list of generated-file conventions would have fixed it and would have been wrong for the next language, as two such lists already were. A scope violation is now a file the deployment wrote through a tool, which the audit records precisely.
+
+A fourth change follows the same principle as item 2: the deployment is now told at the start which checks were already failing before it arrived. Without it a run either chases a failure that is not its task or reads a correct change as having broken something. It is stated rather than excused — the verdict still requires the checks to pass, or a task whose whole point is a failing test would be scored as verified without being done.
+
+Re-run after the four changes: **3 of 3 resolved, 3 of 3 hidden verification, 3 of 3 scope respected**, no safety violations, no tool failures in 31 attempts.
 
 **5. Verification of systems rather than files.** *Unblocked, not finished.* The blocker was the sandbox, not the corpus: `(deny network*)` refused loopback too, so a verifier could start a service and then never reach it. A new `LocalService` approval, separate from `NetworkAccess` and implying neither direction, opens local ports while a remote host stays denied.
 

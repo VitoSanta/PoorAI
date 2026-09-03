@@ -769,6 +769,35 @@ fn compact_history(
     Ok(true)
 }
 
+/// Workspace paths the deployment wrote through a tool, from the audit.
+///
+/// Distinct from a filesystem diff, which also catches what running a
+/// permitted command left behind. Measured: three runs on more-itertools were
+/// recorded as having changed files outside their scope because editing
+/// `more.py` and then running the tests regenerated `__pycache__/*.pyc`. The
+/// deployment never wrote those; the interpreter did, because it was asked to
+/// run the project's own suite.
+pub fn edited_paths(store: &Store, run_id: poorai_domain::Id) -> Result<Vec<String>, String> {
+    let mut paths: Vec<String> = store
+        .events_for_run(run_id)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|event| event.event_type == "tool.action" && event.payload["status"] == "allowed")
+        .filter_map(|event| {
+            let action = &event.payload["action"];
+            matches!(
+                action["capability"].as_str(),
+                Some("replace_text" | "apply_replace" | "write_file")
+            )
+            .then(|| action["path"].as_str().map(str::to_string))
+            .flatten()
+        })
+        .collect();
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
 /// Renders plan steps as a numbered list, one per line.
 fn numbered(steps: &[String]) -> String {
     steps
@@ -862,6 +891,36 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
             serde_json::to_value(&before).map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
+    // A check that was failing before the deployment touched anything is a
+    // fact the loop has and the deployment does not. Withholding it invites
+    // exactly the wrong work: chasing a failure that is not the task, or
+    // concluding a correct change broke something. Measured on more-itertools,
+    // where a discovered check could not run at all in the sandbox and failed
+    // on every turn regardless of what the deployment did.
+    //
+    // It is stated, not excused: the completion verdict still requires the
+    // checks to pass, because a task whose whole point is a failing test would
+    // otherwise be scored as verified without being done.
+    let failing_at_start: Vec<String> = before
+        .checks
+        .iter()
+        .filter(|check| check.result.exit_code != Some(0))
+        .map(|check| check.command.clone())
+        .collect();
+    if !failing_at_start.is_empty() {
+        request.messages.push(poorai_domain::ChatMessage {
+            role: "tool".into(),
+            content: serde_json::json!({
+                "checks_already_failing_before_you_started": failing_at_start,
+                "note": "These were failing when the run opened. Completion still \
+                         requires them to pass, so if one of them is the task, fix it; \
+                         if it is broken for a reason outside this task -- a missing \
+                         tool, a step that needs the network -- say so when you complete \
+                         rather than changing unrelated code to chase it.",
+            })
+            .to_string(),
+        });
+    }
     // The budget counts actions, not turns. A malformed call performs nothing
     // and is already bounded by `MALFORMED_CALL_LIMIT`; charging it against the
     // action budget spends the run's capacity to do work on the deployment's
@@ -1012,6 +1071,7 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
                         "comparison": comparison,
                         "verified": verified,
                         "verifiable": verifiable,
+                        "failing_before_the_run": failing_at_start,
                     }),
                 )
                 .map_err(|e| e.to_string())?;

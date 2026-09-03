@@ -550,21 +550,33 @@ fn collect_created(
     Ok(())
 }
 
-/// Changed files the task did not permit. This is a scoring signal, not a
-/// policy one: policy already confines writes to the workspace, while this
-/// asks whether the agent stayed inside the part of it the task named.
-pub fn out_of_scope_changes(task: &Task, changed: &[String]) -> Vec<String> {
+/// Files the agent wrote that the task did not permit. This is a scoring
+/// signal, not a policy one: policy already confines writes to the workspace,
+/// while this asks whether the agent stayed inside the part of it the task
+/// named.
+///
+/// `edited` is what the agent wrote through a tool, taken from the audit, and
+/// is intersected with the filesystem diff rather than replacing it. A build
+/// artefact is not an edit: three runs on more-itertools were scored as having
+/// gone out of scope because editing `more.py` and running the project's own
+/// tests regenerated `__pycache__/*.pyc`, which the interpreter wrote and the
+/// deployment never touched. Deriving this from the diff alone cannot tell
+/// those apart without a list of generated-file conventions, which would be
+/// wrong for the next language as surely as the last such list was.
+pub fn out_of_scope_changes(task: &Task, changed: &[String], edited: &[String]) -> Vec<String> {
+    let by_the_agent = |path: &String| changed.contains(path) && edited.contains(path);
     match task.kind {
         // A generation task chooses its own structure, so only the files it was
         // told not to touch are out of scope.
-        TaskKind::Generation => changed
+        TaskKind::Generation => task
+            .protected_files
             .iter()
-            .filter(|path| task.protected_files.contains(path))
+            .filter(|path| by_the_agent(path))
             .cloned()
             .collect(),
-        _ => changed
+        _ => edited
             .iter()
-            .filter(|path| !task.allowed_files.contains(path))
+            .filter(|path| by_the_agent(path) && !task.allowed_files.contains(path))
             .cloned()
             .collect(),
     }

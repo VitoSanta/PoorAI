@@ -1162,7 +1162,20 @@ async fn evaluate_task(
             return outcome;
         }
     };
-    let checks = poorai_verify::discover_checks(&root, "targeted").unwrap_or_default();
+    // The corpus is the authority for a corpus task. Discovery exists for a
+    // workspace where nobody has said how the project is verified; a task that
+    // declares its verifier has said so, and judging the run against a
+    // different command measures something the corpus never described.
+    //
+    // Measured: on more-itertools, discovery read the project's CI and adopted
+    // `make coverage`, whose first act is `pip install` -- impossible in a
+    // sandbox with no network. The check therefore failed on every turn no
+    // matter what the deployment did, and three runs that had *correctly fixed
+    // their bug* were recorded as failures.
+    let checks = vec![(
+        task.visible_verifier.executable.clone(),
+        task.visible_verifier.args.clone(),
+    )];
     // Run the checks once before the agent starts, so anything the build
     // generates — a lockfile, a compiled index — is part of the baseline
     // rather than being scored as the agent's work.
@@ -1277,7 +1290,9 @@ async fn evaluate_task(
         );
     }
     outcome.changed_files = poorai_eval::changed_since(&before, &root).unwrap_or_default();
-    outcome.out_of_scope_changes = poorai_eval::out_of_scope_changes(task, &outcome.changed_files);
+    let edited = poorai_orchestrator::edited_paths(&store, run_id).unwrap_or_default();
+    outcome.out_of_scope_changes =
+        poorai_eval::out_of_scope_changes(task, &outcome.changed_files, &edited);
     // Hidden files land only now: the agent could not read, edit or anticipate
     // a check it never saw.
     if poorai_eval::materialise_hidden(task, &root).is_ok() {

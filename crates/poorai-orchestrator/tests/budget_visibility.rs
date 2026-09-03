@@ -343,3 +343,117 @@ mod history {
         }
     }
 }
+
+/// A check that was failing before the deployment touched anything is a fact
+/// the loop has and the deployment does not. Measured on more-itertools, whose
+/// CI-declared check begins with `pip install` and therefore cannot run in a
+/// sandbox with no network: it failed on every turn regardless of what the
+/// deployment did, and three runs that had correctly fixed their bug were
+/// recorded as failures.
+mod already_failing {
+    use super::*;
+
+    struct QuietProvider;
+    #[async_trait]
+    impl ModelProvider for QuietProvider {
+        async fn inspect(
+            &self,
+            _: &DeploymentDescriptor,
+        ) -> Result<ModelInspection, ProviderError> {
+            unreachable!()
+        }
+        async fn runtime_state(&self) -> Result<BackendState, ProviderError> {
+            unreachable!()
+        }
+        async fn chat(&self, request: ModelRequest) -> Result<ModelStream, ProviderError> {
+            // Answer with what we were told, so the test can read it back.
+            let told = request
+                .messages
+                .iter()
+                .map(|m| m.content.clone())
+                .collect::<Vec<_>>()
+                .join("\n");
+            Ok(Box::pin(futures_util::stream::iter([Ok(ModelChunk {
+                content: serde_json::json!({
+                    "capability": "complete", "rationale": told
+                })
+                .to_string(),
+                done: true,
+                ..Default::default()
+            })])))
+        }
+    }
+
+    fn run_with(check: (String, Vec<String>)) -> String {
+        let root = tempfile::tempdir().unwrap();
+        let policy = ToolPolicy {
+            root: root.path().to_path_buf(),
+            allow_commands: vec!["false".into(), "true".into()],
+            output_limit: 8192,
+            timeout: Duration::from_secs(5),
+            sandbox: SandboxPolicy::Disabled,
+            approvals: Vec::new(),
+        };
+        let store = Store::open(":memory:").unwrap();
+        let run_id = poorai_domain::new_id();
+        let request = ModelRequest {
+            deployment: DeploymentDescriptor {
+                schema_version: 1,
+                id: poorai_domain::new_id(),
+                provider: "fake".into(),
+                endpoint: "http://localhost/".into(),
+                model_ref: "fake".into(),
+                backend_options: Default::default(),
+                auth_ref: None,
+            },
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "fix it".into(),
+            }],
+            context_tokens: 8192,
+            tools: None,
+            seed: None,
+            sampling: Default::default(),
+        };
+        let _ =
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(poorai_orchestrator::run_action_loop(
+                    &store,
+                    &QuietProvider,
+                    run_id,
+                    request,
+                    &policy,
+                    &[check],
+                    3,
+                ));
+        store
+            .events_for_run(run_id)
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.event_type == "tool.action")
+            .map(|e| e.payload["action"]["rationale"].to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn the_deployment_is_told_which_checks_were_already_failing() {
+        let told = run_with(("false".to_string(), vec![]));
+        assert!(
+            told.contains("checks_already_failing_before_you_started"),
+            "the deployment was judged against a check it was never told was broken"
+        );
+        assert!(told.contains("false"), "{told}");
+    }
+
+    /// Said only when there is something to say.
+    #[test]
+    fn nothing_is_said_when_every_check_was_green() {
+        let told = run_with(("true".to_string(), vec![]));
+        assert!(
+            !told.contains("checks_already_failing_before_you_started"),
+            "a run with no failing checks was told there were some"
+        );
+    }
+}
