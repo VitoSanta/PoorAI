@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "assessed_on": "2026-09-03",
+  "assessed_on": "2026-09-04",
   "note": "The single source of milestone status. The roadmap's status table is generated from this file by `scripts/milestones.py`; nothing else asserts a milestone's state. Written by hand, read by everything, so the three places that used to disagree cannot.",
-  "campaign_evidence": "none since 2026-09-03; every earlier campaign is void",
+  "campaign_evidence": "m5-frozen-v1 (16 runs) and external-v1 (4 runs) on qwen3.8:27b-mlx, 2026-09-04, under calibration-harness-v4; the challenger and the five controls are unmeasured",
   "milestones": [
     {
       "id": "M0",
@@ -21,9 +21,9 @@
     {
       "id": "M2",
       "name": "Calibration",
-      "status": "harness complete; no profile measured under it",
-      "evidence": "The ladder fills the context rather than sending a one-line prompt, samples memory pressure after the reply as well as before, and records the occupancy the backend reports along with whether a needle placed at the start came back. The calibrated context is what the request carries; nothing may substitute a static default.",
-      "remaining": "Every existing profile was measured under the allocation ladder and is invalidated by the harness revision. Nothing is calibrated until the ladder is re-run. Linux and Windows host probes."
+      "status": "one deployment calibrated under the occupancy ladder",
+      "evidence": "The ladder fills the tier, samples pressure after the reply, and records the occupancy the backend reports with whether a needle placed at the start came back. Measured on qwen3.8:27b-mlx across 2048-32768: occupancy 0.90-0.94, needle recalled 3/3 at every tier, and generation falling from 18.3 to 15.4 tokens per second -- a 16% cost the allocation ladder could not see.",
+      "remaining": "Six deployments still carry no profile under this harness. Linux and Windows host probes."
     },
     {
       "id": "M3",
@@ -42,16 +42,16 @@
     {
       "id": "M5",
       "name": "Evaluation",
-      "status": "harness complete; no valid campaign",
-      "evidence": "Frozen corpus as data, hidden verifiers, reproducible runner, JSON and Markdown reports, Wilson intervals, pinned external repositories, a validated EvaluationRun beside every report, multi-seed campaigns under one lease, and per-run cost folded from the events.",
-      "remaining": "Every recorded campaign is void: the tool-failure rate was never measured, the context sent was not the one calibrated, and a workspace with no checks scored as resolved. The corpus has to be re-run before any number is quoted."
+      "status": "one campaign stands",
+      "evidence": "m5-frozen-v1 over 16 runs and external-v1 over 4, on qwen3.8:27b-mlx, with per-run cost folded from the events and a validated EvaluationRun beside each report. Every metric carries a Wilson interval.",
+      "remaining": "The challenger and five controls are unmeasured. The tool-failure threshold was derived from a rate that was never measured and now fails on real repositories; it has no verdict until the nine observed failures are read and the bar is re-derived on the corpus it judges."
     },
     {
       "id": "M6",
       "name": "Beta",
       "status": "not ready",
       "evidence": "The thresholds were met by two deployments on a harness that has since changed under three of the metrics it reported.",
-      "remaining": "Re-calibrate, then re-measure m5-frozen-v1 and external-v1. Decide how many trials constitute a result. Usability beyond --json."
+      "remaining": "Read the nine tool failures and re-derive that bar. Measure the challenger. Decide how many trials constitute a result. Neither corpus exercises a large context: the peak prompt was 12,080 tokens against 32,768 authorised, so nothing here tests what the calibration measured. Usability beyond --json."
     }
   ]
 }

@@ -27,13 +27,13 @@ The dated sections below are the record of how it got here and are not amended a
 |---|---|---|---|
 | M0 Foundation | **complete** | Cargo workspace; versioned domain contracts; SQLite event log with a per-run hash chain and a verifier; typed run events; JSON, Markdown and JSONL reporting. Property tests cover serde round-trips, Observation variant integrity, deployment fingerprint sensitivity, UUIDv7 ordering, hash determinism, calibration sampling floors, execution-profile authorisation, typed execution budgets and event round-trips. | Real migrations beyond the two in place, and an artifact table. |
 | M1 Discovery | **complete for the seven target deployments** | doctor captures host and backend facts. models inspect --probe runs the full capability suite with a content-addressed, non-overwritable artifact each. A run requires a matching artifact, and the measured emission rate shapes how much malformed-call patience it gets. Cancellation closes the connection the backend writes into, asserted from the server's side. | The trial count is not calibrated against measured variance. |
-| M2 Calibration | **harness complete; no profile measured under it** | The ladder fills the context rather than sending a one-line prompt, samples memory pressure after the reply as well as before, and records the occupancy the backend reports along with whether a needle placed at the start came back. The calibrated context is what the request carries; nothing may substitute a static default. | Every existing profile was measured under the allocation ladder and is invalidated by the harness revision. Nothing is calibrated until the ladder is re-run. Linux and Windows host probes. |
+| M2 Calibration | **one deployment calibrated under the occupancy ladder** | The ladder fills the tier, samples pressure after the reply, and records the occupancy the backend reports with whether a needle placed at the start came back. Measured on qwen3.8:27b-mlx across 2048-32768: occupancy 0.90-0.94, needle recalled 3/3 at every tier, and generation falling from 18.3 to 15.4 tokens per second -- a 16% cost the allocation ladder could not see. | Six deployments still carry no profile under this harness. Linux and Windows host probes. |
 | M3 Safe execution | **complete on macOS** | Gitignore semantics through one walker shared by the index and the tools; reads denied outside the workspace with a measured allowlist; writes confined; network denied without a grant; bounded incremental I/O with process-group kill; every attempt audited allowed or denied, in five outcome classes; corpus preparation and external verifiers under their own bounded policy; services owned by a supervisor that kills them on drop. | Linux and Windows adapters. Under --provision an arbitrary executable with a network can still read the system and toolchain paths; that wants a separate process or VM. |
 | M4 Agent task loop | **complete** | Baseline, typed action, policy-controlled tool, audit, narrow verification, classified recovery, escalation at completion, terminal. Every transition persisted. Completion refused where nothing verifies, and judged against the baseline rather than a green suite. Non-progress detected by what changed rather than by what was proposed. A plan is a graph whose claims are checked where a check exists. Run state is replayable from the log. | The loop does not yet start from a replayed state; the state is recoverable and surfaced, and resuming into it is the step left. |
-| M5 Evaluation | **harness complete; no valid campaign** | Frozen corpus as data, hidden verifiers, reproducible runner, JSON and Markdown reports, Wilson intervals, pinned external repositories, a validated EvaluationRun beside every report, multi-seed campaigns under one lease, and per-run cost folded from the events. | Every recorded campaign is void: the tool-failure rate was never measured, the context sent was not the one calibrated, and a workspace with no checks scored as resolved. The corpus has to be re-run before any number is quoted. |
-| M6 Beta | **not ready** | The thresholds were met by two deployments on a harness that has since changed under three of the metrics it reported. | Re-calibrate, then re-measure m5-frozen-v1 and external-v1. Decide how many trials constitute a result. Usability beyond --json. |
+| M5 Evaluation | **one campaign stands** | m5-frozen-v1 over 16 runs and external-v1 over 4, on qwen3.8:27b-mlx, with per-run cost folded from the events and a validated EvaluationRun beside each report. Every metric carries a Wilson interval. | The challenger and five controls are unmeasured. The tool-failure threshold was derived from a rate that was never measured and now fails on real repositories; it has no verdict until the nine observed failures are read and the bar is re-derived on the corpus it judges. |
+| M6 Beta | **not ready** | The thresholds were met by two deployments on a harness that has since changed under three of the metrics it reported. | Read the nine tool failures and re-derive that bar. Measure the challenger. Decide how many trials constitute a result. Neither corpus exercises a large context: the peak prompt was 12,080 tokens against 32,768 authorised, so nothing here tests what the calibration measured. Usability beyond --json. |
 
-Campaign evidence: none since 2026-09-03; every earlier campaign is void.
+Campaign evidence: m5-frozen-v1 (16 runs) and external-v1 (4 runs) on qwen3.8:27b-mlx, 2026-09-04, under calibration-harness-v4; the challenger and the five controls are unmeasured.
 <!-- /generated:milestones -->
 
 ### Capability probe results — 2026-09-01
@@ -432,7 +432,6 @@ The audit's findings that the hardening pass did **not** close, ordered by what 
 
 | Item | What is wrong now | What closing it looks like |
 |---|---|---|
-| Campaign numbers predate the harness under them | Tool failures were uncounted, the context sent was not the context calibrated, and completion without a verifier scored as success | One re-run of `m5-frozen-v1` and `external-v1` on the current tree before any result here is quoted again |
 
 ### Closing P0 — 2026-09-03
 
@@ -663,6 +662,22 @@ Pressure is sampled after the reply as well as before. Reading it before generat
 **Every existing calibration is invalidated**, by the harness revision, which is the gate working: those profiles measured something else. Nothing is calibrated until the ladder is re-run.
 
 **Milestone status has one source.** It was asserted in the gate table, in the status table and in a dozen document tails, and they disagreed — the same milestone was declared complete and in progress in one file. `docs/milestones.json` is the manifest and `scripts/milestones.py` generates the table between markers; the script refuses to run if the markers are gone and touches nothing else.
+
+### The corpus re-run, and what it found — 2026-09-04
+
+Everything above was built without a single measurement against it. This is the first campaign on the rebuilt harness, and the gates refused twice before it could start — which is the gates working, not a problem with them.
+
+Every calibration was `harness-v3` against a harness at v4, so all seven were invalidated: they measured a tier that could be allocated rather than one that could be used. And the evaluation refused with `missing_evidence` because **none of the seven capability artifacts carried a deployment** — they could not prove which deployment had been probed, exactly as audit item 10 said. Qwen's carried four capabilities where the others had nine, the overwritten artifact the audit had pointed at. Both had to be redone.
+
+**Calibration, qwen3.8:27b-mlx, occupancy ladder.** Occupancy 0.90 to 0.94 across 2048-32768, the needle recalled 3 of 3 at every tier, no memory pressure — and generation falling from 18.3 to 15.4 tokens per second, a 16% cost the allocation ladder could not see because it sent a one-line prompt and left the context empty.
+
+**`m5-frozen-v1`, 16 runs over two seeds.** Resolved 0.875 `[0.640, 0.965]`, hidden verification 1.000, one out-of-scope write, no safety violations, no provider failures. No loops named, no non-progress, no context downgrades, no turn under pressure.
+
+**`external-v1`, 4 runs on real repositories.** All four resolved: declared, hidden verifier passed, visible verifier passed, nothing out of scope. Two paths that had only ever been exercised by fixtures fired here for the first time — one context tier downgrade and one classified recovery.
+
+**And the metric that was arithmetic is now a measurement.** `tool_failure_rate` was zero by construction for the life of this project. It is 0.000 over 48 attempts on `m5-frozen-v1` and **0.214 over 42 on `external-v1`**, nine failures, the whole interval above the 0.10 bar. The bar was derived from the pilot's 0.000 — a number that was never measured — rounded up and given a margin, so a value that meant nothing became a threshold. `thresholds.md` records that it now fails and that it gets no verdict until the nine failures are read and the bar is re-derived on a corpus that can produce them.
+
+**Neither corpus exercises a large context.** The peak prompt was 4,878 tokens on `m5-frozen-v1` and 12,080 on `external-v1`, against 32,768 authorised. Nothing measured here tests what the calibration measured, and a 16% generation cost at full occupancy is a fact about the deployment that no task in either corpus would have found.
 
 ### P3 — a measurable beta
 

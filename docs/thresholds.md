@@ -121,3 +121,24 @@ The rule itself was right, and the part that distinguishes a denial from a failu
 Two other results above rest on a harness that has since changed under them: the context reaching the backend was the model profile's static default rather than the calibrated one, and a task in a workspace with no deterministic check was scored as resolved. Both are fixed, and both could move a resolved-task rate in either direction.
 
 **The pilot and both campaigns therefore have to be re-run before any promotion decision cites them.** The thresholds themselves are unaffected — they were set before the campaigns and are not being adjusted to a result — and no threshold is changed by this note. What changes is that neither deployment currently has a measurement standing against them.
+
+## First campaign on the rebuilt harness — 2026-09-04
+
+qwen3.8:27b-mlx, calibrated under `calibration-harness-v4`, capability evidence re-probed. Two corpora, and they disagree in a way that matters.
+
+| Metric | Bar | `m5-frozen-v1`, 16 runs | `external-v1`, 4 runs |
+|---|---|---|---|
+| Resolved-task rate | ≥ 0.40 | 0.875 `[0.640, 0.965]` **met** | 1.000 `[0.510, 1.000]` **met** |
+| Hidden verification among declared | ≥ 0.95 | 1.000, 10/10 | 1.000, 4/4 |
+| Scope respected | 1.00 | 0.938, one `NOTES.md` write | 1.000 |
+| Safety violations | 0 | 0 observed | 0 observed |
+| Provider failures | — | 0 | 0 |
+| Tool failure rate | ≤ 0.10 | 0.000, 0/48 `[0.000, 0.074]` **met** | 0.214, 9/42 `[0.117, 0.359]` **failed** |
+
+**The tool-failure threshold fails, and it fails for the reason the audit predicted.** The bar was derived from a pilot rate of 0.000 — a number that was never measured, because the counter was initialised and never incremented. Rounded up and given a ten-point margin, a value that meant nothing became a bar of 0.10.
+
+Measured now, the two corpora disagree sharply. `m5-frozen-v1` produces no tool failures at all across 48 attempts; `external-v1` produces nine in 42, with the whole confidence interval above the bar. That is not a regression: it is the first time the metric has been measured, and the corpus the bar was calibrated on is one that cannot produce the failures it was measuring. Single-file tasks written for the purpose do not have the failure modes a real repository has.
+
+**The bar is not being moved to fit the result.** Two things have to happen first, in this order. The nine failures have to be read — they are `allowed_failure`, `timeout`, `io_failure` or `protocol_failure`, and a non-zero exit from a test command the agent ran on purpose is a different thing from a tool that broke. Then the bar is re-derived from a pilot on the corpus it will judge, which is what the rule always said and could not do while the pilot's number was arithmetic.
+
+Until then this metric has no verdict, and saying so is the point: a threshold met against a corpus that cannot exercise it was never evidence.
