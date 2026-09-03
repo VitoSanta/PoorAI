@@ -446,7 +446,6 @@ The four items that had to be true before another campaign, and are now.
 | Item | What is wrong now | What closing it looks like |
 |---|---|---|
 | Resume is continuity, not a checkpoint | A session carries facts forward; a crashed run restarts from a summary rather than from the state it was in | Run state is a typed projection of the event log through one reducer, and a checkpoint is resumable |
-| Non-progress is detected only as repeated refusals | Successful reads in a circle, identical searches, an edit and its revert, or commands that change nothing are all invisible | A no-progress window over workspace hash, check state and repeated diagnostics, not just consecutive denials |
 | Reading outside the workspace is not denied | seatbelt confines writes and denies nine known credential paths; everything else on the host is readable, and `ToolchainInstall` with `NetworkAccess` is an arbitrary executable with a network | Deny-read outside the workspace with a minimal allowlist for runtime and dylibs; provisioning in a separate process or VM |
 | The capability gate is presence, not rate | A deployment observed at 2 of 3 on `edit` passes exactly as one observed at 3 of 3; the measured intermittency buys no defensive strategy | The rate is an input to the strategy — more trials, a narrower tool schema, or a refusal — rather than a number recorded and rounded to a boolean |
 
@@ -487,6 +486,16 @@ What stops a local backend is the connection closing, so that is the mechanism r
 The fixture is the point. A server generates without end and reports the moment it sees the client go — end-of-file on its read side, which is the earliest unambiguous signal, since a write to a closed socket can succeed for a while into the kernel's buffer. The probe now cancels and requires the stream to say `Cancelled` before recording the observation.
 
 **The fixture failed twice against correct code before it was right**, which is the third time in this project a fixture has asserted something true for a reason unrelated to what it was testing. First it waited on the channel with a blocking `recv_timeout` inside an async test — the connection is closed by a task the runtime owns, so blocking that thread stopped the very thing being asserted. A mutant that keeps the stream alive now fails it, which is what says it tests the close rather than the error message.
+
+### Non-progress, not only repetition — 2026-09-03
+
+Repetition of a *refused* action was the only non-progress the loop could see. Reads in a circle, identical searches, an edit and its revert, and commands that change nothing were all invisible — and each spends the budget just as completely, over a repository that stays where it was.
+
+Progress is now defined by what changed rather than by what succeeded: a read succeeds and changes nothing. The signature covers the files this run has written and the state of the failing checks — the diagnostics themselves, not merely pass or fail, since the same error reported again is what an edit and its revert produce while a different error is progress even while still failing. Over a window of six actions, the loop says so when the signature ends where it began.
+
+**The second condition is the one that took the thought.** Reading six files a run has never read is investigation, and reporting that as going nowhere would interrupt exactly what a hard task needs. So a window with anything novel in it is never flagged, and a fixture asserts it: removing the novelty guard makes that fixture fail while the three detection fixtures still pass, which is what says the guard is load-bearing rather than decorative.
+
+The loop states the fact and decides nothing. What to do about it stays the deployment's, because deciding would be the harness taking over the task.
 
 ### P2 — an agent for whole codebases
 

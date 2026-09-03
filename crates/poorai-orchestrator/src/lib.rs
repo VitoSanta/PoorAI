@@ -824,6 +824,52 @@ const MALFORMED_CALL_LIMIT: usize = 3;
 /// a deployment that is not reading the refusal, and more budget buys more of
 /// the same rather than progress.
 const REPEATED_REFUSAL_LIMIT: usize = 3;
+
+/// How many actions may pass with nothing to show before the loop says so.
+///
+/// Repetition of a *refused* action was the only non-progress the loop could
+/// see. Reads in a circle, identical searches, an edit and its revert, and
+/// commands that change nothing were all invisible, and each is a measured
+/// shape of a budget being spent on a repository that is already where it was.
+const NO_PROGRESS_WINDOW: usize = 6;
+
+/// What a run has actually changed, as one value.
+///
+/// Progress is not "an action succeeded" -- a read succeeds and changes
+/// nothing. It is the workspace or the verification standing somewhere new, so
+/// the signature covers the files this run has written and the state of the
+/// checks, and nothing else.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EffectSignature {
+    workspace: String,
+    checks: String,
+}
+
+impl EffectSignature {
+    fn of(changed: &std::collections::BTreeMap<String, String>, checks: &str) -> Self {
+        Self {
+            workspace: poorai_domain::hash_bytes(serde_json::to_vec(changed).unwrap_or_default()),
+            checks: checks.to_string(),
+        }
+    }
+}
+
+/// Whether a window of actions moved the run anywhere.
+///
+/// Two conditions, both required. The effect signature ends where it began --
+/// which catches an edit and its revert as well as a run of actions that
+/// changed nothing at all. And nothing in the window was novel: reading six
+/// files the run has never read is investigation, and calling that
+/// non-progress would interrupt exactly the behaviour a hard task needs.
+fn window_made_no_progress(window: &[(String, EffectSignature, bool)]) -> bool {
+    if window.len() < NO_PROGRESS_WINDOW {
+        return false;
+    }
+    let first = &window[0].1;
+    let last = &window[window.len() - 1].1;
+    first == last && !window.iter().any(|(_, _, novel)| *novel)
+}
+
 /// Turns allowed per action of budget.
 ///
 /// The budget counts actions rather than turns, so a turn that performs nothing
@@ -1455,6 +1501,14 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
         });
     }
     let mut refused_streak: Vec<String> = Vec::new();
+    // What this run has written, and what the checks last said. Together they
+    // are the only evidence that anything moved.
+    let mut changed_files: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    let mut check_state = String::from("unrun");
+    let mut seen_fingerprints: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
+    let mut progress_window: Vec<(String, EffectSignature, bool)> = Vec::new();
     let mut malformed = 0usize;
     let mut checks_passed_at: Option<u8> = None;
     let mut idle_since_pass = 0usize;
@@ -2052,11 +2106,19 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
             }
         }
         if outcome.get("denied").is_some() {
-            refused_streak.push(fingerprint);
+            refused_streak.push(fingerprint.clone());
         } else {
             // Progress clears the streak: a refusal followed by a success is
             // recovery, not a loop.
             refused_streak.clear();
+        }
+        // An edit that landed is the workspace standing somewhere new. Read
+        // from the outcome rather than from the proposal, so an edit that was
+        // refused or failed contributes nothing.
+        if let Some(path) = outcome.get("path").and_then(|path| path.as_str())
+            && let Some(hash) = outcome.get("new_hash").and_then(|hash| hash.as_str())
+        {
+            changed_files.insert(path.to_string(), hash.to_string());
         }
         // "Make one hypothesis-linked correction, rerun the narrow check."
         // Without this the deployment has no way to learn whether its edit
@@ -2096,6 +2158,11 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
             } else {
                 checks_passed_at = None;
             }
+            // The diagnostics themselves, not merely pass or fail: the same
+            // error reported again is the case an edit-and-revert produces,
+            // and a different error is progress even while still failing.
+            check_state =
+                poorai_domain::hash_bytes(serde_json::to_vec(&failing).unwrap_or_default());
             result = serde_json::json!({
                 "edit": result,
                 "checks_passing": failing.is_empty(),
@@ -2118,6 +2185,48 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
         // Charged here, where an action has actually been performed, rather
         // than once per turn.
         step += 1;
+        // Whether this action was one the run had not taken before. Reading
+        // six files it has never read is investigation; calling that
+        // non-progress would interrupt exactly what a hard task needs.
+        let novel = seen_fingerprints.insert(fingerprint.clone());
+        progress_window.push((
+            fingerprint,
+            EffectSignature::of(&changed_files, &check_state),
+            novel,
+        ));
+        if progress_window.len() > NO_PROGRESS_WINDOW {
+            progress_window.remove(0);
+        }
+        if window_made_no_progress(&progress_window) {
+            store
+                .append(
+                    Some(run_id),
+                    "no_progress.detected",
+                    serde_json::json!({
+                        "step": step,
+                        "window": NO_PROGRESS_WINDOW,
+                        "actions": progress_window
+                            .iter()
+                            .map(|(fingerprint, _, _)| fingerprint)
+                            .collect::<Vec<_>>(),
+                    }),
+                )
+                .map_err(|e| e.to_string())?;
+            // Said plainly and once per window, then the window is cleared so
+            // the next six actions are judged on their own. The loop states the
+            // fact and does not decide what to do about it: deciding would be
+            // the harness taking over the task.
+            request.messages.push(poorai_domain::ChatMessage {
+                role: "tool".into(),
+                content: serde_json::json!({
+                    "no_progress": format!(
+                        "The last {NO_PROGRESS_WINDOW} actions left the workspace and the checks exactly as they were, and none of them was something you had not already tried. Change approach: edit a file, run a check, or call complete if the work is done."
+                    )
+                })
+                .to_string(),
+            });
+            progress_window.clear();
+        }
         let remaining = max_actions.saturating_sub(step);
         if checks_passed_at.is_some() && !edited {
             idle_since_pass += 1;

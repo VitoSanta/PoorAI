@@ -64,7 +64,7 @@ Three consecutive malformed calls do end the run. A deployment that cannot form 
 
 ## Where the loop still cannot see
 
-**Non-progress is detected as repetition of a refused action, and nothing else.** Three identical denials are named; three successful reads in a circle are not, nor are identical searches, an edit followed by its revert, or a command that changes nothing. The signal that would catch those is a window over the workspace hash, the state of the checks and the diagnostics being produced, rather than over the proposals alone.
+**Non-progress is a window over what changed, not over what was proposed.** Progress is the workspace or the verification standing somewhere new — a read succeeds and changes nothing — so the signature covers the files the run has written and the failing checks' own diagnostics, and the loop says so when six actions end where they began. A window containing anything the run had not tried before is never flagged: reading six unfamiliar files is investigation, and interrupting that would be worse than the problem it solves. As with a named loop, the fact is stated and nothing is decided on the deployment's behalf.
 
 **A plan is a list of claims, not a graph.** `record_progress` records what the deployment says it finished and the harness verifies none of it independently, by design. Subgoals carrying their own verifiers — where finishing a step is something the harness can check — is the thing that would make a long task tractable, and it does not exist.
 
