@@ -1775,6 +1775,7 @@ const CANCEL_AFTER_CHUNKS: usize = 3;
 /// what cancels the request: dropping the response body closes the connection.
 async fn abandon_mid_stream(
     stream: Result<poorai_provider::ModelStream, poorai_provider::ProviderError>,
+    cancel: &poorai_provider::Cancel,
 ) -> Result<usize, String> {
     let mut stream = stream.map_err(|error| format!("cancellation probe failed: {error}"))?;
     let mut chunks = 0usize;
@@ -1798,7 +1799,20 @@ async fn abandon_mid_stream(
             }
         }
     }
+    // Cancelling and then reading is what shows the abandonment took effect:
+    // the stream reports `Cancelled` rather than simply ending, and the
+    // underlying connection is dropped, which is what stops the backend.
+    cancel.cancel();
+    let cancelled = matches!(
+        stream.next().await,
+        Some(Err(poorai_provider::ProviderError::Cancelled))
+    );
     drop(stream);
+    if !cancelled {
+        return Err(format!(
+            "stream did not report cancellation after {chunks} chunk(s)"
+        ));
+    }
     Ok(chunks)
 }
 
@@ -1825,7 +1839,13 @@ async fn probe_cancellation(
         }],
     };
     let started = std::time::Instant::now();
-    let chunks = match abandon_mid_stream(provider.chat(request).await).await {
+    let cancel = poorai_provider::Cancel::new();
+    let chunks = match abandon_mid_stream(
+        provider.chat_cancellable(request, cancel.clone()).await,
+        &cancel,
+    )
+    .await
+    {
         Ok(chunks) => chunks,
         Err(reason) => return Observation::Unknown { reason },
     };
@@ -3273,7 +3293,16 @@ mod tests {
                 })
             })
             .collect();
-        let read = abandon_mid_stream(stream(chunks)).await.unwrap();
+        let cancel = poorai_provider::Cancel::new();
+        let read = abandon_mid_stream(
+            Ok(poorai_provider::cancellable(
+                cancel.clone(),
+                stream(chunks).unwrap(),
+            )),
+            &cancel,
+        )
+        .await
+        .unwrap();
         assert_eq!(read, CANCEL_AFTER_CHUNKS);
     }
 
@@ -3281,17 +3310,21 @@ mod tests {
     /// evidence that the deployment can be cancelled.
     #[tokio::test]
     async fn a_stream_that_completes_first_is_not_cancellation_evidence() {
-        let reason = abandon_mid_stream(stream(vec![
-            Ok(ModelChunk {
-                content: "1".into(),
-                ..Default::default()
-            }),
-            Ok(ModelChunk {
-                content: "2".into(),
-                done: true,
-                ..Default::default()
-            }),
-        ]))
+        let cancel = poorai_provider::Cancel::new();
+        let reason = abandon_mid_stream(
+            stream(vec![
+                Ok(ModelChunk {
+                    content: "1".into(),
+                    ..Default::default()
+                }),
+                Ok(ModelChunk {
+                    content: "2".into(),
+                    done: true,
+                    ..Default::default()
+                }),
+            ]),
+            &cancel,
+        )
         .await
         .unwrap_err();
         assert!(reason.contains("before it could be interrupted"));
@@ -3299,10 +3332,14 @@ mod tests {
 
     #[tokio::test]
     async fn a_stream_shorter_than_the_interrupt_point_is_unknown() {
-        let reason = abandon_mid_stream(stream(vec![Ok(ModelChunk {
-            content: "1".into(),
-            ..Default::default()
-        })]))
+        let cancel = poorai_provider::Cancel::new();
+        let reason = abandon_mid_stream(
+            stream(vec![Ok(ModelChunk {
+                content: "1".into(),
+                ..Default::default()
+            })]),
+            &cancel,
+        )
         .await
         .unwrap_err();
         assert!(reason.contains("ended after 1 chunk"));
@@ -3310,9 +3347,13 @@ mod tests {
 
     #[tokio::test]
     async fn cancellation_probe_surfaces_a_failed_start() {
-        let reason = abandon_mid_stream(Err(ProviderError::Unavailable {
-            safe_context: "local Ollama request".into(),
-        }))
+        let cancel = poorai_provider::Cancel::new();
+        let reason = abandon_mid_stream(
+            Err(ProviderError::Unavailable {
+                safe_context: "local Ollama request".into(),
+            }),
+            &cancel,
+        )
         .await
         .unwrap_err();
         assert!(reason.contains("cancellation probe failed"));

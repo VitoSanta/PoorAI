@@ -32,6 +32,77 @@ pub enum ProviderError {
     Truncated { safe_context: String },
 }
 
+/// A handle that stops a reply in progress.
+///
+/// Cancellation was claimed and never demonstrated: `ProviderError::Cancelled`
+/// was not constructed anywhere, and the capability probe judged it by reading
+/// three chunks, dropping the stream, and calling `/api/ps` to see whether the
+/// backend answered. A backend that answers is not a backend that stopped
+/// generating.
+///
+/// What actually stops a local backend is the connection closing, so that is
+/// the mechanism here rather than a message: cancelling drops the underlying
+/// stream, which drops the HTTP body, which closes the socket. The error is
+/// then reported as `Cancelled` rather than as a broken stream, so abandoning a
+/// reply is never recorded as the deployment failing.
+#[derive(Clone, Default)]
+pub struct Cancel {
+    flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    notify: std::sync::Arc<tokio::sync::Notify>,
+}
+
+impl Cancel {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Stops the reply this handle guards. Idempotent.
+    pub fn cancel(&self) {
+        self.flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.notify.notify_waiters();
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.flag.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Resolves once cancelled, and immediately if it already was.
+    pub async fn cancelled(&self) {
+        loop {
+            if self.is_cancelled() {
+                return;
+            }
+            self.notify.notified().await;
+        }
+    }
+}
+
+/// Wraps a stream so cancelling the handle closes it.
+///
+/// The drop is the point. A flag that only stops the reader leaves the backend
+/// generating into a socket nobody reads, which is the resource this is meant
+/// to release.
+pub fn cancellable(cancel: Cancel, stream: ModelStream) -> ModelStream {
+    Box::pin(futures_util::stream::unfold(
+        (Some(stream), cancel),
+        |(stream, cancel)| async move {
+            let mut stream = stream?;
+            if cancel.is_cancelled() {
+                // Dropped by leaving scope with `None` as the next state; the
+                // connection closing is what stops the backend.
+                return Some((Err(ProviderError::Cancelled), (None, cancel)));
+            }
+            tokio::select! {
+                next = stream.next() => next.map(|item| (item, (Some(stream), cancel))),
+                () = cancel.cancelled() => {
+                    drop(stream);
+                    Some((Err(ProviderError::Cancelled), (None, cancel)))
+                }
+            }
+        },
+    ))
+}
+
 /// One model reply, assembled from every chunk of its stream.
 ///
 /// Reading a stream's first chunk is not reading a reply: a reasoning
@@ -101,4 +172,18 @@ pub trait ModelProvider: Send + Sync {
     ) -> Result<ModelInspection, ProviderError>;
     async fn runtime_state(&self) -> Result<BackendState, ProviderError>;
     async fn chat(&self, request: ModelRequest) -> Result<ModelStream, ProviderError>;
+
+    /// The same reply, abandonable.
+    ///
+    /// Defaulted rather than required because the mechanism is transport-level
+    /// and the same for every provider that streams over a connection: closing
+    /// it is what stops the backend. A provider whose backend needs telling
+    /// explicitly overrides this.
+    async fn chat_cancellable(
+        &self,
+        request: ModelRequest,
+        cancel: Cancel,
+    ) -> Result<ModelStream, ProviderError> {
+        Ok(cancellable(cancel, self.chat(request).await?))
+    }
 }

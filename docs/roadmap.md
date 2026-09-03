@@ -445,7 +445,6 @@ The four items that had to be true before another campaign, and are now.
 
 | Item | What is wrong now | What closing it looks like |
 |---|---|---|
-| Cancellation is not demonstrated | `ProviderError::Cancelled` is never constructed and the trait exposes no cancellation handle; the probe drops the stream and calls `/api/ps` alive, which does not show the backend stopped | An explicit cancellation handle on the provider trait, and a fixture asserting the connection closed and generation stopped server-side |
 | Resume is continuity, not a checkpoint | A session carries facts forward; a crashed run restarts from a summary rather than from the state it was in | Run state is a typed projection of the event log through one reducer, and a checkpoint is resumable |
 | Non-progress is detected only as repeated refusals | Successful reads in a circle, identical searches, an edit and its revert, or commands that change nothing are all invisible | A no-progress window over workspace hash, check state and repeated diagnostics, not just consecutive denials |
 | Reading outside the workspace is not denied | seatbelt confines writes and denies nine known credential paths; everything else on the host is readable, and `ToolchainInstall` with `NetworkAccess` is an arbitrary executable with a network | Deny-read outside the workspace with a minimal allowlist for runtime and dylibs; provisioning in a separate process or VM |
@@ -478,6 +477,16 @@ Completion is refused where nothing can verify it, which is right and left no wa
 So it proposes and a person decides. `propose_verifier` runs nothing by itself; it offers a command, and the question a person is asked names the command and the reason rather than a category. If approved, it joins the checks the run is judged against and its executable joins the allowlist — adopted by the loop rather than by the tool, because a check outlives the action that proposed it. If refused, the workspace still has no verifier and completion is still refused. The adoption is recorded as `verifier.adopted`, so it is a fact in the audit rather than an inference from the run having succeeded.
 
 **Writing the refusal test found a real defect.** The loop's `Deny` branch was empty: it relied on each tool re-checking the approval against the policy. Every tool that needed one did — `run_command` consults `command_approval`, `fetch_url` the network grant, the edits their manifest gate — so it worked, until an action was added that did not, and that action executed after a person had denied it. A gate that depends on each capability remembering to re-check is advisory, not binding. The loop now enforces the refusal itself and returns it to the deployment as a tool result, since ending the run would discard work already done.
+
+### Cancellation, demonstrated — 2026-09-03
+
+It was claimed and never shown. `ProviderError::Cancelled` was not constructed anywhere in the tree, and the capability probe judged cancellation by reading three chunks, dropping the stream, and asking `/api/ps` whether the backend answered — but a backend that answers is not a backend that stopped generating.
+
+What stops a local backend is the connection closing, so that is the mechanism rather than a message. `Cancel` is a handle; `chat_cancellable` wraps a reply so cancelling drops the underlying stream, which drops the HTTP body, which closes the socket. The abandonment is then reported as `Cancelled` rather than as a broken stream, so a reply someone walked away from is never recorded as the deployment failing. It is a defaulted trait method rather than a signature change: the mechanism is transport-level and identical for every provider that streams over a connection, and requiring it would have rewritten twenty-two test providers to say the same thing.
+
+The fixture is the point. A server generates without end and reports the moment it sees the client go — end-of-file on its read side, which is the earliest unambiguous signal, since a write to a closed socket can succeed for a while into the kernel's buffer. The probe now cancels and requires the stream to say `Cancelled` before recording the observation.
+
+**The fixture failed twice against correct code before it was right**, which is the third time in this project a fixture has asserted something true for a reason unrelated to what it was testing. First it waited on the channel with a blocking `recv_timeout` inside an async test — the connection is closed by a task the runtime owns, so blocking that thread stopped the very thing being asserted. A mutant that keeps the stream alive now fails it, which is what says it tests the close rather than the error message.
 
 ### P2 — an agent for whole codebases
 

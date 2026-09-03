@@ -969,6 +969,112 @@ mod tests {
             Some(Err(ProviderError::Protocol { .. }))
         ));
     }
+    /// Cancellation was claimed and never demonstrated. The probe read three
+    /// chunks, dropped the stream, and asked `/api/ps` whether the backend was
+    /// alive -- but a backend that answers is not a backend that stopped
+    /// generating, and `ProviderError::Cancelled` was never constructed.
+    ///
+    /// What stops a local backend is the connection closing, so that is what is
+    /// asserted: the fixture generates without end and reports the moment its
+    /// writes start failing, which is the socket going away.
+    #[tokio::test]
+    async fn cancelling_closes_the_connection_the_backend_is_writing_to() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel::<usize>();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 1024];
+            let _ = stream.read(&mut request);
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\n\r\n",
+            );
+            // Generates without end, the way a deployment mid-reply does.
+            let chunk = "{\"message\":{\"content\":\"x\"},\"done\":false}\n";
+            let framed = format!("{:x}\r\n{chunk}\r\n", chunk.len());
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(5)));
+            for written in 0..20_000usize {
+                if stream.write_all(framed.as_bytes()).is_err() || stream.flush().is_err() {
+                    let _ = tx.send(written);
+                    return;
+                }
+                // A closed peer shows as end-of-file on the read side, which
+                // is the earliest and least ambiguous signal that the client
+                // is gone -- a write to a closed socket can succeed for a
+                // while into the kernel's buffer.
+                let mut probe = [0u8; 1];
+                if let Ok(0) = stream.read(&mut probe) {
+                    let _ = tx.send(written);
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let _ = tx.send(usize::MAX);
+        });
+
+        let endpoint = format!("http://{address}/");
+        let provider = OllamaProvider::new(&local(&endpoint), Duration::from_secs(30)).unwrap();
+        let deployment = DeploymentDescriptor {
+            schema_version: 1,
+            id: poorai_domain::new_id(),
+            provider: "ollama".into(),
+            endpoint,
+            model_ref: "fixture".into(),
+            backend_options: Default::default(),
+            auth_ref: None,
+        };
+        let cancel = poorai_provider::Cancel::new();
+        let mut stream = provider
+            .chat_cancellable(
+                poorai_domain::ModelRequest {
+                    deployment,
+                    context_tokens: 32,
+                    tools: None,
+                    seed: None,
+                    sampling: Default::default(),
+                    messages: vec![poorai_domain::ChatMessage {
+                        role: "user".into(),
+                        content: "hello".into(),
+                    }],
+                },
+                cancel.clone(),
+            )
+            .await
+            .unwrap();
+        // Read a little, so the reply is genuinely underway.
+        for _ in 0..3 {
+            assert!(matches!(stream.next().await, Some(Ok(_))));
+        }
+        cancel.cancel();
+        // Abandoning reports itself as cancellation rather than as the stream
+        // simply ending, so an abandoned reply is never recorded as the
+        // deployment failing.
+        assert!(matches!(
+            stream.next().await,
+            Some(Err(ProviderError::Cancelled))
+        ));
+        drop(stream);
+
+        // Awaited rather than blocked on. The connection is closed by a task
+        // the runtime owns, so blocking this thread on the channel stops the
+        // very thing being asserted -- which is how this fixture first failed
+        // against correct code.
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let written = loop {
+            match rx.try_recv() {
+                Ok(written) => break written,
+                Err(_) if std::time::Instant::now() < deadline => {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                Err(_) => panic!("the backend never saw the connection close"),
+            }
+        };
+        assert!(
+            written != usize::MAX,
+            "the backend was still generating into the socket after cancellation"
+        );
+    }
+
     #[tokio::test]
     async fn chat_emits_first_ndjson_chunk_before_body_finishes() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
