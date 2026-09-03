@@ -1,0 +1,125 @@
+{
+  "name": "external-v1",
+  "tasks": [
+    {
+      "id": "external-interleave-evenly-empty",
+      "kind": "bugfix",
+      "statement": "more_itertools.interleave_evenly raises an exception when it is given no iterables at all. `list(interleave_evenly([]))` should return an empty list, and so should `list(interleave_evenly([], lengths=[]))`. Fix it in more_itertools/more.py.",
+      "allowed_files": [
+        "more_itertools/more.py"
+      ],
+      "files": {},
+      "repository": {
+        "url": "https://github.com/more-itertools/more-itertools.git",
+        "commit": "5d946b3590bfe92f1465c1b9b9830dd434745c84",
+        "fix_commit": "f51a53bfd2fe9504063a33ef5f4a73e30d82d0e2",
+        "fix_committed_at": "2026-06-29T22:48:08-03:00",
+        "tree_hash": "ba196ea14f381c2def5e513ba649c6c2c6a04fad",
+        "setup": []
+      },
+      "visible_verifier": {
+        "executable": "python3",
+        "args": [
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "tests",
+          "-q"
+        ]
+      },
+      "hidden_verifier": {
+        "executable": "python3",
+        "args": [
+          "hidden_regression.py"
+        ]
+      },
+      "hidden_files": {
+        "hidden_regression.py": "\"\"\"The regression test the upstream fix added, run after the agent finishes.\"\"\"\nimport unittest\n\nimport more_itertools as mi\n\n\nclass InterleaveEvenlyEmpty(unittest.TestCase):\n    def test_no_iterables(self):\n        self.assertEqual(list(mi.interleave_evenly([])), [])\n        self.assertEqual(list(mi.interleave_evenly([], lengths=[])), [])\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+      },
+      "max_actions": 14,
+      "time_budget_secs": 900,
+      "provenance": "more-itertools f51a53bf, committed 2026-06-29. The workspace is its parent commit, so the defect is present exactly as it was upstream. The hidden test is the regression test that commit added. The task was neither written nor adapted by poorAI; the fix date is recorded so a reader can judge it against a deployment's training cutoff."
+    },
+    {
+      "id": "external-numeric-range-reversed",
+      "kind": "bugfix",
+      "statement": "Reversing an empty more_itertools.numeric_range raises an exception instead of yielding nothing. `list(reversed(numeric_range(0)))` should be an empty list. Fix it in more_itertools/more.py.",
+      "allowed_files": [
+        "more_itertools/more.py"
+      ],
+      "files": {},
+      "repository": {
+        "url": "https://github.com/more-itertools/more-itertools.git",
+        "commit": "247e15b3a489d5805375c95dfa79486c9bd0eb1b",
+        "fix_commit": "edb3346f835ca917efbfda5e2d6664ab952da369",
+        "fix_committed_at": "2026-04-10T14:29:02-05:00",
+        "tree_hash": "392f25c876c1508ba07c0d4617ec30ea397b6c76",
+        "setup": []
+      },
+      "visible_verifier": {
+        "executable": "python3",
+        "args": [
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "tests",
+          "-q"
+        ]
+      },
+      "hidden_verifier": {
+        "executable": "python3",
+        "args": [
+          "hidden_regression.py"
+        ]
+      },
+      "hidden_files": {
+        "hidden_regression.py": "\"\"\"The regression test the upstream fix added, run after the agent finishes.\"\"\"\nimport unittest\n\nimport more_itertools as mi\n\n\nclass NumericRangeEmptyReversed(unittest.TestCase):\n    def test_empty_reversed(self):\n        self.assertEqual(list(reversed(mi.numeric_range(0))), [])\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+      },
+      "max_actions": 14,
+      "time_budget_secs": 900,
+      "provenance": "more-itertools edb3346f, committed 2026-04-10. Workspace is its parent commit; hidden test is the regression test that commit added. Not written or adapted by poorAI."
+    },
+    {
+      "id": "external-exactly-n-negative",
+      "kind": "bugfix",
+      "statement": "more_itertools.exactly_n gives wrong answers at and below zero. exactly_n([True], 0) must be False, and any negative n must be False for every iterable, including an empty one. The existing behaviour for positive n must not change. Fix it in more_itertools/more.py.",
+      "allowed_files": [
+        "more_itertools/more.py"
+      ],
+      "files": {},
+      "repository": {
+        "url": "https://github.com/more-itertools/more-itertools.git",
+        "commit": "f75535b5ed95394a3a24c1495e1f8508a06d56ab",
+        "fix_commit": "adeda34bd11ff636f5f19238cf422a73e1455483",
+        "fix_committed_at": "2025-10-28T18:12:35-05:00",
+        "tree_hash": "d682fce8b2ba554f34f7becc11f7fb4bd505612e",
+        "setup": []
+      },
+      "visible_verifier": {
+        "executable": "python3",
+        "args": [
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "tests",
+          "-q"
+        ]
+      },
+      "hidden_verifier": {
+        "executable": "python3",
+        "args": [
+          "hidden_regression.py"
+        ]
+      },
+      "hidden_files": {
+        "hidden_regression.py": "\"\"\"The regression test the upstream fix added, run after the agent finishes.\"\"\"\nimport unittest\nfrom itertools import repeat\nfrom operator import not_\n\nimport more_itertools as mi\n\n\nclass ExactlyNBoundaries(unittest.TestCase):\n    def test_true(self):\n        self.assertTrue(mi.exactly_n(repeat(True, 100), 100))\n        self.assertTrue(mi.exactly_n(repeat(False, 100), 100, predicate=not_))\n\n    def test_false(self):\n        self.assertFalse(mi.exactly_n([True], -10))\n        self.assertFalse(mi.exactly_n([], -1))\n        self.assertFalse(mi.exactly_n([], -10))\n        self.assertFalse(mi.exactly_n([True], 0))\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+      },
+      "max_actions": 16,
+      "time_budget_secs": 900,
+      "provenance": "more-itertools adeda34b, committed 2025-10-28. Workspace is its parent commit; hidden test is the regression test that commit added, minus the assertions that already passed before it. Not written or adapted by poorAI."
+    }
+  ]
+}

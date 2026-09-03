@@ -43,6 +43,36 @@ pub struct Verifier {
     pub args: Vec<String>,
 }
 
+/// A real project a task is set in, pinned so the workspace is the same every
+/// time it is materialised.
+///
+/// A commit id is a content address: the tree it names cannot change under us,
+/// which is what makes an external repository as reproducible as an inlined
+/// one. The recorded `tree_hash` is checked after checkout anyway, because a
+/// silent mismatch would mean the run was measured against a workspace nobody
+/// declared.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RepositorySource {
+    pub url: String,
+    /// The commit the defect is present at -- in practice the parent of the
+    /// fix, so the repository is exactly as it was before anyone repaired it.
+    pub commit: String,
+    /// The upstream fix. Recorded for provenance rather than used: it says
+    /// where the hidden test came from, and its date is what a reader needs in
+    /// order to judge whether a deployment could have memorised the answer.
+    pub fix_commit: String,
+    pub fix_committed_at: String,
+    /// Git tree hash at `commit`, verified after checkout.
+    pub tree_hash: String,
+    /// Commands run before the agent starts, outside the sandbox and with the
+    /// network, to install what the project's own tests need.
+    ///
+    /// Outside, deliberately: preparing a workspace is the harness's work, and
+    /// the agent that is measured never has the network the preparation used.
+    #[serde(default)]
+    pub setup: Vec<Verifier>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Task {
     pub id: String,
@@ -52,7 +82,16 @@ pub struct Task {
     /// anywhere else is a violation, not a stylistic difference.
     pub allowed_files: Vec<String>,
     /// The initial workspace, path to contents.
+    ///
+    /// Empty when the task draws its workspace from `repository` instead: a
+    /// real project is tens of megabytes of tree, and inlining one would make
+    /// the corpus unreadable without making it more reproducible than a pinned
+    /// commit already does.
+    #[serde(default)]
     pub files: BTreeMap<String, String>,
+    /// An external repository this task is set in, checked out before the run.
+    #[serde(default)]
+    pub repository: Option<RepositorySource>,
     /// The check the agent can see and run itself.
     pub visible_verifier: Verifier,
     /// The check the agent never sees, run by the harness afterwards.
@@ -118,8 +157,18 @@ impl Suite {
             if !seen.insert(&task.id) {
                 return Err(EvalError::Invalid(format!("duplicate task id {}", task.id)));
             }
-            if task.files.is_empty() {
-                return Err(EvalError::Invalid(format!("task {} has no files", task.id)));
+            if task.files.is_empty() && task.repository.is_none() {
+                return Err(EvalError::Invalid(format!(
+                    "task {} has neither files nor a repository",
+                    task.id
+                )));
+            }
+            if !task.files.is_empty() && task.repository.is_some() {
+                return Err(EvalError::Invalid(format!(
+                    "task {} declares both inline files and a repository; \
+                     which one is the workspace would be ambiguous",
+                    task.id
+                )));
             }
             if task.provenance.trim().is_empty() {
                 return Err(EvalError::Invalid(format!(
@@ -127,7 +176,11 @@ impl Suite {
                     task.id
                 )));
             }
-            for allowed in &task.allowed_files {
+            for allowed in task
+                .allowed_files
+                .iter()
+                .filter(|_| task.repository.is_none())
+            {
                 if !task.files.contains_key(allowed) {
                     return Err(EvalError::Invalid(format!(
                         "task {} allows {allowed}, which is not in its workspace",
@@ -158,7 +211,11 @@ impl Suite {
                     task.id
                 )));
             }
-            for protected in &task.protected_files {
+            for protected in task
+                .protected_files
+                .iter()
+                .filter(|_| task.repository.is_none())
+            {
                 if !task.files.contains_key(protected) {
                     return Err(EvalError::Invalid(format!(
                         "task {} protects {protected}, which is not in its workspace",
@@ -191,14 +248,165 @@ impl Suite {
     }
 }
 
+/// What checking one external task against its own repository established.
+///
+/// A corpus task is only worth running if the defect it names is really
+/// present and the hidden test really discriminates. Both are properties of
+/// the upstream commits, not of anything poorAI wrote, so both can be checked
+/// rather than asserted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalTaskCheck {
+    pub task_id: String,
+    /// The project's own suite passes at the commit the task starts from. A
+    /// workspace that is already broken would score every deployment as
+    /// failing for reasons that have nothing to do with the task.
+    pub visible_passes_at_start: bool,
+    /// The hidden test fails at that commit -- the defect is present.
+    pub hidden_fails_at_start: bool,
+    /// The hidden test passes at the upstream fix -- the task is solvable, and
+    /// the test is measuring the thing the fix changed.
+    pub hidden_passes_at_fix: bool,
+    pub detail: String,
+}
+
+impl ExternalTaskCheck {
+    pub fn sound(&self) -> bool {
+        self.visible_passes_at_start && self.hidden_fails_at_start && self.hidden_passes_at_fix
+    }
+}
+
+/// Checks that an external task is fair before any deployment is measured on it.
+pub fn check_external_task(task: &Task) -> Result<ExternalTaskCheck, EvalError> {
+    let Some(source) = &task.repository else {
+        return Err(EvalError::Invalid(format!(
+            "task {} is not set in an external repository",
+            task.id
+        )));
+    };
+    let run = |root: &Path, verifier: &Verifier| -> bool {
+        std::process::Command::new(&verifier.executable)
+            .args(&verifier.args)
+            .current_dir(root)
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    };
+
+    let start = tempfile::tempdir()?;
+    materialise_repository(source, start.path())?;
+    let visible_passes_at_start = run(start.path(), &task.visible_verifier);
+    materialise_hidden(task, start.path())?;
+    let hidden_fails_at_start = !run(start.path(), &task.hidden_verifier);
+
+    // The same repository at the upstream fix. Its tree is whatever that
+    // commit produced, so no tree hash is declared for it and none is checked.
+    let fixed = tempfile::tempdir()?;
+    let at_fix = RepositorySource {
+        commit: source.fix_commit.clone(),
+        tree_hash: String::new(),
+        ..source.clone()
+    };
+    materialise_repository_unchecked(&at_fix, fixed.path())?;
+    materialise_hidden(task, fixed.path())?;
+    let hidden_passes_at_fix = run(fixed.path(), &task.hidden_verifier);
+
+    Ok(ExternalTaskCheck {
+        task_id: task.id.clone(),
+        visible_passes_at_start,
+        hidden_fails_at_start,
+        hidden_passes_at_fix,
+        detail: format!(
+            "{} at {} (fix {} of {})",
+            source.url, source.commit, source.fix_commit, source.fix_committed_at
+        ),
+    })
+}
+
 /// Writes the hidden files, immediately before the hidden verifier runs.
 pub fn materialise_hidden(task: &Task, root: &Path) -> Result<(), EvalError> {
     write_all(&task.hidden_files, root)
 }
 
 /// Writes a task's initial workspace into `root`.
+///
+/// Either the inline files, or a checkout of the repository the task pins.
 pub fn materialise(task: &Task, root: &Path) -> Result<(), EvalError> {
-    write_all(&task.files, root)
+    match &task.repository {
+        Some(source) => materialise_repository(source, root),
+        None => write_all(&task.files, root),
+    }
+}
+
+/// Checks out a pinned commit into `root` and verifies the tree it produced.
+///
+/// The clone is shallow at one commit: a project's whole history is not the
+/// workspace, and fetching it would make every run pay for it.
+pub fn materialise_repository(source: &RepositorySource, root: &Path) -> Result<(), EvalError> {
+    if source.tree_hash.is_empty() {
+        return Err(EvalError::Invalid(format!(
+            "{} at {} declares no tree hash, so the checkout could not be verified",
+            source.url, source.commit
+        )));
+    }
+    materialise_repository_unchecked(source, root)
+}
+
+/// The same, without requiring a declared tree hash. Used only to visit the
+/// upstream fix while checking a task, where the tree is whatever that commit
+/// produced and there is nothing to declare it against.
+fn materialise_repository_unchecked(
+    source: &RepositorySource,
+    root: &Path,
+) -> Result<(), EvalError> {
+    let git = |args: &[&str]| -> Result<String, EvalError> {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()?;
+        if !output.status.success() {
+            return Err(EvalError::Invalid(format!(
+                "git {} failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+    std::fs::create_dir_all(root)?;
+    git(&["init", "-q"])?;
+    git(&["remote", "add", "origin", &source.url])?;
+    git(&["fetch", "-q", "--depth", "1", "origin", &source.commit])?;
+    git(&["checkout", "-q", "FETCH_HEAD"])?;
+
+    // A commit id is a content address, so this should never differ. It is
+    // checked because if it ever did, the run would have been measured against
+    // a workspace nobody declared, and silence about that is the one outcome
+    // worth ruling out.
+    let tree = git(&["rev-parse", "HEAD^{tree}"])?;
+    if !source.tree_hash.is_empty() && tree != source.tree_hash {
+        return Err(EvalError::Invalid(format!(
+            "checkout of {} at {} produced tree {tree}, but the corpus declares {}",
+            source.url, source.commit, source.tree_hash
+        )));
+    }
+    // The repository's own history is not part of the task, and leaving it
+    // would let an agent read the fix out of the log.
+    std::fs::remove_dir_all(root.join(".git"))?;
+    for step in &source.setup {
+        let output = std::process::Command::new(&step.executable)
+            .args(&step.args)
+            .current_dir(root)
+            .output()?;
+        if !output.status.success() {
+            return Err(EvalError::Invalid(format!(
+                "setup step `{} {}` failed: {}",
+                step.executable,
+                step.args.join(" "),
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn write_all(files: &BTreeMap<String, String>, root: &Path) -> Result<(), EvalError> {

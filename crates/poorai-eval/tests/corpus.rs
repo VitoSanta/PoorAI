@@ -10,6 +10,7 @@ fn task(id: &str, kind: TaskKind) -> Task {
         kind,
         statement: "fix it".into(),
         allowed_files: vec!["src/lib.rs".into()],
+        repository: None,
         files: BTreeMap::from([
             ("src/lib.rs".to_string(), "broken".to_string()),
             ("Cargo.toml".to_string(), "[package]".to_string()),

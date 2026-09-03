@@ -81,6 +81,10 @@ enum Command {
     Eval(Eval),
     /// Named sessions, reconstructed from the event log.
     Session(SessionArgs),
+    /// Check that an external corpus is fair before anything is measured on it.
+    CheckCorpus {
+        suite: PathBuf,
+    },
     Report {
         id: String,
         #[arg(long, default_value = "json")]
@@ -304,6 +308,7 @@ async fn main() {
             )
             .await,
         ),
+        Command::CheckCorpus { suite } => print(cli.json, check_corpus(&suite)),
         Command::Session(args) => print(
             cli.json,
             match args.command {
@@ -338,6 +343,48 @@ async fn main() {
     };
     std::process::exit(code);
 }
+/// Checks every externally-sourced task in a suite against its own repository.
+///
+/// A task is only worth running if the defect it names is really present at the
+/// commit it starts from, and the hidden test really distinguishes the repaired
+/// tree from the broken one. Both are properties of the upstream commits rather
+/// than of anything poorAI wrote, so both are checked instead of asserted.
+fn check_corpus(suite: &Path) -> Result<serde_json::Value, SafeError> {
+    let suite = poorai_eval::Suite::load(suite).map_err(|e| SafeError {
+        category: "invalid_input",
+        context: e.to_string(),
+    })?;
+    let mut checks = Vec::new();
+    let mut unsound = Vec::new();
+    for task in suite.tasks.iter().filter(|t| t.repository.is_some()) {
+        let check = poorai_eval::check_external_task(task).map_err(|e| SafeError {
+            category: "invalid_input",
+            context: e.to_string(),
+        })?;
+        if !check.sound() {
+            unsound.push(check.task_id.clone());
+        }
+        checks.push(check);
+    }
+    if checks.is_empty() {
+        return Err(SafeError {
+            category: "invalid_input",
+            context: "no task in this suite is set in an external repository".into(),
+        });
+    }
+    if !unsound.is_empty() {
+        return Err(SafeError {
+            category: "invalid_input",
+            context: format!(
+                "unsound tasks: {}. Details: {}",
+                unsound.join(", "),
+                serde_json::to_string(&checks).unwrap_or_default()
+            ),
+        });
+    }
+    Ok(serde_json::json!({"suite": suite.name, "revision": suite.revision(), "checks": checks}))
+}
+
 /// Where the workspace stands in version control, as far as it can be read.
 ///
 /// Reported rather than assumed: a workspace need not be a git checkout, and a
@@ -1098,6 +1145,7 @@ async fn evaluate_task(
                 "history_rewrite" => Some(poorai_tools::Approval::HistoryRewrite),
                 "publish" => Some(poorai_tools::Approval::Publish),
                 "network_access" => Some(poorai_tools::Approval::NetworkAccess),
+                "local_service" => Some(poorai_tools::Approval::LocalService),
                 _ => None,
             })
             .collect(),
