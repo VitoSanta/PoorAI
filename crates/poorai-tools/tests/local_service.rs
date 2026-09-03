@@ -13,6 +13,7 @@ use std::time::Duration;
 fn policy(root: &Path, approvals: Vec<Approval>) -> ToolPolicy {
     ToolPolicy {
         root: root.to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec!["python3".into()],
         output_limit: 64 * 1024,
         timeout: Duration::from_secs(20),

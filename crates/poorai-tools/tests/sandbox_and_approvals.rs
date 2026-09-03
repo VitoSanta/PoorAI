@@ -8,6 +8,7 @@ use std::time::Duration;
 fn policy(root: &Path) -> ToolPolicy {
     ToolPolicy {
         root: root.to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec!["sh".into(), "git".into(), "cargo".into(), "echo".into()],
         output_limit: 8192,
         timeout: Duration::from_secs(20),
@@ -413,4 +414,105 @@ fn a_network_grant_does_not_widen_the_filesystem_boundary() {
     .unwrap();
     assert!(result.sandboxed);
     assert!(!target.exists());
+}
+
+// ------------------------------------------------------------------ reads
+
+/// The sandbox confined writes and left reads open. With `--provision`
+/// granting an arbitrary executable and a network together, that is the shape
+/// of an exfiltration, and the nine denied credential paths narrowed it rather
+/// than closing it.
+///
+/// This fixture first proves the file is readable *without* the sandbox. Three
+/// fixtures in this project have passed for a reason unrelated to what they
+/// tested -- one aimed at a `~/.ssh` that did not exist and reported "no such
+/// file" as a denial while a mutant removing the rule survived.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_sandboxed_command_cannot_read_a_file_outside_the_workspace() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let secret = outside.path().canonicalize().unwrap().join("private.txt");
+    fs::write(&secret, "the contents nobody outside should see").unwrap();
+
+    // Without the sandbox this succeeds, which is what makes the denial below
+    // evidence of the sandbox rather than of a missing file.
+    let unsandboxed = ToolPolicy {
+        sandbox: SandboxPolicy::Disabled,
+        ..policy(root.path())
+    };
+    let open = block_on(run_command(
+        &unsandboxed,
+        "sh",
+        &["-c".to_string(), format!("cat {}", secret.display())],
+    ))
+    .unwrap();
+    assert_eq!(open.exit_code, Some(0), "the file was not readable at all");
+    assert!(open.stdout.contains("nobody outside"));
+
+    let result = block_on(run_command(
+        &policy(root.path()),
+        "sh",
+        &["-c".to_string(), format!("cat {}", secret.display())],
+    ))
+    .unwrap();
+    assert!(result.sandboxed, "the fixture did not exercise a sandbox");
+    assert_ne!(result.exit_code, Some(0), "the sandbox read it: {result:?}");
+    assert!(
+        !result.stdout.contains("nobody outside"),
+        "contents leaked: {}",
+        result.stdout
+    );
+}
+
+/// A directory outside the workspace cannot be listed either. Names are
+/// evidence on their own -- a repository list, a client list, a filename that
+/// says what a person is working on.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_sandboxed_command_cannot_list_a_directory_outside_the_workspace() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let outside = outside.path().canonicalize().unwrap();
+    fs::write(outside.join("acquisition-notes.md"), "x").unwrap();
+
+    let result = block_on(run_command(
+        &policy(root.path()),
+        "sh",
+        &["-c".to_string(), format!("ls {}", outside.display())],
+    ))
+    .unwrap();
+    assert!(result.sandboxed);
+    assert!(
+        !result.stdout.contains("acquisition-notes"),
+        "directory names leaked: {}",
+        result.stdout
+    );
+}
+
+/// The failure mode of a strict profile is that nothing runs at all: denying
+/// every read denies the linker its cache and `/usr/bin/true` aborts before
+/// `main`. The boundary is only worth having if the toolchain still works, so
+/// that is asserted with a real command rather than by reading the profile.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_toolchain_still_runs_under_the_read_boundary() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("in.txt"), "workspace contents").unwrap();
+    let result = block_on(run_command(
+        &policy(root.path()),
+        "sh",
+        &["-c".to_string(), "cat in.txt && git --version".to_string()],
+    ))
+    .unwrap();
+    assert!(result.sandboxed);
+    assert_eq!(
+        result.exit_code,
+        Some(0),
+        "the read boundary broke the toolchain: {result:?}"
+    );
+    // The workspace itself stays readable, which is the whole point of the
+    // agent being there.
+    assert!(result.stdout.contains("workspace contents"));
+    assert!(result.stdout.contains("git version"));
 }

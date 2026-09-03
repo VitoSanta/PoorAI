@@ -64,6 +64,7 @@ fn run(max_actions: u8) -> Vec<String> {
     std::fs::write(root.path().join("code.rs"), "broken").unwrap();
     let policy = ToolPolicy {
         root: root.path().to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec!["true".into()],
         output_limit: 8192,
         timeout: Duration::from_secs(5),
@@ -154,6 +155,7 @@ fn the_loop_does_not_complete_the_task_on_the_deployments_behalf() {
     let run_id = poorai_domain::new_id();
     let policy = ToolPolicy {
         root: root.path().to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec!["true".into()],
         output_limit: 8192,
         timeout: Duration::from_secs(5),
@@ -261,6 +263,7 @@ mod history {
         std::fs::write(root.path().join("code.rs"), "broken").unwrap();
         let policy = ToolPolicy {
             root: root.path().to_path_buf(),
+            extra_readable: Vec::new(),
             allow_commands: vec!["true".into()],
             output_limit: 8192,
             timeout: Duration::from_secs(5),
@@ -388,6 +391,7 @@ mod already_failing {
         let root = tempfile::tempdir().unwrap();
         let policy = ToolPolicy {
             root: root.path().to_path_buf(),
+            extra_readable: Vec::new(),
             allow_commands: vec!["false".into(), "true".into()],
             output_limit: 8192,
             timeout: Duration::from_secs(5),
@@ -504,6 +508,7 @@ mod turn_cost {
         let root = tempfile::tempdir().unwrap();
         let policy = ToolPolicy {
             root: root.path().to_path_buf(),
+            extra_readable: Vec::new(),
             allow_commands: vec!["true".into()],
             output_limit: 8192,
             timeout: Duration::from_secs(5),

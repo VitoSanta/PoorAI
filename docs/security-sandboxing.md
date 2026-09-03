@@ -28,9 +28,13 @@ The boundary is the host, not the loopback interface. seatbelt accepts only `*` 
 
 ## What the policy above overstates — 2026-09-03
 
-"Deny access outside it" and "deny credential stores and home-directory reads" describe the intent and not the profile. **The sandbox confines writing, not reading.** Nine known credential paths are denied to every sandboxed run, and everything else on the host remains readable — the home directory included. A command under `--provision`, which grants an arbitrary executable and the network together, is therefore the shape of an exfiltration, and that flag's help says so.
+**Closed as of 2026-09-03.** Reads were open: nine credential paths were denied and the rest of the machine, home directory included, was legible to any command the agent ran. Reading is now denied by default and opened deliberately — the system paths a process needs to start, the workspace, and the toolchain directories the derived allowlist names. Documents, mail, browser profiles and other repositories are neither readable nor listable.
 
-Closing it means a deny-read outside the workspace with a minimal allowlist for the runtime and shared libraries a child needs to start, and moving toolchain provisioning into a separate process or a VM rather than granting it inside the run.
+Three details had to be measured rather than reasoned about. The root directory must be readable as a `literal` or no process starts at all — `/usr/bin/true` aborts before `main`, with no diagnostic. `git` reads its developer directory link from `/private/var/select`. And the denial is on **data**, not on every read: denying metadata denies the path walk that finds the executable, which is a broken sandbox rather than a strict one, while denying data still makes contents unreadable and directories unlistable.
+
+`extra_readable` is the one declared exception, used by corpus preparation for a local mirror the corpus itself names. A task's policy leaves it empty: an agent working in a repository has no business reading elsewhere.
+
+What remains open under `--provision` is narrower but not nothing: an arbitrary executable with a network can still read the system paths and the toolchain directories. Running provisioning in a separate process or VM is the rest of that answer.
 
 **Evaluation was outside this boundary entirely, and is not any more.** Corpus materialisation ran `git` and each entry's declared setup steps, and external tasks ran their verifiers, all through `std::process::Command` with no sandbox, no timeout and no output cap — bypassing everything above from the one place that executes text nobody in this repository wrote. Every such command now runs through `run_command` under a policy of its own: writes confined to the directory being prepared, a wall-clock bound, a bounded output, a process group killed on either, and an allowlist of `git` plus exactly what the corpus declared. A verifier's policy names only the verifier, so one that shells out to something undeclared is refused.
 

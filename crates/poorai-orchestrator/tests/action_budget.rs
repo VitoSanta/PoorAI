@@ -53,6 +53,7 @@ fn run(malformed: usize, max_actions: u8) -> (Store, poorai_domain::Id) {
     std::fs::write(root.path().join("code.rs"), "body").unwrap();
     let policy = ToolPolicy {
         root: root.path().to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec!["true".into()],
         output_limit: 8192,
         timeout: Duration::from_secs(5),
@@ -160,6 +161,7 @@ fn a_deployment_stammering_below_the_consecutive_limit_is_still_bounded() {
     std::fs::write(root.path().join("code.rs"), "body").unwrap();
     let policy = ToolPolicy {
         root: root.path().to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec![],
         output_limit: 8192,
         timeout: Duration::from_secs(5),
@@ -237,6 +239,7 @@ fn a_deployment_that_never_calls_anything_is_stopped() {
     let root = tempfile::tempdir().unwrap();
     let policy = ToolPolicy {
         root: root.path().to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec![],
         output_limit: 8192,
         timeout: Duration::from_secs(5),

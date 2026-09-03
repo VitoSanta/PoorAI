@@ -166,6 +166,7 @@ async fn a_denied_action_is_returned_to_the_model_rather_than_ending_the_run() {
     std::fs::write(root.path().join("code.rs"), "broken").unwrap();
     let policy = ToolPolicy {
         root: root.path().to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec!["true".into()],
         output_limit: 4096,
         timeout: Duration::from_secs(5),
@@ -224,6 +225,7 @@ async fn the_whole_run_is_recorded_under_one_identifier() {
     std::fs::write(root.path().join("code.rs"), "broken").unwrap();
     let policy = ToolPolicy {
         root: root.path().to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec!["true".into()],
         output_limit: 4096,
         timeout: Duration::from_secs(5),
@@ -277,6 +279,7 @@ async fn a_successful_edit_is_followed_by_the_narrow_check() {
     std::fs::write(root.path().join("code.rs"), "broken").unwrap();
     let policy = ToolPolicy {
         root: root.path().to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec!["true".into()],
         output_limit: 4096,
         timeout: Duration::from_secs(10),
@@ -326,6 +329,7 @@ async fn a_denied_edit_does_not_trigger_a_check() {
     std::fs::write(root.path().join("code.rs"), "broken").unwrap();
     let policy = ToolPolicy {
         root: root.path().to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec!["true".into()],
         output_limit: 4096,
         timeout: Duration::from_secs(10),

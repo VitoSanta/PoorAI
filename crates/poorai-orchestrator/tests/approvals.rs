@@ -155,6 +155,7 @@ fn gated_run(answers: Vec<ApprovalDecision>) -> (Store, poorai_domain::Id, Strin
     std::fs::write(root.path().join("Cargo.toml"), body).unwrap();
     let policy = ToolPolicy {
         root: root.path().to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec![],
         output_limit: 64 * 1024,
         timeout: Duration::from_secs(5),

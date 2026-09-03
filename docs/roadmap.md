@@ -446,7 +446,6 @@ The four items that had to be true before another campaign, and are now.
 | Item | What is wrong now | What closing it looks like |
 |---|---|---|
 | Resume is continuity, not a checkpoint | A session carries facts forward; a crashed run restarts from a summary rather than from the state it was in | Run state is a typed projection of the event log through one reducer, and a checkpoint is resumable |
-| Reading outside the workspace is not denied | seatbelt confines writes and denies nine known credential paths; everything else on the host is readable, and `ToolchainInstall` with `NetworkAccess` is an arbitrary executable with a network | Deny-read outside the workspace with a minimal allowlist for runtime and dylibs; provisioning in a separate process or VM |
 | The capability gate is presence, not rate | A deployment observed at 2 of 3 on `edit` passes exactly as one observed at 3 of 3; the measured intermittency buys no defensive strategy | The rate is an input to the strategy — more trials, a narrower tool schema, or a refusal — rather than a number recorded and rounded to a boolean |
 
 ### P1, the mechanical half — 2026-09-03
@@ -496,6 +495,24 @@ Progress is now defined by what changed rather than by what succeeded: a read su
 **The second condition is the one that took the thought.** Reading six files a run has never read is investigation, and reporting that as going nowhere would interrupt exactly what a hard task needs. So a window with anything novel in it is never flagged, and a fixture asserts it: removing the novelty guard makes that fixture fail while the three detection fixtures still pass, which is what says the guard is load-bearing rather than decorative.
 
 The loop states the fact and decides nothing. What to do about it stays the deployment's, because deciding would be the harness taking over the task.
+
+### The sandbox reads as narrowly as it writes — 2026-09-03
+
+Writes were confined and reads were open. Nine known credential paths were denied and everything else on the machine was legible to a command the agent ran — which, with `--provision` granting an arbitrary executable and a network together, is the shape of an exfiltration. The denial narrowed the risk rather than closing it, and this document said so.
+
+Reading is now denied by default and opened deliberately: the system paths a process needs to start, the workspace, and the toolchain directories the derived command allowlist actually names. A command can no longer read or list a user's documents, mail, browser profile or other repositories.
+
+**Three things had to be measured rather than reasoned about**, and each was found by a command failing rather than by reading the profile.
+
+The root directory has to be readable or nothing starts: `/usr/bin/true` aborts before `main`, with no diagnostic, because a path cannot be resolved. It is a `literal`, not a `subpath`, or it reopens everything.
+
+`git` reads its developer directory link from `/private/var/select` and refuses to run without it.
+
+And the denial is on **data**, not on every read. Denying metadata denies the walk that resolves a path, so the executable itself stops being findable — a broken sandbox rather than a strict one. Denying the data still closes what matters: contents are unreadable and a directory cannot be listed, so a command can neither read a person's files nor enumerate their names.
+
+**A real interaction surfaced immediately.** Corpus preparation clones from whatever the corpus declares, and a fixture using a local mirror stopped working — correctly, since preparation now cannot read outside its root either. Rather than widen the profile, the policy gained `extra_readable` and preparation opens exactly the path the corpus declared and nothing else. A URL opens nothing; a verifier names no source and gets nothing.
+
+The fixtures run real commands. One proves the file is readable *without* the sandbox before asserting the denial — three fixtures in this project have passed for a reason unrelated to what they tested — and another asserts `git --version` and a workspace read still work, because the failure mode of a strict profile is that nothing runs at all.
 
 ### P2 — an agent for whole codebases
 

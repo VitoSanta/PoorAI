@@ -39,6 +39,7 @@ fn run(max_actions: u8) -> (Store, poorai_domain::Id) {
     std::fs::write(root.path().join("code.rs"), "one").unwrap();
     let policy = ToolPolicy {
         root: root.path().to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec![],
         output_limit: 4096,
         timeout: Duration::from_secs(5),
@@ -123,6 +124,7 @@ async fn a_successful_action_clears_the_streak() {
     std::fs::write(root.path().join("code.rs"), "one").unwrap();
     let policy = ToolPolicy {
         root: root.path().to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec![],
         output_limit: 4096,
         timeout: Duration::from_secs(5),
@@ -203,6 +205,7 @@ mod no_progress {
         }
         let policy = ToolPolicy {
             root: root.path().to_path_buf(),
+            extra_readable: Vec::new(),
             allow_commands: vec![],
             output_limit: 4096,
             timeout: Duration::from_secs(5),

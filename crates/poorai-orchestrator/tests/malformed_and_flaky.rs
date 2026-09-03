@@ -15,6 +15,7 @@ use std::time::Duration;
 fn policy(root: &Path, allow: Vec<String>) -> ToolPolicy {
     ToolPolicy {
         root: root.to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: allow,
         output_limit: 8192,
         timeout: Duration::from_secs(20),

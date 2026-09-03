@@ -264,6 +264,42 @@ const NEVER_READABLE: [&str; 9] = [
     "Library/Keychains",
 ];
 
+/// System paths a process needs to exist at all.
+///
+/// A sandbox that denies reading everything outside the workspace also denies
+/// the dynamic linker its cache and the shell its binaries, and nothing starts.
+/// This is the floor: enough to load and run a program, and no user data.
+const SYSTEM_READABLE: [&str; 10] = [
+    // The root directory itself: without it nothing resolves a path and no
+    // process starts at all. Measured -- `/usr/bin/true` aborts without it.
+    "/",
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/System",
+    "/Library",
+    "/private/var/db",
+    // `xcode-select` reads its developer directory link from here, and git
+    // refuses to run without it.
+    "/private/var/select",
+    "/private/etc",
+    "/dev",
+];
+
+/// Where toolchains live outside the workspace.
+///
+/// The command allowlist is derived from the repository, and what it names is
+/// usually installed in the user's home -- cargo, rustup, pyenv, nvm. Denying
+/// the home wholesale would deny the agent the compiler it was told to use, so
+/// these subpaths are readable and the rest of the home is not. A toolchain
+/// poorAI installed itself lives inside the workspace and needs no entry.
+const TOOLCHAIN_READABLE: [&str; 10] = [
+    ".cargo", ".rustup", ".local", ".pyenv", ".nvm", ".sdkman", ".gradle", ".m2", "go", ".bun",
+];
+
+/// Toolchain roots outside the home, by convention on this platform.
+const TOOLCHAIN_PREFIXES: [&str; 3] = ["/opt/homebrew", "/opt/local", "/Applications/Xcode.app"];
+
 /// Dependency manifests and lockfiles. Editing one changes what the build
 /// fetches and executes, so it is an approval gate rather than a plain edit.
 const DEPENDENCY_MANIFESTS: [&str; 12] = [
@@ -376,6 +412,15 @@ pub fn edit_approval(relative: &Path) -> Option<Approval> {
 #[derive(Debug, Clone)]
 pub struct ToolPolicy {
     pub root: PathBuf,
+    /// Paths outside the root a command may read, named by whoever built the
+    /// policy.
+    ///
+    /// Empty for a task: an agent working in a repository has no business
+    /// reading elsewhere. Corpus preparation is the case that needs it, and
+    /// only for the source the corpus itself declares -- a local mirror it was
+    /// told to clone from. Naming it here rather than widening the profile
+    /// keeps the exception to exactly what was declared.
+    pub extra_readable: Vec<PathBuf>,
     pub allow_commands: Vec<String>,
     pub output_limit: usize,
     pub timeout: Duration,
@@ -397,6 +442,7 @@ impl PolicyProfile {
         };
         ToolPolicy {
             root,
+            extra_readable: Vec::new(),
             allow_commands,
             output_limit: 64 * 1024,
             timeout: Duration::from_secs(120),
@@ -501,19 +547,75 @@ impl ToolPolicy {
         // host's; this denies the absolute paths that bypass that. Applied to
         // every sandboxed run rather than only to a grant, because there is no
         // run for which reading them would have been right.
+        let quotable = |path: &std::path::Path| -> Option<String> {
+            let path = path.to_str()?;
+            (!path.contains('"') && !path.contains('\\')).then(|| format!("(subpath \"{path}\")"))
+        };
+        // The host's real home, which is not where the child's HOME points.
+        let host_home = std::env::var_os("HOME").map(std::path::PathBuf::from);
         let mut secrets = String::new();
-        if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+        if let Some(home) = &host_home {
             let subpaths: Vec<String> = NEVER_READABLE
                 .iter()
                 .map(|relative| home.join(relative))
-                .filter_map(|path| path.to_str().map(str::to_string))
-                .filter(|path| !path.contains('"') && !path.contains('\\'))
-                .map(|path| format!("(subpath \"{path}\")"))
+                .filter_map(|path| quotable(&path))
                 .collect();
             if !subpaths.is_empty() {
                 secrets = format!("(deny file-read* {})", subpaths.join(""));
             }
+            // Kept even though the home is now unreadable by default: these
+            // are the paths for which no run has a reason, and a later
+            // allowlist entry that widened the home would otherwise reopen
+            // them silently.
         }
+        // Reads were open. The sandbox confined writes and denied the network
+        // and nine known credential paths, and left everything else on the
+        // machine legible -- which, with `--provision` granting an arbitrary
+        // executable and a network together, is the shape of an exfiltration.
+        //
+        // So reading is denied by default and opened deliberately: the system
+        // paths a process needs to start, the workspace, and the toolchain
+        // directories the derived command allowlist actually names. The rest of
+        // the home -- documents, mail, browser profiles, other repositories --
+        // is no longer readable by a command the agent runs.
+        let mut readable: Vec<String> = SYSTEM_READABLE
+            .iter()
+            .chain(TOOLCHAIN_PREFIXES.iter())
+            .map(std::path::Path::new)
+            .filter_map(|path| {
+                // The root is a literal, not a subpath: as a subpath it would
+                // re-open everything the denial just closed.
+                if path == std::path::Path::new("/") {
+                    return Some("(literal \"/\")".to_string());
+                }
+                quotable(path)
+            })
+            .collect();
+        readable.push(format!("(subpath \"{root}\")"));
+        readable.extend(
+            self.extra_readable
+                .iter()
+                .filter_map(|path| path.canonicalize().ok())
+                .filter_map(|path| quotable(&path)),
+        );
+        if let Some(home) = &host_home {
+            readable.extend(
+                TOOLCHAIN_READABLE
+                    .iter()
+                    .map(|relative| home.join(relative))
+                    .filter_map(|path| quotable(&path)),
+            );
+        }
+        // Data rather than every read. Resolving a path walks its components,
+        // and denying metadata denies that walk -- the executable itself stops
+        // being findable, which is a broken sandbox rather than a strict one.
+        // Denying the data still closes what matters: contents are unreadable
+        // and a directory cannot be listed, so a command can neither read the
+        // user's files nor enumerate them.
+        let reads = format!(
+            "(deny file-read-data)(allow file-read-data {})",
+            readable.join("")
+        );
         let network = if self.network_allowed() {
             String::new()
         } else if self.approvals.contains(&Approval::LocalService) {
@@ -545,8 +647,12 @@ impl ToolPolicy {
         } else {
             "(deny network*)".to_string()
         };
+        // Order is load-bearing: the last matching rule wins, so the reads
+        // allowlist follows its blanket denial and the credential denial
+        // follows the allowlist -- otherwise a key under a readable toolchain
+        // directory would be readable again.
         Some(format!(
-            "(version 1)(allow default)(deny file-write*)(allow file-write* (subpath \"{root}\"))(allow file-write-data (literal \"/dev/null\") (literal \"/dev/stdout\") (literal \"/dev/stderr\")){secrets}{network}"
+            "(version 1)(allow default)(deny file-write*)(allow file-write* (subpath \"{root}\"))(allow file-write-data (literal \"/dev/null\") (literal \"/dev/stdout\") (literal \"/dev/stderr\")){reads}{secrets}{network}"
         ))
     }
     pub fn redact(&self, text: &str) -> (String, bool) {
@@ -1348,6 +1454,7 @@ mod tests {
     fn traversal_denied() {
         let p = ToolPolicy {
             root: PathBuf::from("/tmp/root"),
+            extra_readable: Vec::new(),
             allow_commands: vec![],
             output_limit: 1,
             timeout: Duration::from_secs(1),
@@ -1360,6 +1467,7 @@ mod tests {
     fn redacts() {
         let p = ToolPolicy {
             root: PathBuf::new(),
+            extra_readable: Vec::new(),
             allow_commands: vec![],
             output_limit: 1,
             timeout: Duration::ZERO,
@@ -1375,6 +1483,7 @@ mod tests {
         std::fs::write(root.path().join("bad.bin"), [0u8, 1]).unwrap();
         let policy = ToolPolicy {
             root: root.path().to_path_buf(),
+            extra_readable: Vec::new(),
             allow_commands: vec![],
             output_limit: 100,
             timeout: Duration::ZERO,
@@ -1391,6 +1500,7 @@ mod tests {
         std::fs::write(root.path().join("safe.txt"), "before").unwrap();
         let policy = ToolPolicy {
             root: root.path().to_path_buf(),
+            extra_readable: Vec::new(),
             allow_commands: vec![],
             output_limit: 100,
             timeout: Duration::ZERO,
@@ -1415,6 +1525,7 @@ mod tests {
         symlink(outside.path(), root.path().join("escape")).unwrap();
         let policy = ToolPolicy {
             root: root.path().to_path_buf(),
+            extra_readable: Vec::new(),
             allow_commands: vec![],
             output_limit: 100,
             timeout: Duration::ZERO,
@@ -1433,6 +1544,7 @@ mod tests {
         symlink(outside.path(), root.path().join("escape")).unwrap();
         let policy = ToolPolicy {
             root: root.path().to_path_buf(),
+            extra_readable: Vec::new(),
             allow_commands: vec![],
             output_limit: 100,
             timeout: Duration::from_secs(1),

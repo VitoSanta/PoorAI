@@ -12,6 +12,7 @@ use std::time::Duration;
 fn policy(root: &Path, approvals: Vec<Approval>) -> ToolPolicy {
     ToolPolicy {
         root: root.to_path_buf(),
+        extra_readable: Vec::new(),
         // Deliberately empty: nothing the repository implied.
         allow_commands: vec![],
         output_limit: 64 * 1024,
@@ -132,6 +133,7 @@ async fn the_hosts_credentials_are_not_readable() {
     // below would hold for reasons that have nothing to do with the profile.
     let unsandboxed = ToolPolicy {
         root: root.path().to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec!["cat".into(), "ls".into()],
         output_limit: 64 * 1024,
         timeout: Duration::from_secs(30),

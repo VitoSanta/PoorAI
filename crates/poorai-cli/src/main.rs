@@ -1012,6 +1012,7 @@ async fn probe_edit_once(
     };
     let policy = poorai_tools::ToolPolicy {
         root: workspace.path().to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec![],
         output_limit: 64 * 1024,
         timeout: Duration::from_secs(10),
@@ -1440,6 +1441,7 @@ async fn evaluate_task(
     }
     let policy = poorai_tools::ToolPolicy {
         root: root.clone(),
+        extra_readable: Vec::new(),
         // Derived from what the repository is. A fixed list decides in advance
         // which languages the agent can work in, and a project whose own
         // toolchain is denied cannot be verified at all.
@@ -2366,6 +2368,7 @@ async fn prepare_profiled_run(
     })?;
     let policy = poorai_tools::ToolPolicy {
         root: root.clone(),
+        extra_readable: Vec::new(),
         allow_commands: poorai_verify::required_executables(&root),
         output_limit: 64 * 1024,
         timeout: Duration::from_secs(120),
@@ -2841,6 +2844,7 @@ async fn verify(run_id: Option<String>, scope: String) -> Result<serde_json::Val
     })?;
     let policy = poorai_tools::ToolPolicy {
         root: root.clone(),
+        extra_readable: Vec::new(),
         allow_commands: poorai_verify::required_executables(&root),
         output_limit: 64 * 1024,
         timeout: Duration::from_secs(120),

@@ -3393,6 +3393,7 @@ mod tests {
         std::fs::write(root.path().join("fixture.txt"), "safe").unwrap();
         let policy = ToolPolicy {
             root: root.path().to_path_buf(),
+            extra_readable: Vec::new(),
             allow_commands: vec![],
             output_limit: 128,
             timeout: Duration::from_secs(1),
@@ -3415,6 +3416,7 @@ mod tests {
         std::fs::write(root.path().join("fixture.txt"), "safe").unwrap();
         let policy = ToolPolicy {
             root: root.path().to_path_buf(),
+            extra_readable: Vec::new(),
             allow_commands: vec!["true".into()],
             output_limit: 1024,
             timeout: Duration::from_secs(10),
@@ -3452,6 +3454,7 @@ mod tests {
         .unwrap();
         let policy = ToolPolicy {
             root: root.path().to_path_buf(),
+            extra_readable: Vec::new(),
             allow_commands: vec!["sh".into()],
             output_limit: 1024,
             timeout: Duration::from_secs(10),
@@ -3712,6 +3715,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let policy = ToolPolicy {
             root: root.path().to_path_buf(),
+            extra_readable: Vec::new(),
             allow_commands: vec![],
             output_limit: 1024,
             timeout: Duration::from_secs(1),
@@ -3766,6 +3770,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let policy = ToolPolicy {
             root: root.path().to_path_buf(),
+            extra_readable: Vec::new(),
             allow_commands: vec![],
             output_limit: 1024,
             timeout: Duration::from_secs(1),
@@ -3827,6 +3832,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let policy = ToolPolicy {
             root: root.path().to_path_buf(),
+            extra_readable: Vec::new(),
             // Empty: the executable joins it only because a person approved it.
             allow_commands: vec![],
             output_limit: 4096,
@@ -3891,6 +3897,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let policy = ToolPolicy {
             root: root.path().to_path_buf(),
+            extra_readable: Vec::new(),
             allow_commands: vec![],
             output_limit: 4096,
             timeout: Duration::from_secs(5),
@@ -3945,6 +3952,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let policy = ToolPolicy {
             root: root.path().to_path_buf(),
+            extra_readable: Vec::new(),
             allow_commands: vec![],
             output_limit: 1024,
             timeout: Duration::from_secs(1),

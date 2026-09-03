@@ -289,7 +289,11 @@ impl ExternalTaskCheck {
 /// the declared steps name. Everything else it shares -- writes confined to the
 /// directory being prepared, a wall-clock bound, a bounded output, and a
 /// process group killed when either is exceeded.
-fn corpus_policy(root: &Path, executables: &[String]) -> poorai_tools::ToolPolicy {
+fn corpus_policy(
+    root: &Path,
+    executables: &[String],
+    source: Option<&str>,
+) -> poorai_tools::ToolPolicy {
     let mut allow_commands: Vec<String> = vec!["git".into()];
     for executable in executables {
         if !allow_commands.contains(executable) {
@@ -298,6 +302,15 @@ fn corpus_policy(root: &Path, executables: &[String]) -> poorai_tools::ToolPolic
     }
     poorai_tools::ToolPolicy {
         root: root.to_path_buf(),
+        // A corpus may name a local mirror instead of a URL, and preparation
+        // has to read it. Exactly the declared path and nothing else: reads
+        // outside the root are otherwise denied, which is what stops a corpus
+        // file from cloning the rest of the machine into a workspace.
+        extra_readable: source
+            .map(std::path::PathBuf::from)
+            .filter(|path| path.is_dir())
+            .into_iter()
+            .collect(),
         allow_commands,
         output_limit: 256 * 1024,
         timeout: Duration::from_secs(600),
@@ -336,7 +349,7 @@ pub async fn check_external_task(task: &Task) -> Result<ExternalTaskCheck, EvalE
         // A verifier is a command a corpus file names, so it is bounded like
         // any other. A verifier that cannot be run under the policy is not a
         // passing verifier.
-        let policy = corpus_policy(root, std::slice::from_ref(&verifier.executable));
+        let policy = corpus_policy(root, std::slice::from_ref(&verifier.executable), None);
         corpus_command(&policy, &verifier.executable, &verifier.args)
             .await
             .is_ok_and(|result| result.exit_code == Some(0))
@@ -417,7 +430,7 @@ async fn materialise_repository_unchecked(
         .iter()
         .map(|step| step.executable.clone())
         .collect();
-    let policy = corpus_policy(root, &setup_executables);
+    let policy = corpus_policy(root, &setup_executables, Some(source.url.as_str()));
     let git = async |args: &[&str]| -> Result<String, EvalError> {
         let args: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
         let result = corpus_command(&policy, "git", &args).await?;
@@ -983,7 +996,7 @@ mod tests {
     #[test]
     fn corpus_commands_are_bounded_and_confined() {
         let root = tempfile::tempdir().unwrap();
-        let policy = corpus_policy(root.path(), &["poetry".into()]);
+        let policy = corpus_policy(root.path(), &["poetry".into()], None);
         assert_eq!(policy.root, root.path());
         assert!(policy.timeout > Duration::ZERO);
         assert!(policy.output_limit > 0);
@@ -999,7 +1012,7 @@ mod tests {
     #[test]
     fn preparation_is_granted_the_network_and_nothing_else() {
         let root = tempfile::tempdir().unwrap();
-        let policy = corpus_policy(root.path(), &[]);
+        let policy = corpus_policy(root.path(), &[], None);
         assert_eq!(
             policy.approvals,
             vec![poorai_tools::Approval::NetworkAccess]
@@ -1009,10 +1022,40 @@ mod tests {
     #[test]
     fn only_git_and_the_declared_executables_may_run() {
         let root = tempfile::tempdir().unwrap();
-        let policy = corpus_policy(root.path(), &["poetry".into(), "poetry".into()]);
+        let policy = corpus_policy(root.path(), &["poetry".into(), "poetry".into()], None);
         assert_eq!(policy.allow_commands, vec!["git", "poetry"]);
         // A corpus file that did not declare it does not get to run it.
         assert!(!policy.allow_commands.iter().any(|c| c == "curl"));
+    }
+
+    /// Reads outside the root are denied, which is what stops a corpus file
+    /// from cloning the rest of the machine into a workspace. A corpus that
+    /// names a local mirror still has to be readable, so exactly the declared
+    /// path is opened and nothing else.
+    #[test]
+    fn only_the_declared_source_is_readable_outside_the_root() {
+        let root = tempfile::tempdir().unwrap();
+        let mirror = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+
+        let policy = corpus_policy(root.path(), &[], Some(mirror.path().to_str().unwrap()));
+        assert_eq!(policy.extra_readable, vec![mirror.path().to_path_buf()]);
+        assert!(
+            !policy
+                .extra_readable
+                .contains(&elsewhere.path().to_path_buf())
+        );
+
+        // A URL is not a path, and opens nothing.
+        let remote = corpus_policy(root.path(), &[], Some("https://example.com/repo.git"));
+        assert!(remote.extra_readable.is_empty());
+
+        // A verifier names no source at all.
+        assert!(
+            corpus_policy(root.path(), &[], None)
+                .extra_readable
+                .is_empty()
+        );
     }
 
     /// A verifier is a command a corpus file names, so it runs under a policy
@@ -1021,7 +1064,7 @@ mod tests {
     #[tokio::test]
     async fn a_verifier_may_not_run_an_undeclared_executable() {
         let root = tempfile::tempdir().unwrap();
-        let policy = corpus_policy(root.path(), &["pytest".into()]);
+        let policy = corpus_policy(root.path(), &["pytest".into()], None);
         assert!(
             corpus_command(&policy, "curl", &["https://example.com".into()])
                 .await

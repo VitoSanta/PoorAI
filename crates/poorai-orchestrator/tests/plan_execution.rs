@@ -62,6 +62,7 @@ fn run() -> (Store, poorai_domain::Id, Vec<Vec<ChatMessage>>) {
     std::fs::write(root.path().join("code.rs"), "body").unwrap();
     let policy = ToolPolicy {
         root: root.path().to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec!["true".into()],
         output_limit: 8192,
         timeout: Duration::from_secs(5),
@@ -229,6 +230,7 @@ fn a_claim_beyond_the_plan_is_not_counted_as_progress() {
     let root = tempfile::tempdir().unwrap();
     let policy = ToolPolicy {
         root: root.path().to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec!["true".into()],
         output_limit: 8192,
         timeout: Duration::from_secs(5),
@@ -332,6 +334,7 @@ fn the_plan_survives_compaction() {
     std::fs::write(root.path().join("big.txt"), "x".repeat(40_000)).unwrap();
     let policy = ToolPolicy {
         root: root.path().to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec!["true".into()],
         output_limit: 64 * 1024,
         timeout: Duration::from_secs(5),

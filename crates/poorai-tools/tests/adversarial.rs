@@ -11,6 +11,7 @@ use std::time::Duration;
 fn policy(root: &Path) -> ToolPolicy {
     ToolPolicy {
         root: root.to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec!["echo".into()],
         output_limit: 4096,
         timeout: Duration::from_secs(5),
@@ -647,6 +648,7 @@ async fn a_command_line_in_the_executable_field_says_so() {
     let root = tempfile::tempdir().unwrap();
     let policy = ToolPolicy {
         root: root.path().to_path_buf(),
+        extra_readable: Vec::new(),
         allow_commands: vec!["ls".into()],
         output_limit: 8192,
         timeout: std::time::Duration::from_secs(5),
