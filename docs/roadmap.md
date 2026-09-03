@@ -541,15 +541,26 @@ A run that ended is reported, not resumed: every exit writes a terminal event, a
 | Item | What is wrong now | What closing it looks like |
 |---|---|---|
 | The index is rebuilt from nothing every run | Every run walks and re-reads the whole repository, then re-reads the ranked files; cost is O(repository) per run and quality is lexical | An incremental content-addressed index in SQLite, invalidated by hash and HEAD, carrying import, call and test-ownership edges |
-| The filesystem surface is read, create, replace | No delete, move, rename or mkdir, no structured `git status`/`diff`, no multi-hunk patch and no structure-aware edit — a task that reorganises files cannot be expressed, and a change touching several places in one file is several whole-file rewrites | The missing capabilities under the existing policy and audit, read-only VCS first; a patch applying several hunks under one hash guard before anything parses a language |
+| A change touching several places in one file is several rewrites | No multi-hunk patch and no structure-aware edit | A patch applying several hunks under one hash guard, before anything parses a language |
 | Diagnostics are text | Compiler and test output reaches the deployment as bounded prose; nothing maps a failure to a file and line | Typed diagnostics per verifier, so recovery targets a location rather than a paragraph |
 | Tool history is text in a chat | `ChatMessage` carries a role and a string; calls and results are serialised JSON with no call ids, so a protocol-sensitive deployment can lose the pairing | Native tool-call and tool-result messages with ids, matching what the backend's own protocol expects |
 | A plan is a list, not a graph | Steps are claimed, reconciled and never verified individually | Subgoals with their own local verifiers, and replanning driven by their outcomes |
 | The event log is append-only by convention | The API only appends, but SQLite permits `UPDATE` and `DELETE` and no verifier walks the chain; the chain is global, so a run's events depend on runs interleaved with it | A per-run chain under a global root, a chain verifier, real migrations and an artifact table. The typed events this needed now exist. |
 | Calibration measures allocation, not occupancy | A tier is qualified by a prompt of one token and pressure sampled before generation, so "262144 is nearly free" describes an allocation | A ladder that fills the context and samples peak resident memory during generation |
-| Pre-existing failures make some tasks impossible | The deployment is told which checks were already failing, and completion still requires every check to pass — so a task in a repository with an unrelated broken test cannot be completed correctly | Completion judged against the baseline: no regression and the targeted check fixed, rather than a green suite |
 | Every edit re-runs every selected check | Verification is not narrowed to what the edit could have affected, so a large suite is paid in full after each change | Targeted check first, broader suite on escalation, as `verification-recovery.md` already specifies |
 | The context is one message, budgeted by estimate | Repository excerpts and the task share a user message; quotas are constants at four characters per token | A `ContextCompiler` taking typed sections and returning a compiled prompt with per-section estimated and reported cost, hashes, truncation decisions and an output reserve |
+
+### Reorganising, seeing, and not being blocked by someone else's failure — 2026-09-03
+
+Three P2 items, all of which turned out to be smaller than the ones around them.
+
+**Completion is judged against the baseline.** Requiring every check to pass made a task impossible wherever the repository was already failing one: the agent is asked to fix a parser and refused because an unrelated test was broken before it arrived. Those failures are not its work and never were. What verification has ever actually proved is that nothing broke — it has never proved the task was done, in a green repository either — so the rule is now the honest one, and `suite_green` and `still_failing_from_before` are recorded beside it as the different facts they are. Restoring the all-green requirement fails the fixture.
+
+**The filesystem surface is no longer read, create, replace.** `make_directory`, `delete_path` and `move_path` exist, so a task that reorganises files can be expressed. A delete is the least reversible edit there is, so a file needs its current hash exactly as an edit does; a directory has no single hash, so removing one has to be asked for and returns the count of what went. A move refuses an existing destination rather than overwriting it, and a symlink is refused rather than followed — what it points at may live outside the workspace, and deleting through one deletes there. Both ends of a move resolve against the root.
+
+**The agent can see its own change.** `vcs_status` and `vcs_diff` are read-only by construction: no argument reaches a mutating subcommand, which is what keeps them out of the approval path `git clean` and `git push` sit behind. The ledger named the files a session changed and their hashes, which answers *what* and not *how much*; an agent had to remember every file it had touched, and a hash is not a diff.
+
+A delete and a move now count as edits for the checks and for the progress window: the workspace moved even though no file has a new hash.
 
 ### P3 — a measurable beta
 

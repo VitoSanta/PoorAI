@@ -752,8 +752,20 @@ pub enum RunEvent {
         passing: bool,
     },
     VerificationResult {
+        /// No check that was passing before the run is failing now. This is
+        /// what verification proves, and all it has ever proved.
         verified: bool,
         verifiable: bool,
+        /// Whether every check passes, which is a different and stricter fact
+        /// than `verified` -- and not one a task should be judged by in a
+        /// repository that was already failing something.
+        #[serde(default)]
+        suite_green: bool,
+        /// Checks still failing that were failing before the run started. Not
+        /// the agent's work, and recorded so a reader can see they were
+        /// excluded deliberately rather than missed.
+        #[serde(default)]
+        still_failing_from_before: Vec<String>,
         after: serde_json::Value,
         comparison: serde_json::Value,
         /// Checks already failing before the run touched anything, by

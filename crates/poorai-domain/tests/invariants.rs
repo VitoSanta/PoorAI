@@ -653,6 +653,8 @@ fn every_run_event_round_trips_through_its_stored_shape() {
         RunEvent::VerificationResult {
             verified: true,
             verifiable: true,
+            suite_green: false,
+            still_failing_from_before: vec!["cargo test".into()],
             after: serde_json::json!({}),
             comparison: serde_json::json!({}),
             failing_before_the_run: vec![],

@@ -38,6 +38,31 @@ pub enum ActionProposal {
     Complete {
         rationale: String,
     },
+    /// Creates a directory and its parents.
+    MakeDirectory {
+        path: String,
+    },
+    /// Removes a file, guarded by its hash, or a directory it is told to
+    /// remove whole.
+    DeletePath {
+        path: String,
+        #[serde(default)]
+        expected_hash: Option<String>,
+        #[serde(default)]
+        recursive: bool,
+    },
+    /// Moves or renames within the workspace.
+    MovePath {
+        from: String,
+        to: String,
+    },
+    /// What version control says has changed, structurally.
+    VcsStatus {},
+    /// The working tree's diff against HEAD, optionally narrowed.
+    VcsDiff {
+        #[serde(default)]
+        paths: Vec<String>,
+    },
     /// Offers a command as the deterministic check for this workspace.
     ///
     /// Runs nothing by itself. If a person approves it, it joins the checks the
@@ -803,6 +828,139 @@ pub fn list_tree(policy: &ToolPolicy, max_entries: usize) -> Result<Vec<TreeEntr
     }
     Ok(output)
 }
+
+/// What a filesystem change did, for the audit and the next call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathChange {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// Files affected, so a caller can tell one file from a directory tree.
+    pub entries: usize,
+}
+
+/// Creates a directory, and its parents, inside the workspace.
+///
+/// The surface was read, create and replace, so a task that reorganises files
+/// could not be expressed at all -- the agent could write a file into a new
+/// directory but never make an empty one, move anything, or remove what it had
+/// superseded.
+pub fn make_directory(policy: &ToolPolicy, relative: &Path) -> Result<PathChange, ToolError> {
+    let path = policy.resolve(relative)?;
+    if path.is_file() {
+        return Err(ToolError::Denied(
+            "a file already exists at that path".into(),
+        ));
+    }
+    std::fs::create_dir_all(&path)?;
+    Ok(PathChange {
+        path: relative.display().to_string(),
+        from: None,
+        entries: 0,
+    })
+}
+
+/// Deletes a file, or a directory and what it contains.
+///
+/// Guarded by the hash of what is being removed, exactly as an edit is: a
+/// delete is the most irreversible edit there is, and "the file I read" and
+/// "the file on disk" being different matters more here than anywhere else.
+/// A directory has no single hash, so removing one is deliberate rather than
+/// guarded -- `recursive` has to be asked for, and the count of what went is
+/// returned so the audit says how much.
+pub fn delete_path(
+    policy: &ToolPolicy,
+    relative: &Path,
+    expected_hash: Option<&str>,
+    recursive: bool,
+) -> Result<PathChange, ToolError> {
+    let path = policy.resolve(relative)?;
+    let metadata = std::fs::symlink_metadata(&path)?;
+    if metadata.file_type().is_symlink() {
+        return Err(ToolError::Denied(
+            "refusing to delete a symlink; it may point outside the workspace".into(),
+        ));
+    }
+    if metadata.is_dir() {
+        if !recursive {
+            return Err(ToolError::Denied(format!(
+                "{} is a directory; pass recursive to remove it and everything in it",
+                relative.display()
+            )));
+        }
+        let entries = walk_workspace(&path)?.len();
+        std::fs::remove_dir_all(&path)?;
+        return Ok(PathChange {
+            path: relative.display().to_string(),
+            from: None,
+            entries,
+        });
+    }
+    let current = hash_bytes(std::fs::read(&path)?);
+    match expected_hash {
+        Some(expected) if expected == current => {}
+        Some(_) => {
+            return Err(ToolError::Denied(format!(
+                "stale file hash; the file now hashes to {current}. Reread it before deleting."
+            )));
+        }
+        None => {
+            return Err(ToolError::Denied(
+                "deleting a file needs its current hash, as editing one does".into(),
+            ));
+        }
+    }
+    if let Some(approval) = edit_approval(relative) {
+        policy.require(approval)?;
+    }
+    std::fs::remove_file(&path)?;
+    Ok(PathChange {
+        path: relative.display().to_string(),
+        from: None,
+        entries: 1,
+    })
+}
+
+/// Moves or renames a path within the workspace.
+///
+/// Both ends are resolved against the root, so neither reaches outside it, and
+/// an existing destination is refused rather than overwritten -- the same rule
+/// `write_file` follows, and for the same reason: a blind overwrite should
+/// never be one missing argument away.
+pub fn move_path(policy: &ToolPolicy, from: &Path, to: &Path) -> Result<PathChange, ToolError> {
+    let source = policy.resolve(from)?;
+    let destination = policy.resolve(to)?;
+    if !source.exists() {
+        return Err(ToolError::Denied(format!(
+            "{} does not exist",
+            from.display()
+        )));
+    }
+    if destination.exists() {
+        return Err(ToolError::Denied(format!(
+            "{} already exists; delete it first if replacing it is intended",
+            to.display()
+        )));
+    }
+    if let Some(approval) = edit_approval(from).or_else(|| edit_approval(to)) {
+        policy.require(approval)?;
+    }
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let entries = if source.is_dir() {
+        walk_workspace(&source)?.len()
+    } else {
+        1
+    };
+    std::fs::rename(&source, &destination)?;
+    Ok(PathChange {
+        path: to.display().to_string(),
+        from: Some(from.display().to_string()),
+        entries,
+    })
+}
+
 /// Replaces text only when the caller supplies the current content hash, preventing stale edits.
 pub fn apply_replace(
     policy: &ToolPolicy,
@@ -1207,6 +1365,104 @@ pub fn search(
     }
     Ok(output)
 }
+
+/// What version control says about the workspace, structurally.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct VcsStatus {
+    /// Absent where the workspace is not a checkout, rather than invented.
+    pub branch: Option<String>,
+    pub head: Option<String>,
+    /// Paths changed since HEAD, with the two-letter porcelain code.
+    pub changed: Vec<(String, String)>,
+    pub truncated: bool,
+}
+
+/// Reads the working tree's status without changing anything.
+///
+/// The ledger names the files a session changed and their hashes, which
+/// answers *what* and not *how much*. An agent could not see its own
+/// accumulated change at all: it had to remember every file it had touched,
+/// and a hash is not a diff.
+///
+/// Read-only by construction -- there is no argument here that reaches a
+/// mutating subcommand, which is what keeps this out of the approval path that
+/// `git clean` and `git push` sit behind.
+pub async fn vcs_status(policy: &ToolPolicy) -> Result<VcsStatus, ToolError> {
+    let porcelain = git_read(policy, &["status", "--porcelain=v1", "--branch"]).await?;
+    let mut status = VcsStatus::default();
+    for line in porcelain.lines() {
+        if let Some(header) = line.strip_prefix("## ") {
+            status.branch = header
+                .split(['.', ' '])
+                .next()
+                .filter(|name| !name.is_empty() && *name != "HEAD")
+                .map(str::to_string);
+            continue;
+        }
+        if line.len() < 4 {
+            continue;
+        }
+        let (code, path) = line.split_at(2);
+        status.changed.push((
+            code.trim().to_string(),
+            path.trim().trim_matches('"').to_string(),
+        ));
+    }
+    status.head = git_read(policy, &["rev-parse", "HEAD"])
+        .await
+        .ok()
+        .map(|head| head.trim().to_string())
+        .filter(|head| !head.is_empty());
+    Ok(status)
+}
+
+/// The working tree's diff against HEAD, bounded like any other output.
+///
+/// `paths` narrows it, because a whole-repository diff is usually not the
+/// question and always the largest possible answer.
+pub async fn vcs_diff(policy: &ToolPolicy, paths: &[String]) -> Result<ToolResult, ToolError> {
+    let mut args: Vec<String> = vec![
+        "diff".into(),
+        // A diff read by a model has no use for colour or pager control
+        // sequences, and they are bytes off the output budget.
+        "--no-color".into(),
+        "--no-ext-diff".into(),
+    ];
+    if !paths.is_empty() {
+        args.push("--".into());
+        args.extend(paths.iter().cloned());
+    }
+    run_git(policy, &args).await
+}
+
+/// Runs a read-only git subcommand and returns its stdout.
+async fn git_read(policy: &ToolPolicy, args: &[&str]) -> Result<String, ToolError> {
+    let args: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+    let result = run_git(policy, &args).await?;
+    if result.exit_code != Some(0) {
+        return Err(ToolError::Denied(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            result.stderr.trim()
+        )));
+    }
+    Ok(result.stdout)
+}
+
+/// Runs git under the tool policy, bypassing the derived command allowlist.
+///
+/// The allowlist is derived from what the repository declares as its checks,
+/// and a repository does not declare `git` as a way of verifying itself. These
+/// subcommands are read-only and fixed here rather than named by a caller, so
+/// nothing the deployment sends can turn one into a mutation.
+async fn run_git(policy: &ToolPolicy, args: &[String]) -> Result<ToolResult, ToolError> {
+    let mut policy = policy.clone();
+    if !policy.allow_commands.iter().any(|c| c == "git") {
+        policy.allow_commands.push("git".into());
+    }
+    run_command(&policy, "git", args).await
+}
+
 pub async fn run_command(
     policy: &ToolPolicy,
     executable: &str,

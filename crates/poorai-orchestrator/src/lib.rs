@@ -594,6 +594,30 @@ async fn attempt_action(
         ActionProposal::Search { query, max_matches } => {
             serialize_tool_result(poorai_tools::search(policy, query, *max_matches))
         }
+        ActionProposal::MakeDirectory { path } => serialize_tool_result(
+            poorai_tools::make_directory(policy, std::path::Path::new(path)),
+        ),
+        ActionProposal::DeletePath {
+            path,
+            expected_hash,
+            recursive,
+        } => serialize_tool_result(poorai_tools::delete_path(
+            policy,
+            std::path::Path::new(path),
+            expected_hash.as_deref(),
+            *recursive,
+        )),
+        ActionProposal::MovePath { from, to } => serialize_tool_result(poorai_tools::move_path(
+            policy,
+            std::path::Path::new(from),
+            std::path::Path::new(to),
+        )),
+        ActionProposal::VcsStatus {} => {
+            serialize_tool_result(poorai_tools::vcs_status(policy).await)
+        }
+        ActionProposal::VcsDiff { paths } => {
+            serialize_tool_result(poorai_tools::vcs_diff(policy, paths).await)
+        }
         ActionProposal::ListTree { max_entries } => {
             serialize_tool_result(poorai_tools::list_tree(policy, *max_entries))
         }
@@ -1109,6 +1133,11 @@ fn action_fingerprint(action: &ActionProposal) -> String {
             format!("read_file:{path}:{first_line:?}")
         }
         ActionProposal::Search { query, .. } => format!("search:{query}"),
+        ActionProposal::MakeDirectory { path } => format!("make_directory:{path}"),
+        ActionProposal::DeletePath { path, .. } => format!("delete_path:{path}"),
+        ActionProposal::MovePath { from, to } => format!("move_path:{from}:{to}"),
+        ActionProposal::VcsStatus {} => "vcs_status".into(),
+        ActionProposal::VcsDiff { paths } => format!("vcs_diff:{}", paths.join(",")),
         ActionProposal::ProposeVerifier {
             executable, args, ..
         } => format!("propose_verifier:{executable}:{}", args.join(" ")),
@@ -2006,18 +2035,39 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
             // an orchestration/configuration failure, never successful task
             // completion: model confidence cannot stand in for a verifier.
             let verifiable = !after.checks.is_empty();
-            let verified = verifiable
-                && after
-                    .checks
-                    .iter()
-                    .all(|check| check.result.exit_code == Some(0))
-                && comparison.regression_free;
+            // Judged against the baseline, not against a green suite.
+            //
+            // Requiring every check to pass makes a task impossible wherever
+            // the repository was already failing one -- the agent is asked to
+            // fix a parser and refused because an unrelated test was broken
+            // before it arrived. Those failures are not its work and never
+            // were.
+            //
+            // What verification has ever actually proved is that nothing
+            // broke; it has never proved the task was done, in a green
+            // repository either. So the rule is the honest one: no
+            // regressions. What the deployment claims to have achieved is the
+            // hidden verifier's question, and it is answered elsewhere.
+            let verified = verifiable && comparison.regression_free;
+            let suite_green = after
+                .checks
+                .iter()
+                .all(|check| check.result.exit_code == Some(0));
+            let still_failing_from_before: Vec<String> = after
+                .checks
+                .iter()
+                .filter(|check| check.result.exit_code != Some(0))
+                .map(|check| check.command.clone())
+                .filter(|command| failing_at_start.contains(command))
+                .collect();
             store
                 .append_event(
                     Some(run_id),
                     &poorai_domain::RunEvent::VerificationResult {
                         verified,
                         verifiable,
+                        suite_green,
+                        still_failing_from_before,
                         after: serde_json::to_value(&after).unwrap_or_default(),
                         comparison: serde_json::to_value(&comparison).unwrap_or_default(),
                         failing_before_the_run: failing_at_start.clone(),
@@ -2224,11 +2274,15 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                 once_granted = Some(approval);
             }
         }
+        // A delete and a move change the workspace as much as an edit does,
+        // and the checks have as much to say about them.
         let edited = matches!(
             action,
             ActionProposal::ApplyReplace { .. }
                 | ActionProposal::WriteFile { .. }
                 | ActionProposal::ReplaceText { .. }
+                | ActionProposal::DeletePath { .. }
+                | ActionProposal::MovePath { .. }
         );
         // Read before the action is consumed, and only accepted for a step the
         // plan actually has: a claim on step 9 of a six-step plan is a mistake,
@@ -2293,10 +2347,23 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
         // An edit that landed is the workspace standing somewhere new. Read
         // from the outcome rather than from the proposal, so an edit that was
         // refused or failed contributes nothing.
-        if let Some(path) = outcome.get("path").and_then(|path| path.as_str())
-            && let Some(hash) = outcome.get("new_hash").and_then(|hash| hash.as_str())
-        {
-            changed_files.insert(path.to_string(), hash.to_string());
+        if let Some(path) = outcome.get("path").and_then(|path| path.as_str()) {
+            if let Some(hash) = outcome.get("new_hash").and_then(|hash| hash.as_str()) {
+                changed_files.insert(path.to_string(), hash.to_string());
+            } else if let Some(entries) = outcome.get("entries").and_then(|n| n.as_u64()) {
+                // A delete or a move: the workspace moved even though no file
+                // has a new hash. Recorded so the progress window sees it.
+                changed_files.insert(
+                    path.to_string(),
+                    format!(
+                        "{}:{entries}",
+                        outcome
+                            .get("from")
+                            .and_then(|from| from.as_str())
+                            .unwrap_or("changed")
+                    ),
+                );
+            }
         }
         // "Make one hypothesis-linked correction, rerun the narrow check."
         // Without this the deployment has no way to learn whether its edit
@@ -2668,6 +2735,43 @@ pub fn action_tool_schema() -> serde_json::Value {
                 "note": {"type": "string"},
             }),
             &["step"],
+        ),
+        function(
+            "make_directory",
+            "Create a directory, and any parent directories, inside the workspace.",
+            serde_json::json!({"path": {"type": "string"}}),
+            &["path"],
+        ),
+        function(
+            "delete_path",
+            "Remove a file, passing the expected_hash a read returned; or a directory with recursive set. A delete is the least reversible edit there is, so a file needs its current hash exactly as an edit does.",
+            serde_json::json!({
+                "path": {"type": "string"},
+                "expected_hash": {"type": "string"},
+                "recursive": {"type": "boolean"},
+            }),
+            &["path"],
+        ),
+        function(
+            "move_path",
+            "Move or rename a file or directory within the workspace. Refuses an existing destination rather than overwriting it.",
+            serde_json::json!({
+                "from": {"type": "string"},
+                "to": {"type": "string"},
+            }),
+            &["from", "to"],
+        ),
+        function(
+            "vcs_status",
+            "What version control says has changed in the workspace: the branch, HEAD, and the changed paths with their status codes. Reads only.",
+            serde_json::json!({}),
+            &[],
+        ),
+        function(
+            "vcs_diff",
+            "The working tree's diff against HEAD, optionally narrowed to given paths. Reads only. Use it to see what you have actually changed rather than recalling it.",
+            serde_json::json!({"paths": {"type": "array", "items": {"type": "string"}}}),
+            &[],
         ),
         function(
             "propose_verifier",
@@ -4150,6 +4254,68 @@ mod tests {
             "a refused proposal adopts nothing"
         );
         assert!(events.iter().any(|event| event.event_type == "task.failed"));
+    }
+
+    /// Completion is judged against the baseline, not against a green suite.
+    ///
+    /// Requiring every check to pass made a task impossible wherever the
+    /// repository was already failing one: the agent is asked to fix a parser
+    /// and refused because an unrelated test was broken before it arrived.
+    /// Those failures are not its work.
+    #[tokio::test]
+    async fn a_check_that_was_already_failing_does_not_block_completion() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("code.rs"), "one").unwrap();
+        let policy = ToolPolicy {
+            root: root.path().to_path_buf(),
+            extra_readable: Vec::new(),
+            allow_commands: vec!["sh".into()],
+            output_limit: 4096,
+            timeout: Duration::from_secs(10),
+            sandbox: poorai_tools::SandboxPolicy::Disabled,
+            approvals: Vec::new(),
+        };
+        // Failing before the run and still failing after it: not this run's
+        // doing, and not this run's to fix.
+        let checks = vec![(
+            "sh".to_string(),
+            vec!["-c".to_string(), "exit 1".to_string()],
+        )];
+        let provider = SequenceProvider(std::sync::Mutex::new(std::collections::VecDeque::from([
+            r#"{"capability":"complete","rationale":"done"}"#.into(),
+        ])));
+        let store = Store::open(":memory:").unwrap();
+        let run_id = new_id();
+        let request = ModelRequest {
+            deployment: deployment(),
+            context_tokens: 4096,
+            tools: None,
+            seed: None,
+            sampling: Default::default(),
+            messages: vec![poorai_domain::ChatMessage {
+                role: "user".into(),
+                content: "do work".into(),
+            }],
+        };
+        let result = run_action_loop(&store, &provider, run_id, request, &policy, &checks, 3)
+            .await
+            .expect("a pre-existing failure blocked a completion");
+        assert!(result.verified, "no check regressed, so nothing broke");
+        assert!(result.verifiable);
+
+        let events = store.events_for_run(run_id).unwrap();
+        let verification = events
+            .iter()
+            .rfind(|event| event.event_type == "verification.result")
+            .expect("a verification was recorded");
+        // The two facts stay separate. Collapsing "nothing broke" into "the
+        // suite is green" is what made the task impossible.
+        assert_eq!(verification.payload["verified"], true);
+        assert_eq!(verification.payload["suite_green"], false);
+        assert_eq!(
+            verification.payload["still_failing_from_before"],
+            serde_json::json!(["sh -c exit 1"])
+        );
     }
 
     #[tokio::test]

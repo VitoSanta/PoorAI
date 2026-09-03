@@ -56,7 +56,9 @@ A timeout kills the process group rather than the process. A child that outlives
 
 One walker serves the index and the tools as of 2026-09-03, so `.gitignore` excludes a file from a tool result exactly as it excludes it from retrieval, and the listing is sorted rather than in directory order.
 
-There is no `mkdir`, `delete`, `move` or `rename`, no read-only `git status` or `diff`, and no multi-hunk patch. A task that reorganises files cannot be expressed with what exists, and a task that needs to see what it has changed can only re-read files it remembers touching.
+`MakeDirectory`, `DeletePath`, `MovePath`, `VcsStatus` and `VcsDiff` closed the reorganisation gap on 2026-09-03. A delete carries the hash of what it removes, as an edit does; a directory has to be named recursively and reports how much went; a move refuses an existing destination and will not follow a symlink out of the workspace. The two version-control tools are read-only by construction — no argument they take reaches a mutating subcommand.
+
+What is still missing is a multi-hunk patch: a change touching several places in one file is several whole-file rewrites, each carrying the whole file.
 
 The sandbox confines writing and denies the network; it does not confine **reading**. Nine known credential paths are denied and everything else on the host is legible to a sandboxed command. Under `--provision`, which grants an arbitrary executable and a network together, that is the shape of an exfiltration and the flag's help says so.
 
