@@ -58,6 +58,7 @@ async fn a_denied_command_is_recorded_with_the_executable_it_asked_for() {
     let action = ActionProposal::RunCommand {
         executable: "curl".into(),
         args: vec!["https://example.invalid".into()],
+        stdin: None,
     };
     assert!(
         poorai_orchestrator::execute_action(&store, run_id, &policy(root.path()), action)

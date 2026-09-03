@@ -33,6 +33,7 @@ fn the_question_names_the_command_or_file_not_the_category() {
     let (approval, description) = required_approval(&ActionProposal::RunCommand {
         executable: "git".into(),
         args: vec!["push".into(), "origin".into(), "main".into()],
+        stdin: None,
     })
     .unwrap();
     assert_eq!(approval, Approval::Publish);

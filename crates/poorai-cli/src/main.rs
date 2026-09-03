@@ -77,6 +77,23 @@ enum Command {
         /// everywhere would be an unmeasured change to every run.
         #[arg(long)]
         plan: bool,
+        /// Let the run fetch and install the toolchain the task needs -- a JDK,
+        /// a Go distribution, a Flutter SDK -- when the host does not have it.
+        ///
+        /// Grants network access and any executable together, because either
+        /// alone cannot install anything. Everything lands inside the
+        /// workspace: a child process runs with HOME and TMPDIR there, so the
+        /// host is not modified and deleting the workspace undoes it.
+        ///
+        /// The pair is also what an exfiltration is made of. The sandbox denies
+        /// writing outside the workspace and denies reading the host's
+        /// credentials, but it does not deny reading everything else. Grant it
+        /// for work you are willing to watch.
+        #[arg(long)]
+        provision: bool,
+        /// Actions this run may take, overriding the profile's budget.
+        #[arg(long)]
+        max_actions: Option<u8>,
     },
     Eval(Eval),
     /// Named sessions, reconstructed from the event log.
@@ -113,6 +130,7 @@ enum ApprovalArg {
     Publish,
     NetworkAccess,
     LocalService,
+    ToolchainInstall,
 }
 impl From<ApprovalArg> for poorai_tools::Approval {
     fn from(value: ApprovalArg) -> Self {
@@ -122,6 +140,7 @@ impl From<ApprovalArg> for poorai_tools::Approval {
             ApprovalArg::Publish => Self::Publish,
             ApprovalArg::NetworkAccess => Self::NetworkAccess,
             ApprovalArg::LocalService => Self::LocalService,
+            ApprovalArg::ToolchainInstall => Self::ToolchainInstall,
         }
     }
 }
@@ -291,6 +310,8 @@ async fn main() {
             turn_timeout_secs,
             session,
             plan,
+            provision,
+            max_actions,
         } => print(
             cli.json,
             run(
@@ -303,6 +324,8 @@ async fn main() {
                     turn_timeout_secs,
                     session,
                     plan,
+                    provision,
+                    max_actions,
                 },
                 &cli.ollama_endpoint,
             )
@@ -1146,6 +1169,7 @@ async fn evaluate_task(
                 "publish" => Some(poorai_tools::Approval::Publish),
                 "network_access" => Some(poorai_tools::Approval::NetworkAccess),
                 "local_service" => Some(poorai_tools::Approval::LocalService),
+                "toolchain_install" => Some(poorai_tools::Approval::ToolchainInstall),
                 _ => None,
             })
             .collect(),
@@ -1841,6 +1865,8 @@ struct RunOptions {
     turn_timeout_secs: u64,
     session: Option<String>,
     plan: bool,
+    provision: bool,
+    max_actions: Option<u8>,
 }
 
 async fn run(options: RunOptions, endpoint: &str) -> Result<serde_json::Value, SafeError> {
@@ -1919,8 +1945,26 @@ async fn prepare_profiled_run(
         turn_timeout_secs,
         session,
         plan,
+        provision,
+        max_actions,
         dry_run: _,
     } = options;
+    // Either grant alone installs nothing: a fetch with no executable to run,
+    // or an executable with nothing to fetch.
+    let approvals = if provision {
+        let mut approvals = approvals;
+        for granted in [
+            poorai_tools::Approval::NetworkAccess,
+            poorai_tools::Approval::ToolchainInstall,
+        ] {
+            if !approvals.contains(&granted) {
+                approvals.push(granted);
+            }
+        }
+        approvals
+    } else {
+        approvals
+    };
     let model = model.ok_or_else(|| SafeError {
         category: "invalid_input",
         context: "--model is required; routing is deferred".into(),
@@ -2158,11 +2202,21 @@ async fn prepare_profiled_run(
         request,
         &policy,
         &checks,
-        execution.budgets["max_actions"]
-            .as_u64()
-            .unwrap_or(1)
-            .try_into()
-            .unwrap_or(1),
+        max_actions.unwrap_or_else(|| {
+            // Installing a toolchain is a different scale of work from editing
+            // a file, so it gets its own number rather than the same one
+            // stretched.
+            let budgeted = execution.budgets["max_actions"]
+                .as_u64()
+                .unwrap_or(1)
+                .try_into()
+                .unwrap_or(1);
+            if provision {
+                budgeted.max(poorai_orchestrator::PROVISIONING_MAX_ACTIONS)
+            } else {
+                budgeted
+            }
+        }),
         &TerminalApproval,
         // The flag, or a strategy that declares it.
         plan || strategy.is_some_and(|s| s.plan_first),

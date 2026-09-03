@@ -69,6 +69,17 @@ pub enum ActionProposal {
     RunCommand {
         executable: String,
         args: Vec<String>,
+        /// Text to write to the command's standard input.
+        ///
+        /// A command is executed directly rather than through a shell, so
+        /// there is no pipe and no redirection: `args` are arguments, never
+        /// syntax. That is deliberate -- it is what stops an argument being
+        /// reinterpreted as a command -- but it left no way at all to feed a
+        /// program its input. Measured: a run that had downloaded a Go
+        /// toolchain, built a correct program and then could not test it,
+        /// because every attempt to pipe into it was flattened into arguments.
+        #[serde(default)]
+        stdin: Option<String>,
     },
     FetchUrl {
         url: String,
@@ -165,7 +176,45 @@ pub enum Approval {
     /// an intent, and it is stated here because the narrower reading would be
     /// wrong.
     LocalService,
+    /// Running any executable, so a run can fetch and install the toolchain a
+    /// task needs -- a JDK, a Go distribution, a Flutter SDK -- rather than
+    /// failing because the host happens not to have it.
+    ///
+    /// This is the widest grant poorAI has, and what makes it defensible is
+    /// where the installs land rather than what they are. A child process
+    /// already runs with `HOME` and `TMPDIR` inside the workspace, and the
+    /// sandbox already confines writes there, so a toolchain installed under
+    /// this grant is installed *into the workspace*: the host is not modified,
+    /// nothing persists into the next run, and deleting the workspace undoes
+    /// it. That is a better arrangement than installing to the host even
+    /// setting safety aside.
+    ///
+    /// What it does not do is make a run safe to combine with
+    /// `NetworkAccess` and leave unattended. The sandbox denies writing
+    /// outside the workspace; it does not deny *reading* outside it. An
+    /// arbitrary executable plus the network is the shape of an exfiltration,
+    /// and that is a property of the pair rather than of either alone. The
+    /// sensitive parts of the host home directory are denied to any sandboxed
+    /// run (see `sandbox_profile`), which narrows it but does not close it.
+    ToolchainInstall,
 }
+
+/// Host paths under the real home directory that no run has a reason to read.
+///
+/// Denied to every sandboxed run. `HOME` is redirected into the workspace, so
+/// a tool looking for its own configuration finds the workspace copy; these are
+/// the absolute paths that would go around that.
+const NEVER_READABLE: [&str; 9] = [
+    ".ssh",
+    ".aws",
+    ".gnupg",
+    ".config/gh",
+    ".config/gcloud",
+    ".kube",
+    ".docker/config.json",
+    ".netrc",
+    "Library/Keychains",
+];
 
 /// Dependency manifests and lockfiles. Editing one changes what the build
 /// fetches and executes, so it is an approval gate rather than a plain edit.
@@ -228,7 +277,9 @@ pub fn command_approval(executable: &str, args: &[String]) -> Option<Approval> {
 pub fn required_approval(action: &ActionProposal) -> Option<(Approval, String)> {
     match action {
         ActionProposal::FetchUrl { url } => Some((Approval::NetworkAccess, format!("fetch {url}"))),
-        ActionProposal::RunCommand { executable, args } => command_approval(executable, args)
+        ActionProposal::RunCommand {
+            executable, args, ..
+        } => command_approval(executable, args)
             .map(|approval| (approval, format!("run `{executable} {}`", args.join(" ")))),
         ActionProposal::ApplyReplace { path, .. } | ActionProposal::WriteFile { path, .. } => {
             edit_approval(Path::new(path)).map(|a| (a, format!("write {path}")))
@@ -377,6 +428,26 @@ impl ToolPolicy {
         // Order matters in a seatbelt profile: the last matching rule wins, so
         // the loopback allowance must follow the blanket denial it carves out
         // of. Written the other way round it grants nothing.
+        // Nothing a run legitimately does needs the host's credentials, and a
+        // sandbox that confines writes while leaving reads open is one half of
+        // an exfiltration. `HOME` already points inside the workspace, so a
+        // well-behaved tool reads the workspace copy of these and never the
+        // host's; this denies the absolute paths that bypass that. Applied to
+        // every sandboxed run rather than only to a grant, because there is no
+        // run for which reading them would have been right.
+        let mut secrets = String::new();
+        if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+            let subpaths: Vec<String> = NEVER_READABLE
+                .iter()
+                .map(|relative| home.join(relative))
+                .filter_map(|path| path.to_str().map(str::to_string))
+                .filter(|path| !path.contains('"') && !path.contains('\\'))
+                .map(|path| format!("(subpath \"{path}\")"))
+                .collect();
+            if !subpaths.is_empty() {
+                secrets = format!("(deny file-read* {})", subpaths.join(""));
+            }
+        }
         let network = if self.network_allowed() {
             String::new()
         } else if self.approvals.contains(&Approval::LocalService) {
@@ -409,7 +480,7 @@ impl ToolPolicy {
             "(deny network*)".to_string()
         };
         Some(format!(
-            "(version 1)(allow default)(deny file-write*)(allow file-write* (subpath \"{root}\"))(allow file-write-data (literal \"/dev/null\") (literal \"/dev/stdout\") (literal \"/dev/stderr\")){network}"
+            "(version 1)(allow default)(deny file-write*)(allow file-write* (subpath \"{root}\"))(allow file-write-data (literal \"/dev/null\") (literal \"/dev/stdout\") (literal \"/dev/stderr\")){secrets}{network}"
         ))
     }
     pub fn redact(&self, text: &str) -> (String, bool) {
@@ -872,7 +943,23 @@ pub async fn run_command(
     executable: &str,
     args: &[String],
 ) -> Result<ToolResult, ToolError> {
-    if !policy.allow_commands.iter().any(|x| x == executable) {
+    run_command_with_stdin(policy, executable, args, None).await
+}
+
+/// The same, with text written to the command's standard input.
+pub async fn run_command_with_stdin(
+    policy: &ToolPolicy,
+    executable: &str,
+    args: &[String],
+    stdin: Option<&str>,
+) -> Result<ToolResult, ToolError> {
+    // The derived allowlist cannot name the toolchain a workspace does not yet
+    // have: a task that must install a JDK needs an executable no marker in the
+    // repository could have implied. The grant is what widens it, and it is
+    // recorded in the audit like every other.
+    if !policy.approvals.contains(&Approval::ToolchainInstall)
+        && !policy.allow_commands.iter().any(|x| x == executable)
+    {
         return Err(ToolError::Denied(format!(
             "command {executable} is not allowlisted"
         )));
@@ -926,27 +1013,47 @@ pub async fn run_command(
         .join(SCRATCH_DIRECTORY);
     let _ = std::fs::create_dir_all(&scratch);
     let started = std::time::Instant::now();
-    let output = timeout(
-        policy.timeout,
-        command
-            .current_dir(&policy.root)
-            .env_clear()
-            // PATH is explicitly allowlisted solely for executable resolution; it is never logged.
-            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-            .env("TMPDIR", &scratch)
-            .env("TMP", &scratch)
-            .env("TEMP", &scratch)
-            // Package managers keep caches and config under HOME. Pointing it
-            // into the workspace keeps them inside the boundary instead of
-            // widening it, and makes a run hermetic: nothing it downloads
-            // persists into the next one, and nothing in the real home
-            // directory is read. npm reports the denial as a permissions bug
-            // in its own cache, which is worth knowing when diagnosing one.
-            .env("HOME", &scratch)
-            .output(),
-    )
-    .await
-    .map_err(|_| ToolError::Timeout)??;
+    command
+        .current_dir(&policy.root)
+        .env_clear()
+        // PATH is explicitly allowlisted solely for executable resolution; it is never logged.
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("TMPDIR", &scratch)
+        .env("TMP", &scratch)
+        .env("TEMP", &scratch)
+        // Package managers keep caches and config under HOME. Pointing it
+        // into the workspace keeps them inside the boundary instead of
+        // widening it, and makes a run hermetic: nothing it downloads
+        // persists into the next one, and nothing in the real home
+        // directory is read. npm reports the denial as a permissions bug
+        // in its own cache, which is worth knowing when diagnosing one.
+        .env("HOME", &scratch);
+    let output = match stdin {
+        None => timeout(policy.timeout, command.output())
+            .await
+            .map_err(|_| ToolError::Timeout)??,
+        Some(text) => {
+            use tokio::io::AsyncWriteExt as _;
+            let mut child = command
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()?;
+            // Written and closed before the output is awaited: a program that
+            // reads to end of input never sees one if the pipe stays open, and
+            // the run would time out looking like a hang in the program.
+            if let Some(mut pipe) = child.stdin.take() {
+                let text = text.to_string();
+                tokio::spawn(async move {
+                    let _ = pipe.write_all(text.as_bytes()).await;
+                    let _ = pipe.shutdown().await;
+                });
+            }
+            timeout(policy.timeout, child.wait_with_output())
+                .await
+                .map_err(|_| ToolError::Timeout)??
+        }
+    };
     let cap = |s: Vec<u8>| {
         String::from_utf8_lossy(&s)
             .chars()

@@ -168,7 +168,11 @@ pub fn select_profile(
             context_tokens: point.context_tokens,
             reserve_tokens: (point.context_tokens / 8).max(1),
             concurrency: 1,
-            budgets: serde_json::json!({"max_actions":8,"edit_verify_cycles":3,"context_retries":1}),
+            budgets: serde_json::json!({
+                "max_actions": DEFAULT_MAX_ACTIONS,
+                "edit_verify_cycles": 3,
+                "context_retries": 1,
+            }),
             rationale: "highest compatible measured stable point".into(),
             evidence: EvidenceLabel::Measured,
             compatibility_key: compatibility_key.into(),
@@ -306,8 +310,12 @@ async fn attempt_action(
                 .map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string()),
-        ActionProposal::RunCommand { executable, args } => serde_json::to_value(
-            poorai_tools::run_command(policy, executable, args)
+        ActionProposal::RunCommand {
+            executable,
+            args,
+            stdin,
+        } => serde_json::to_value(
+            poorai_tools::run_command_with_stdin(policy, executable, args, stdin.as_deref())
                 .await
                 .map_err(|e| e.to_string())?,
         )
@@ -446,6 +454,31 @@ const REPEATED_REFUSAL_LIMIT: usize = 3;
 /// which is the shape `MALFORMED_CALL_LIMIT` already assumes.
 const TURNS_PER_ACTION: u32 = 2;
 
+/// Actions a run may take when nothing else says.
+///
+/// Derived from measurement rather than chosen. The three resolved tasks of
+/// `external-v1` -- real defects in a real repository -- used 7, 11 and 13
+/// actions, so the previous default of 8 would have failed two of them having
+/// done the work. `m5-frozen-v1` could never have shown this: its successful
+/// runs use at most 5, because its tasks are single files written for the
+/// purpose, and a budget derived from a corpus of our own tasks measures the
+/// corpus.
+///
+/// Twice the observed maximum, because the observation is three tasks in one
+/// project and a budget that binds is indistinguishable, from the outside,
+/// from a deployment that cannot finish.
+const DEFAULT_MAX_ACTIONS: u8 = 26;
+
+/// Actions a run may take when it must also fetch and install a toolchain.
+///
+/// Not measured, and said so: no campaign has yet run to completion under
+/// `--provision`. The one that prompted this number spent eight actions
+/// establishing the platform and the availability of `curl` without reaching a
+/// download. Provisioning is a different scale of work from editing a file, so
+/// it gets a different number rather than the same one stretched; replace it
+/// with a measured one as soon as there is a distribution to take it from.
+pub const PROVISIONING_MAX_ACTIONS: u8 = 80;
+
 /// What an action targets, for spotting repetition.
 ///
 /// Compared on the capability and its target rather than the whole proposal,
@@ -464,8 +497,18 @@ fn action_fingerprint(action: &ActionProposal) -> String {
         ActionProposal::ApplyReplace { path, .. } => format!("apply_replace:{path}"),
         ActionProposal::WriteFile { path, .. } => format!("write_file:{path}"),
         ActionProposal::ReplaceText { path, find, .. } => format!("replace_text:{path}:{find}"),
-        ActionProposal::RunCommand { executable, args } => {
-            format!("run_command:{executable}:{}", args.join(" "))
+        ActionProposal::RunCommand {
+            executable,
+            args,
+            stdin,
+        } => {
+            // The input is part of what makes an invocation distinct: the same
+            // program on different input is not the same action repeated.
+            format!(
+                "run_command:{executable}:{}:{}",
+                args.join(" "),
+                stdin.as_deref().unwrap_or_default()
+            )
         }
         ActionProposal::FetchUrl { url } => format!("fetch_url:{url}"),
         ActionProposal::Complete { .. } => "complete".into(),
@@ -1487,10 +1530,11 @@ pub fn action_tool_schema() -> serde_json::Value {
         ),
         function(
             "run_command",
-            "Run one allowlisted command.",
+            "Run one command directly. There is no shell, so no pipes, no redirection and no globs: args are arguments, not syntax. To give the program input, put it in stdin rather than trying to pipe into it.",
             serde_json::json!({
                 "executable": {"type": "string"},
                 "args": {"type": "array", "items": {"type": "string"}},
+                "stdin": {"type": "string"},
             }),
             &["executable", "args"],
         ),
