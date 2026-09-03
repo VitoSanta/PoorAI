@@ -43,3 +43,13 @@ Where a provider failure looks like a context failure, the retry steps down to t
 Compaction now identifies the messages it keeps by what they are rather than by their position. It previously kept the first two on the assumption that they were the system prompt and the task; on a session resumed with `--session`, the second message is the session ledger, so compaction preserved the ledger and discarded the goal — on a long run, at the moment context was most under pressure.
 
 **The estimate is now checked against the backend.** Every turn compares the reported `prompt_eval_count` with what the budget believed it sent and with the authorised context, and events `context.delivery_diverged` when the difference is too large to be the estimate's own looseness — reading far less than was sent is the silent-truncation signature, and reading more than was authorised means the limit was not enforced. The check is deliberately loose in both directions: a finding that fires every turn is one nobody looks at. The estimate itself is still four characters per token. Repository excerpts and the task also still share one user message rather than being separately budgeted sections, and tool calls and their results travel as serialised JSON text rather than as the protocol's own typed messages.
+
+## Compiled, not concatenated — 2026-09-03
+
+A prompt was built by concatenating strings at the call site. The repository excerpts and the task shared one user message, so nothing downstream could tell them apart, and the budget was a fraction rather than an accounting.
+
+Sections are typed now — system, model suffix, session ledger, repository excerpts, task — and each carries its estimated cost and the hash of what was sent rather than of what was offered, so a truncated section is not mistaken for the whole one. The compilation is recorded as `context.compiled`.
+
+Fitting has an order and a floor. Required sections are never cut. Excerpts give way before the ledger, because excerpts are a starting point the agent can rebuild with `search` and `read_file` while the ledger is the only account of what earlier runs did and cannot be recovered from the workspace. A section is dropped rather than cut to a stub: half an excerpt reads like a whole file. Output headroom is reserved before anything is fitted, since a prompt that fills the context leaves the deployment nowhere to answer.
+
+The output reserve is a quarter of the context — a starting value, not a measured one, kept as a single constant so that it can be measured at all.

@@ -1584,37 +1584,47 @@ async fn evaluate_task(
         tools: Some(poorai_orchestrator::action_tool_schema()),
         seed: Some(seed),
         sampling: sampling.clone(),
-        messages: vec![
-            poorai_domain::ChatMessage {
-                role: "system".into(),
-                content: format!(
-                    "{}{}{}",
+        // The evaluation prompts exactly as `poorai run` does, through the
+        // same compiler, or it measures a different agent from the one a user
+        // gets.
+        messages: poorai_orchestrator::context::compile(
+            vec![
+                poorai_orchestrator::context::Section::new(
+                    poorai_orchestrator::context::SectionKind::System,
                     poorai_orchestrator::AGENT_SYSTEM_PROMPT,
-                    strategy
-                        .map(|s| s.prompt_suffix.as_str())
-                        .unwrap_or_default(),
-                    reasoning_directive(profile),
                 ),
-            },
-            poorai_domain::ChatMessage {
-                role: "user".into(),
-                // The evaluation prompts exactly as `poorai run` does, or it
-                // measures a different agent from the one a user gets.
-                content: format!(
-                    "{}{}",
+                poorai_orchestrator::context::Section::new(
+                    poorai_orchestrator::context::SectionKind::ModelSuffix,
+                    format!(
+                        "{}{}",
+                        strategy
+                            .map(|s| s.prompt_suffix.as_str())
+                            .unwrap_or_default(),
+                        reasoning_directive(profile),
+                    ),
+                ),
+                poorai_orchestrator::context::Section::new(
+                    poorai_orchestrator::context::SectionKind::RepositoryExcerpts,
                     poorai_repo::index(&root)
-                        .map(|index| retrieved_context(
-                            &root,
-                            &index,
-                            &task.statement,
-                            execution.context_tokens,
-                            strategy.and_then(|s| s.retrieval_excerpts),
-                        ))
+                        .map(|index| {
+                            retrieved_context(
+                                &root,
+                                &index,
+                                &task.statement,
+                                execution.context_tokens,
+                                strategy.and_then(|s| s.retrieval_excerpts),
+                            )
+                        })
                         .unwrap_or_default(),
-                    task.statement
                 ),
-            },
-        ],
+                poorai_orchestrator::context::Section::new(
+                    poorai_orchestrator::context::SectionKind::Task,
+                    task.statement.clone(),
+                ),
+            ],
+            execution.context_tokens,
+        )
+        .0,
     };
     let started = std::time::Instant::now();
     let budgets = match execution.execution_budgets() {
@@ -2634,6 +2644,60 @@ async fn prepare_profiled_run(
             category: "internal",
             context: e.to_string(),
         })?;
+    // Compiled from typed sections rather than concatenated. Each section
+    // carries its own estimated cost and hash, and what was cut to make the
+    // prompt fit is recorded rather than inferred from a shorter prompt.
+    let (compiled_messages, compiled) = poorai_orchestrator::context::compile(
+        vec![
+            poorai_orchestrator::context::Section::new(
+                poorai_orchestrator::context::SectionKind::System,
+                poorai_orchestrator::AGENT_SYSTEM_PROMPT,
+            ),
+            poorai_orchestrator::context::Section::new(
+                poorai_orchestrator::context::SectionKind::ModelSuffix,
+                format!(
+                    "{}{}",
+                    strategy
+                        .map(|s| s.prompt_suffix.as_str())
+                        .unwrap_or_default(),
+                    reasoning_directive(model_profile),
+                ),
+            ),
+            poorai_orchestrator::context::Section::new(
+                poorai_orchestrator::context::SectionKind::SessionLedger,
+                carried
+                    .as_ref()
+                    .map(|(_, ledger)| ledger.clone())
+                    .unwrap_or_default(),
+            ),
+            poorai_orchestrator::context::Section::new(
+                poorai_orchestrator::context::SectionKind::RepositoryExcerpts,
+                retrieved_context(
+                    &root,
+                    &index,
+                    &task,
+                    execution.context_tokens,
+                    strategy.and_then(|s| s.retrieval_excerpts),
+                ),
+            ),
+            poorai_orchestrator::context::Section::new(
+                poorai_orchestrator::context::SectionKind::Task,
+                task.clone(),
+            ),
+        ],
+        execution.context_tokens,
+    );
+    store
+        .append_event(
+            Some(run_id),
+            &poorai_domain::RunEvent::ContextCompiled(
+                serde_json::to_value(&compiled).unwrap_or_default(),
+            ),
+        )
+        .map_err(|e| SafeError {
+            category: "internal",
+            context: e.to_string(),
+        })?;
     let request = poorai_domain::ModelRequest {
         deployment: deployment.clone(),
         context_tokens: execution.context_tokens,
@@ -2646,46 +2710,7 @@ async fn prepare_profiled_run(
             s.extend(reasoning_options(model_profile));
             s
         },
-        messages: [
-            Some(poorai_domain::ChatMessage {
-                role: "system".into(),
-                content: format!(
-                    "{}{}{}",
-                    poorai_orchestrator::AGENT_SYSTEM_PROMPT,
-                    strategy
-                        .map(|s| s.prompt_suffix.as_str())
-                        .unwrap_or_default(),
-                    reasoning_directive(model_profile),
-                ),
-            }),
-            // Its own turn rather than a preamble glued to the task: what an
-            // earlier run established is context, and the task is the
-            // instruction. Merging them invites the second to be read as part
-            // of the first.
-            carried
-                .as_ref()
-                .map(|(_, ledger)| poorai_domain::ChatMessage {
-                    role: "tool".into(),
-                    content: ledger.clone(),
-                }),
-            Some(poorai_domain::ChatMessage {
-                role: "user".into(),
-                content: format!(
-                    "{}{}",
-                    retrieved_context(
-                        &root,
-                        &index,
-                        &task,
-                        execution.context_tokens,
-                        strategy.and_then(|s| s.retrieval_excerpts),
-                    ),
-                    task
-                ),
-            }),
-        ]
-        .into_iter()
-        .flatten()
-        .collect(),
+        messages: compiled_messages,
     };
     let budgets = execution.execution_budgets().map_err(|error| SafeError {
         category: "invalid_input",

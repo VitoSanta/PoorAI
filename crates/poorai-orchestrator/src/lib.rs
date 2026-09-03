@@ -1,4 +1,6 @@
 //! Durable task-state transitions and evidence-bounded profile selection.
+pub mod context;
+
 use futures_util::StreamExt;
 use poorai_domain::{
     BackendState, CalibrationProfile, DeploymentDescriptor, EvidenceLabel, ExecutionProfile,

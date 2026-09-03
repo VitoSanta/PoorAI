@@ -776,6 +776,9 @@ pub enum RunEvent {
     },
     TaskRecovery(serde_json::Value),
     ContextCompacted(serde_json::Value),
+    /// The prompt's section-by-section accounting: what each cost, what was
+    /// cut, and what was reserved for the reply.
+    ContextCompiled(serde_json::Value),
     ContextTierChanged {
         previous_context_tokens: u32,
         context_tokens: u32,
@@ -896,6 +899,7 @@ impl RunEvent {
             Self::VerificationResult { .. } => "verification.result",
             Self::TaskRecovery(_) => "task.recovery",
             Self::ContextCompacted(_) => "context.compacted",
+            Self::ContextCompiled(_) => "context.compiled",
             Self::ContextTierChanged { .. } => "context.tier_changed",
             Self::ContextDeliveryDiverged { .. } => "context.delivery_diverged",
             Self::ResourceSampled { .. } => "resource.sampled",
@@ -941,6 +945,7 @@ impl RunEvent {
             }
             "task.recovery" => return Some(Self::TaskRecovery(payload.clone())),
             "context.compacted" => return Some(Self::ContextCompacted(payload.clone())),
+            "context.compiled" => return Some(Self::ContextCompiled(payload.clone())),
             other => other,
         };
         let mut value = payload.clone();

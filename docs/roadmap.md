@@ -544,7 +544,6 @@ A run that ended is reported, not resumed: every exit writes a terminal event, a
 | A plan is a list, not a graph | Steps are claimed, reconciled and never verified individually | Subgoals with their own local verifiers, and replanning driven by their outcomes |
 | Calibration measures allocation, not occupancy | A tier is qualified by a prompt of one token and pressure sampled before generation, so "262144 is nearly free" describes an allocation | A ladder that fills the context and samples peak resident memory during generation |
 | Every edit re-runs every selected check | Verification is not narrowed to what the edit could have affected, so a large suite is paid in full after each change | Targeted check first, broader suite on escalation, as `verification-recovery.md` already specifies |
-| The context is one message, budgeted by estimate | Repository excerpts and the task share a user message; quotas are constants at four characters per token | A `ContextCompiler` taking typed sections and returning a compiled prompt with per-section estimated and reported cost, hashes, truncation decisions and an output reserve |
 
 ### Reorganising, seeing, and not being blocked by someone else's failure — 2026-09-03
 
@@ -603,6 +602,20 @@ Every run walked and re-read the whole repository, and retrieval then re-read ev
 **The graph has edges.** Imports are read as written — the name the file wrote, not resolved to a path, because resolution is per language and per build system and a wrong edge points retrieval at a file with nothing to do with the task. Test ownership is read from naming convention, and labelled a guess wherever it ranks. A file the strongest candidates import is retrieved even when it never names the task, with "imported by" in its rationale like every other signal.
 
 One hop, deliberately: two hops from a well-connected module is most of the repository, and a signal that reaches everything ranks nothing. Both edge weights sit below a path match, and a fixture requires that a file actually defining what was asked for still outranks its neighbours — proximity is evidence about the neighbourhood, not about the file.
+
+### A prompt compiled from sections — 2026-09-03
+
+A prompt was strings glued together at the call site: the system prompt, a per-model suffix, a session ledger, a block of excerpts and the task, concatenated and handed over. Two things followed.
+
+**The excerpts and the task shared one user message**, so nothing downstream could tell them apart — not compaction, which had to keep the whole thing or lose the goal with it, and not a reader asking what a turn cost. They are separate messages now. The system prompt and its per-deployment suffix still merge, because they are one instruction and a backend that expects a single system message should get one; user sections never do, which is the whole point.
+
+**The budget was a fraction.** Retrieval got a share of the context and nobody knew what any section spent, so a prompt that did not fit could only be made smaller by guessing which part to cut. Each section now carries its estimated cost and the hash of *what was sent* — not of what was offered, so a truncated section is not mistaken for the whole one — and the compilation is recorded as `context.compiled`.
+
+Fitting has an order and a floor. Required sections are never cut: a run without its goal is not a cheaper run, it is a different one. Excerpts give way before the ledger, because excerpts are a starting point the agent can rebuild with `search` and `read_file` while the ledger is the only account of what earlier runs did. And a section is dropped rather than cut to a stub — half an excerpt reads like a whole file, which is worse than no excerpt. Output headroom is reserved before anything is fitted, since a prompt that fills the context leaves the deployment nowhere to answer, and that failure looks like a refusal.
+
+**One quota is still not measured.** The output reserve is a quarter of the context, a starting value rather than a derived one. It is a single constant in one place, which is what makes it measurable at all — five numbers at five call sites are not.
+
+Writing the fixtures found the design mistake: merging adjacent same-role messages re-glued the task to the excerpts, undoing the thing being built. The fixture caught it because it asserted the task was its own message rather than that the prompt contained it.
 
 ### P3 — a measurable beta
 
