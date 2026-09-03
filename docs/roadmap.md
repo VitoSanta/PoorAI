@@ -302,6 +302,18 @@ Three mutants confirm it: dropping the outstanding steps from the status, accept
 
 The earlier note that `context.compacted` never fires at 262144 tokens still stands: the constraint on long work was never memory.
 
+### Before the next campaign — 2026-09-03
+
+Four changes, each from something an audit showed rather than something that seemed sensible.
+
+**Every turn records what it cost.** The backend's own counters — prompt tokens, generated tokens, and the two halves of the time — are now audited per turn. Until now the audit could say a turn took 240 seconds while its neighbours took 3 to 34, and nothing more: whether the time went into reading a long prompt or generating a long answer was unknowable. Speed is a stated criterion for this project, and it was the one thing measured worst.
+
+**The turn timeout rises from 300 seconds to 900.** The 240-second turn was a single subtle regular expression being generated, and a limit of 300 cut off a run whose work was correct. Raising it does not hide slowness now that every turn's counters are recorded; it only stops slowness being reported as failure.
+
+**A command line in the executable field is refused as one.** `ls -la` put where a program name belongs reached exec as a single filename and came back as `execvp() of 'ls -la' failed: No such file or directory`, which reads like a missing program. The same shape appeared across several runs, each costing an action to a message that did not say what was wrong. The refusal now names both halves so the correction needs no guessing.
+
+**"Nothing verified this" is said, not implied.** `verified: false` on a completed run meant two very different things — the checks ran and disagreed, or there were no checks at all — and the caller could not tell them apart. Both provisioning runs ended the second way, since a workspace built from nothing declares no checks, and reported the same bare `false` a real failure would.
+
 ### External repositories — 2026-09-03
 
 `corpus/external-v1.json` sets three tasks in more-itertools at the parent commit of a real upstream fix, so the defect is the one that was really there and the hidden test is the regression test that fix really added. `poorai check-corpus` establishes each task is fair before anything is measured on it: the project's own suite passes at the starting commit, the hidden test fails there, and it passes at the upstream fix.

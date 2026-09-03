@@ -457,3 +457,109 @@ mod already_failing {
         );
     }
 }
+
+/// What a turn cost, from the backend's counters rather than from wall clock.
+///
+/// A turn measured at 240 seconds against neighbours of 3 to 34 was the
+/// difference between a usable agent and an unusable one, and the audit could
+/// say only how long it took — never whether the time went into reading a long
+/// prompt or generating a long answer. Recording this is what makes raising the
+/// turn timeout safe: slowness stays measurable instead of being hidden by a
+/// looser limit.
+mod turn_cost {
+    use super::*;
+
+    struct MeteredProvider;
+    #[async_trait]
+    impl ModelProvider for MeteredProvider {
+        async fn inspect(
+            &self,
+            _: &DeploymentDescriptor,
+        ) -> Result<ModelInspection, ProviderError> {
+            unreachable!()
+        }
+        async fn runtime_state(&self) -> Result<BackendState, ProviderError> {
+            unreachable!()
+        }
+        async fn chat(&self, _: ModelRequest) -> Result<ModelStream, ProviderError> {
+            Ok(Box::pin(futures_util::stream::iter([Ok(ModelChunk {
+                content: serde_json::json!({"capability": "complete", "rationale": "done"})
+                    .to_string(),
+                done: true,
+                metrics: Some(poorai_domain::GenerationMetrics {
+                    prompt_tokens: Some(1200),
+                    generated_tokens: Some(600),
+                    total_duration_ns: Some(3_000_000_000),
+                    load_duration_ns: Some(0),
+                    prompt_eval_duration_ns: Some(1_000_000_000),
+                    generation_duration_ns: Some(2_000_000_000),
+                }),
+                ..Default::default()
+            })])))
+        }
+    }
+
+    #[test]
+    fn every_turn_records_what_it_cost() {
+        let root = tempfile::tempdir().unwrap();
+        let policy = ToolPolicy {
+            root: root.path().to_path_buf(),
+            allow_commands: vec!["true".into()],
+            output_limit: 8192,
+            timeout: Duration::from_secs(5),
+            sandbox: SandboxPolicy::Disabled,
+            approvals: Vec::new(),
+        };
+        let store = Store::open(":memory:").unwrap();
+        let run_id = poorai_domain::new_id();
+        let request = ModelRequest {
+            deployment: DeploymentDescriptor {
+                schema_version: 1,
+                id: poorai_domain::new_id(),
+                provider: "fake".into(),
+                endpoint: "http://localhost/".into(),
+                model_ref: "fake".into(),
+                backend_options: Default::default(),
+                auth_ref: None,
+            },
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "go".into(),
+            }],
+            context_tokens: 8192,
+            tools: None,
+            seed: None,
+            sampling: Default::default(),
+        };
+        let _ =
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(poorai_orchestrator::run_action_loop(
+                    &store,
+                    &MeteredProvider,
+                    run_id,
+                    request,
+                    &policy,
+                    &[("true".to_string(), vec![])],
+                    3,
+                ));
+        let turns: Vec<_> = store
+            .events_for_run(run_id)
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.event_type == "turn.generated")
+            .collect();
+        assert!(!turns.is_empty(), "no turn recorded what it cost");
+        let first = &turns[0].payload;
+        assert_eq!(first["metrics"]["prompt_tokens"], 1200);
+        assert_eq!(first["metrics"]["generated_tokens"], 600);
+        // Both halves of the time, so a slow turn can be attributed rather than
+        // only noticed.
+        assert_eq!(
+            first["metrics"]["prompt_eval_duration_ns"],
+            1_000_000_000u64
+        );
+        assert_eq!(first["metrics"]["generation_duration_ns"], 2_000_000_000u64);
+        assert_eq!(first["tokens_per_second"], 300.0);
+    }
+}

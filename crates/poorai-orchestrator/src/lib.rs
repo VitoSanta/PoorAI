@@ -348,6 +348,15 @@ pub fn checkpoint_recovery(
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskRunResult {
+    /// Whether any deterministic check existed to verify the work.
+    ///
+    /// `verified: false` on a completed run means one of two very different
+    /// things, and the caller could not tell them apart: the checks ran and
+    /// disagreed, or there were no checks at all. Both provisioning runs
+    /// finished the second way -- a workspace built from nothing declares no
+    /// checks -- and reported the same bare `false` as a genuine failure would.
+    #[serde(default)]
+    pub verifiable: bool,
     pub run_id: poorai_domain::Id,
     pub verified: bool,
     pub action_outcome: serde_json::Value,
@@ -396,6 +405,7 @@ pub async fn run_single_action<P: ModelProvider>(
     Ok(TaskRunResult {
         run_id,
         verified,
+        verifiable: !after.checks.is_empty(),
         action_outcome: outcome,
     })
 }
@@ -1008,6 +1018,28 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
         // unchanged prompt. Measured: a model re-sent a byte-identical edit
         // four times, across two intervening re-reads of the file it had
         // already correctly fixed.
+        // What the turn cost, from the backend's own counters rather than from
+        // wall clock. A turn measured at 240 seconds against others of 3 to 34
+        // was the difference between a usable agent and an unusable one, and
+        // the audit could only say how long it took, never whether the time
+        // went into reading a long prompt or generating a long answer.
+        store
+            .append(
+                Some(run_id),
+                "turn.generated",
+                serde_json::json!({
+                    "step": step,
+                    "turn": turns,
+                    "metrics": reply.metrics,
+                    "tokens_per_second": reply
+                        .metrics
+                        .as_ref()
+                        .and_then(poorai_domain::GenerationMetrics::tokens_per_second),
+                    "thinking_chars": reply.thinking.len(),
+                    "content_chars": reply.content.len(),
+                }),
+            )
+            .map_err(|e| e.to_string())?;
         request.messages.push(poorai_domain::ChatMessage {
             role: "assistant".into(),
             content: if reply.content.trim().is_empty() {
@@ -1131,6 +1163,7 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
                 return Ok(TaskRunResult {
                     run_id,
                     verified,
+                    verifiable,
                     action_outcome: serde_json::json!({"complete":true,"step":step}),
                 });
             }

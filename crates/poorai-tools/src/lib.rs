@@ -953,6 +953,23 @@ pub async fn run_command_with_stdin(
     args: &[String],
     stdin: Option<&str>,
 ) -> Result<ToolResult, ToolError> {
+    // A program name never contains whitespace, so this is a whole command line
+    // put where the executable belongs. Left to run, it reaches exec as one
+    // filename and comes back as `execvp() of 'ls -la' failed: No such file or
+    // directory`, which reads like a missing program rather than a malformed
+    // call. Measured across several runs -- `ls -la`, and the same shape again
+    // and again -- each costing an action to a message that did not say what
+    // was wrong.
+    if executable.split_whitespace().count() > 1 {
+        let mut words = executable.split_whitespace();
+        let program = words.next().unwrap_or_default();
+        let rest: Vec<&str> = words.collect();
+        return Err(ToolError::Denied(format!(
+            "`{executable}` is a command line, not a program name. Pass the program alone as \
+             executable -- `{program}` -- and put {} in args.",
+            rest.join(" ")
+        )));
+    }
     // The derived allowlist cannot name the toolchain a workspace does not yet
     // have: a task that must install a JDK needs an executable no marker in the
     // repository could have implied. The grant is what widens it, and it is

@@ -65,7 +65,14 @@ enum Command {
         #[arg(long, value_delimiter = ',', value_enum)]
         approve: Vec<ApprovalArg>,
         /// Provider timeout for one turn of the action loop.
-        #[arg(long, default_value_t = 300)]
+        ///
+        /// Raised from 300 by measurement: a turn that generated a single
+        /// subtle regular expression took 240 seconds where its neighbours took
+        /// 3 to 34, and a limit of 300 cut off a run whose work was correct.
+        /// This does not hide slowness -- every turn's backend counters are
+        /// recorded in the audit -- it only stops slowness being reported as
+        /// failure.
+        #[arg(long, default_value_t = 900)]
         turn_timeout_secs: u64,
         /// Continue a named session. What its earlier runs established is
         /// carried into this one, re-checked against the workspace as it is
@@ -195,7 +202,9 @@ enum EvalCommand {
         /// to distinguish repeated trials of the same suite.
         #[arg(long, default_value_t = 1)]
         seed: u64,
-        #[arg(long, default_value_t = 300)]
+        /// Raised from 300 by measurement, for the same reason as `run`: a
+        /// slow turn is worth recording, not worth reporting as a failure.
+        #[arg(long, default_value_t = 900)]
         turn_timeout_secs: u64,
         /// Where reports are written.
         #[arg(long, default_value = ".poorai/evaluations")]
@@ -2238,6 +2247,16 @@ async fn prepare_profiled_run(
         "repository_inventory_hash": index.inventory_hash,
         "approvals_granted": policy.approvals,
         "run": result,
+        // Said plainly, because `verified: false` alone reads as a failure when
+        // it may mean there was nothing here to verify with.
+        "verification": if result.verified {
+            "the repository's own checks passed after the change"
+        } else if result.verifiable {
+            "the repository's own checks did not pass"
+        } else {
+            "nothing verified this: the workspace declares no checks, so the work \
+             was not confirmed by anything the harness ran"
+        },
     }))
 }
 fn index_repository(path: PathBuf) -> Result<serde_json::Value, SafeError> {

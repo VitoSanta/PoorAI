@@ -600,3 +600,39 @@ fn an_edit_that_already_landed_is_reported_as_already_applied() {
         .to_string();
     assert!(refusal.contains("does not appear"), "{refusal}");
 }
+
+/// A program name never contains whitespace, so a whole command line put where
+/// the executable belongs is a malformed call rather than a missing program.
+/// Left to run it reaches exec as one filename and comes back as
+/// `execvp() of 'ls -la' failed: No such file or directory`, which reads like
+/// the program is absent. Measured across several runs, each costing an action
+/// to a message that did not say what was wrong.
+#[tokio::test]
+async fn a_command_line_in_the_executable_field_says_so() {
+    let root = tempfile::tempdir().unwrap();
+    let policy = ToolPolicy {
+        root: root.path().to_path_buf(),
+        allow_commands: vec!["ls".into()],
+        output_limit: 8192,
+        timeout: std::time::Duration::from_secs(5),
+        sandbox: poorai_tools::SandboxPolicy::Disabled,
+        approvals: vec![],
+    };
+    let refusal = poorai_tools::run_command(&policy, "ls -la", &[])
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refusal.contains("command line, not a program name"),
+        "{refusal}"
+    );
+    // And it names both halves, so the correction needs no guessing.
+    assert!(refusal.contains("`ls`"), "{refusal}");
+    assert!(refusal.contains("-la"), "{refusal}");
+
+    // A real program name still runs.
+    let result = poorai_tools::run_command(&policy, "ls", &["-la".into()])
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, Some(0));
+}
