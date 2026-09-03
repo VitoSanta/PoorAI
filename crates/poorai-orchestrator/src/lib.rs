@@ -812,11 +812,42 @@ impl ApprovalPrompt for DenyWithoutAsking {
     }
 }
 
-/// Consecutive malformed tool calls before the run gives up.
+/// Consecutive malformed tool calls before the run gives up, for a deployment
+/// measured to emit them reliably.
 ///
 /// A deployment that cannot form a valid call after being told what was wrong
 /// three times is not going to, and the budget is better spent failing.
 const MALFORMED_CALL_LIMIT: usize = 3;
+
+/// The same value, for a caller that has no evidence to scale it by.
+pub const MALFORMED_CALL_LIMIT_DEFAULT: usize = MALFORMED_CALL_LIMIT;
+
+/// The most patience an intermittent deployment is given.
+///
+/// A bound is still needed: an unbounded retry is a run that never ends.
+const MALFORMED_CALL_CEILING: usize = 8;
+
+/// How many malformed calls to tolerate given the measured emission rate.
+///
+/// The capability matrix was an eligibility gate and nothing more: a
+/// deployment observed emitting a structural call on two trials of three
+/// passed exactly as one observed on three of three, and then met the same
+/// limit of three. For the first, a miss is a coin flip rather than an
+/// inability, and giving up after three consecutive misses measures the
+/// harness's patience rather than the deployment -- the probability of three
+/// misses in a row at a two-in-three rate is about one in twenty-seven, which
+/// happens.
+///
+/// So the limit scales with the measured rate, and a rate is the whole point
+/// of recording `trials` and `calls` rather than a boolean. A deployment that
+/// never emitted one is not covered here: it is refused before the run starts.
+pub fn malformed_call_limit(successes: u32, trials: u32) -> usize {
+    if successes == 0 || trials == 0 || successes >= trials {
+        return MALFORMED_CALL_LIMIT;
+    }
+    let scaled = (MALFORMED_CALL_LIMIT as f64 * f64::from(trials) / f64::from(successes)).ceil();
+    (scaled as usize).min(MALFORMED_CALL_CEILING)
+}
 
 /// Identical repetitions of a refused action before the loop says so.
 ///
@@ -1432,6 +1463,7 @@ pub async fn run_action_loop_with_prompt_and_budget<P: ModelProvider>(
         &measured_context_tiers,
         prompt,
         plan_first,
+        MALFORMED_CALL_LIMIT,
     )
     .await
 }
@@ -1449,6 +1481,10 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
     measured_context_tiers: &[u32],
     prompt: &dyn ApprovalPrompt,
     plan_first: bool,
+    // How many consecutive malformed calls to tolerate, from this
+    // deployment's measured emission rate. MALFORMED_CALL_LIMIT for one
+    // measured reliable.
+    malformed_limit: usize,
 ) -> Result<TaskRunResult, String> {
     let _terminal_guard = TerminalEventGuard { store, run_id };
     let mut policy = policy.clone();
@@ -1756,7 +1792,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                     )
                     .map_err(|e| e.to_string())?;
                 malformed += 1;
-                if malformed > MALFORMED_CALL_LIMIT {
+                if malformed > malformed_limit {
                     persist_failure(
                         store,
                         run_id,
@@ -1765,7 +1801,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                         serde_json::json!({"problem": problem}),
                     )?;
                     return Err(format!(
-                        "{MALFORMED_CALL_LIMIT} malformed tool calls in a row: {problem}"
+                        "{malformed_limit} malformed tool calls in a row: {problem}"
                     ));
                 }
                 request.messages.push(poorai_domain::ChatMessage {
@@ -3621,6 +3657,30 @@ mod tests {
     /// counted as "allowed" beside one that worked. The evaluation's tool
     /// failure rate is computed from this, which is why it is asserted here
     /// rather than left to the caller.
+    /// The matrix was an eligibility gate and nothing more: a deployment
+    /// observed emitting a structural call on two trials of three passed
+    /// exactly as one observed on three of three, and then met the same limit
+    /// of three. `trials` and `calls` are recorded so a rate can be read, and
+    /// until now nothing read them.
+    #[test]
+    fn patience_scales_with_the_measured_emission_rate() {
+        // Reliable: unchanged. Widening this for a deployment that always
+        // emits would spend budget on a deployment that has no trouble.
+        assert_eq!(malformed_call_limit(3, 3), MALFORMED_CALL_LIMIT);
+        // Two in three: three consecutive misses happens about once in
+        // twenty-seven runs, so giving up at three measures the harness.
+        assert!(malformed_call_limit(2, 3) > MALFORMED_CALL_LIMIT);
+        // Worse rates buy more patience, up to a bound -- an unbounded retry
+        // is a run that never ends.
+        assert!(malformed_call_limit(1, 3) >= malformed_call_limit(2, 3));
+        assert_eq!(malformed_call_limit(1, 100), MALFORMED_CALL_CEILING);
+        // No evidence, or none observed, keeps the default; a deployment that
+        // never emitted one is refused before the run starts rather than
+        // given infinite patience here.
+        assert_eq!(malformed_call_limit(0, 3), MALFORMED_CALL_LIMIT);
+        assert_eq!(malformed_call_limit(0, 0), MALFORMED_CALL_LIMIT);
+    }
+
     #[test]
     fn a_command_that_ran_and_failed_is_not_a_success() {
         assert_eq!(
@@ -3753,6 +3813,7 @@ mod tests {
             &[2048, 8192],
             &DenyWithoutAsking,
             false,
+            MALFORMED_CALL_LIMIT,
         )
         .await;
         assert_eq!(*contexts.lock().unwrap(), vec![8192, 2048]);
@@ -3808,6 +3869,7 @@ mod tests {
                 &[2048],
                 &DenyWithoutAsking,
                 false,
+                MALFORMED_CALL_LIMIT,
             )
             .await
             .is_err()

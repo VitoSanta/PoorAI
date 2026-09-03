@@ -327,6 +327,39 @@ fn write_immutable_artifact(path: &Path, bytes: &[u8]) -> Result<(), SafeError> 
     Ok(())
 }
 
+/// How often a capability was actually observed, from the probe artifact.
+///
+/// The matrix was an eligibility gate and nothing more: a deployment observed
+/// emitting a structural call on two trials of three passed exactly as one
+/// observed on three of three. `trials` and `calls` are recorded precisely so a
+/// rate can be read rather than a boolean, and until now nothing read them.
+fn capability_rate(
+    definition: &poorai_domain::ModelDefinition,
+    name: &str,
+    successes_field: &str,
+) -> Option<(u32, u32)> {
+    let Some(Observation::Observed(value)) = definition.capabilities.get(name) else {
+        return None;
+    };
+    let trials = value.get("trials")?.as_u64()? as u32;
+    let successes = value.get(successes_field)?.as_u64()? as u32;
+    Some((successes, trials))
+}
+
+/// Patience with malformed calls, from what the probe measured.
+///
+/// The measured rate finally does something. A deployment that emits a
+/// structural call on two trials of three is not one that cannot; ending its
+/// run after three consecutive misses measures the harness rather than the
+/// model, and three misses in a row at that rate happens about once in
+/// twenty-seven runs. One measured reliable keeps the original limit.
+fn tolerated_malformed_calls(definition: &poorai_domain::ModelDefinition) -> usize {
+    match capability_rate(definition, "structured_tools", "calls") {
+        Some((successes, trials)) => poorai_orchestrator::malformed_call_limit(successes, trials),
+        None => poorai_orchestrator::MALFORMED_CALL_LIMIT_DEFAULT,
+    }
+}
+
 fn observed_capability(definition: &poorai_domain::ModelDefinition, name: &str) -> bool {
     matches!(
         definition.capabilities.get(name),
@@ -1127,6 +1160,7 @@ async fn evaluate(
                 sampling.clone(),
                 strategy.as_ref(),
                 profile,
+                &capability_evidence.definition,
             )
             .await,
         );
@@ -1403,6 +1437,7 @@ async fn evaluate_task(
     sampling: BTreeMap<String, serde_json::Value>,
     strategy: Option<&poorai_domain::ModelStrategy>,
     profile: Option<&poorai_domain::ModelProfile>,
+    definition: &poorai_domain::ModelDefinition,
 ) -> poorai_eval::TaskOutcome {
     let mut outcome = poorai_eval::TaskOutcome {
         task_id: task.id.clone(),
@@ -1558,6 +1593,7 @@ async fn evaluate_task(
         max_edit_verify_cycles: budgets.edit_verify_cycles,
         max_context_retries: budgets.context_retries,
     };
+    let malformed_limit = tolerated_malformed_calls(definition);
     let run = tokio::time::timeout(
         Duration::from_secs(task.time_budget_secs),
         poorai_orchestrator::run_action_loop_with_prompt_budget_and_context_tiers(
@@ -1572,6 +1608,7 @@ async fn evaluate_task(
             measured_context_tiers,
             &poorai_orchestrator::DenyWithoutAsking,
             false,
+            malformed_limit,
         ),
     )
     .await;
@@ -2513,6 +2550,14 @@ async fn prepare_profiled_run(
                 // Without this two campaigns cannot be told apart by the
                 // policy they ran under, which is the thing a comparison is
                 // usually trying to isolate.
+                // The measured rates, so a result can be read knowing whether
+                // the deployment behind it emits calls every time or two times
+                // in three. A boolean would have hidden the difference.
+                "capability_rates": {
+                    "structured_tools": capability_rate(&capability_evidence.definition, "structured_tools", "calls"),
+                    "edit": capability_rate(&capability_evidence.definition, "edit", "edits"),
+                },
+                "malformed_call_limit": tolerated_malformed_calls(&capability_evidence.definition),
                 "strategy_id": strategy.map(|s| s.id),
                 "strategy_hash": strategy.map(strategy_hash),
                 "model_profile_hash": model_profile.map(profile_hash),
@@ -2617,6 +2662,7 @@ async fn prepare_profiled_run(
         &TerminalApproval,
         // The flag, or a strategy that declares it.
         plan || strategy.is_some_and(|s| s.plan_first),
+        tolerated_malformed_calls(&capability_evidence.definition),
     )
     .await
     .map_err(|e| SafeError {

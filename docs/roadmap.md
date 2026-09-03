@@ -446,7 +446,6 @@ The four items that had to be true before another campaign, and are now.
 | Item | What is wrong now | What closing it looks like |
 |---|---|---|
 | Resume is continuity, not a checkpoint | A session carries facts forward; a crashed run restarts from a summary rather than from the state it was in | Run state is a typed projection of the event log through one reducer, and a checkpoint is resumable |
-| The capability gate is presence, not rate | A deployment observed at 2 of 3 on `edit` passes exactly as one observed at 3 of 3; the measured intermittency buys no defensive strategy | The rate is an input to the strategy — more trials, a narrower tool schema, or a refusal — rather than a number recorded and rounded to a boolean |
 
 ### P1, the mechanical half — 2026-09-03
 
@@ -513,6 +512,16 @@ And the denial is on **data**, not on every read. Denying metadata denies the wa
 **A real interaction surfaced immediately.** Corpus preparation clones from whatever the corpus declares, and a fixture using a local mirror stopped working — correctly, since preparation now cannot read outside its root either. Rather than widen the profile, the policy gained `extra_readable` and preparation opens exactly the path the corpus declared and nothing else. A URL opens nothing; a verifier names no source and gets nothing.
 
 The fixtures run real commands. One proves the file is readable *without* the sandbox before asserting the denial — three fixtures in this project have passed for a reason unrelated to what they tested — and another asserts `git --version` and a workspace read still work, because the failure mode of a strict profile is that nothing runs at all.
+
+### The measured rate finally does something — 2026-09-03
+
+`model-profiles.md` called the capability matrix an eligibility gate and it was one — but only on presence. A deployment observed emitting a structural call on two trials of three passed exactly as one observed on three of three, and then met the same limit of three consecutive malformed calls. `trials` and `calls` are recorded precisely so a rate can be read rather than a boolean, and nothing read them.
+
+For an intermittent deployment a miss is a coin flip, not an inability. Three misses in a row at two-in-three happens about once in twenty-seven runs, so ending the run there measures the harness's patience rather than the model. The limit now scales with the measured rate, bounded — an unbounded retry is a run that never ends — and a deployment measured reliable keeps the original three, because widening it for one that always emits spends budget on a deployment that has no trouble.
+
+The rates and the limit they produced are recorded in `run.started`, so a result can be read knowing whether the deployment behind it emits a call every time or two times in three.
+
+This is the narrow version of the adaptation. What is still not built is the rest of what `model-profiles.md` lists: a per-deployment retry policy, a tool schema narrowed for a deployment that struggles with the full one, and reasoning escalation when a task proves hard.
 
 ### P2 — an agent for whole codebases
 
