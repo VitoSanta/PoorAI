@@ -471,13 +471,14 @@ const DEFAULT_MAX_ACTIONS: u8 = 26;
 
 /// Actions a run may take when it must also fetch and install a toolchain.
 ///
-/// One observation, not a distribution. A run that installed a Go toolchain on
-/// a machine without Go, built a program and verified it against its
-/// specification used **30 actions** -- above the ordinary default, so only a
-/// separate provisioning budget let it finish. Provisioning is a different
+/// Two observations, not a distribution. A run that installed a Go toolchain on
+/// a machine without Go used **30 actions**; one that installed a JDK on the
+/// same machine used **33**. Both are above the ordinary default, so only a
+/// separate provisioning budget let either finish. Provisioning is a different
 /// scale of work from editing a file and gets a different number rather than
-/// the same one stretched. The margin over 30 is guesswork until a campaign
-/// gives this a distribution the way `external-v1` gave one to the default.
+/// the same one stretched. The margin over 33 is still guesswork until a
+/// campaign gives this a distribution the way `external-v1` gave one to the
+/// default.
 pub const PROVISIONING_MAX_ACTIONS: u8 = 80;
 
 /// What an action targets, for spotting repetition.
