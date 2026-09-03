@@ -425,3 +425,86 @@ fn the_plan_survives_compaction() {
         plan_message.content
     );
 }
+
+/// A claim the harness can check is a claim it should check.
+///
+/// The boundary does not move: the harness still never *infers* that a step is
+/// done. It tests a claim against a command, which is what it already does for
+/// completion -- and a step whose check did not pass is not done however
+/// loudly it was claimed.
+mod subgoal_checks {
+    use poorai_orchestrator::plan::{Plan, Subgoal};
+
+    fn plan_with_check(command: Option<Vec<String>>) -> Plan {
+        Plan::new(vec![
+            Subgoal {
+                statement: "write the parser".into(),
+                ..Default::default()
+            },
+            Subgoal {
+                statement: "make the tests pass".into(),
+                depends_on: vec![1],
+                verify: command,
+            },
+        ])
+    }
+
+    #[test]
+    fn a_claim_on_a_checked_step_is_not_done_until_the_check_passes() {
+        let mut plan = plan_with_check(Some(vec!["cargo".into(), "test".into()]));
+        plan.claim(2);
+        // Claimed, and the check has not run: not yet contradicted, so not yet
+        // refused either.
+        assert!(plan.done(2));
+
+        plan.record_verification(2, false);
+        assert!(!plan.done(2), "a failed check left the step done");
+        assert!(plan.outstanding().iter().any(|s| s.starts_with("2.")));
+
+        plan.record_verification(2, true);
+        assert!(plan.done(2));
+    }
+
+    /// Absent is not the same as failed. A plan without checks must not look
+    /// like a plan that failed them.
+    #[test]
+    fn a_step_without_a_check_is_done_when_it_is_claimed() {
+        let mut plan = plan_with_check(None);
+        plan.claim(2);
+        assert!(plan.done(2));
+        assert_eq!(plan.state[1].verified, None);
+    }
+
+    #[test]
+    fn a_step_waits_for_what_it_depends_on() {
+        let mut plan = plan_with_check(None);
+        assert_eq!(plan.ready(), vec![1]);
+        assert_eq!(plan.blocked(), vec![2]);
+        plan.claim(1);
+        assert_eq!(plan.ready(), vec![2]);
+        assert!(plan.blocked().is_empty());
+    }
+
+    /// A plan that refers to a step it does not have is a mistake in the plan,
+    /// and blocking on it would strand the run over a typo.
+    #[test]
+    fn a_dependency_that_does_not_exist_does_not_block() {
+        let plan = Plan::new(vec![Subgoal {
+            statement: "do it".into(),
+            depends_on: vec![9],
+            verify: None,
+        }]);
+        assert_eq!(plan.ready(), vec![1]);
+    }
+
+    /// A claim on a step the plan does not have is a mistake, not progress --
+    /// the rule the loop already applied, kept where the plan itself can hold
+    /// it.
+    #[test]
+    fn a_claim_beyond_the_plan_is_refused() {
+        let mut plan = plan_with_check(None);
+        assert!(!plan.claim(9));
+        assert!(!plan.claim(0));
+        assert_eq!(plan.done_count(), 0);
+    }
+}

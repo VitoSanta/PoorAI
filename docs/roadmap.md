@@ -541,7 +541,6 @@ A run that ended is reported, not resumed: every exit writes a terminal event, a
 | Item | What is wrong now | What closing it looks like |
 |---|---|---|
 | Tool history is text in a chat | `ChatMessage` carries a role and a string; calls and results are serialised JSON with no call ids, so a protocol-sensitive deployment can lose the pairing | Native tool-call and tool-result messages with ids, matching what the backend's own protocol expects |
-| A plan is a list, not a graph | Steps are claimed, reconciled and never verified individually | Subgoals with their own local verifiers, and replanning driven by their outcomes |
 | Calibration measures allocation, not occupancy | A tier is qualified by a prompt of one token and pressure sampled before generation, so "262144 is nearly free" describes an allocation | A ladder that fills the context and samples peak resident memory during generation |
 | Every edit re-runs every selected check | Verification is not narrowed to what the edit could have affected, so a large suite is paid in full after each change | Targeted check first, broader suite on escalation, as `verification-recovery.md` already specifies |
 
@@ -616,6 +615,20 @@ Fitting has an order and a floor. Required sections are never cut: a run without
 **One quota is still not measured.** The output reserve is a quarter of the context, a starting value rather than a derived one. It is a single constant in one place, which is what makes it measurable at all — five numbers at five call sites are not.
 
 Writing the fixtures found the design mistake: merging adjacent same-role messages re-glued the task to the excerpts, undoing the thing being built. The fixture caught it because it asserted the task was its own message rather than that the prompt contained it.
+
+### Subgoals that wait, and claims that are checked — 2026-09-03
+
+A plan was a list of sentences. `record_progress` recorded a claim, the claim was reconciled at the very end, and nothing between the two ever asked whether a step had been finished — so a long task was a long list of assertions, verified once, when everything had already been spent.
+
+**A list is the graph where every step waits on the one before it**, and most plans are not that shape: three files can be edited in any order and the fourth step needs all three. A subgoal carries its dependencies, and the status of every turn now says which steps are *ready* and which are *blocked*. A list hid that: every step looked available, so a deployment had no way to see that three of them were waiting on the one it had not done. A dependency on a step the plan does not have is ignored rather than treated as unmet — that is a typo in the plan, and blocking on it would strand the run.
+
+**A subgoal can carry its own check**, and a claim on a step that has one is checked rather than recorded. The boundary does not move: the harness still never *infers* that a step is done, because inferring would be the harness deciding the task had progressed. It tests a claim against a command, which is exactly what it already does for completion. The command runs under the run's own policy, so a step cannot authorise something the run could not otherwise execute, and a step whose check did not pass stays outstanding however loudly it was claimed — recorded as `subgoal.checked`.
+
+Absent is not the same as failed. A step without a check is done when it is claimed, and `verified` stays `None`: reporting it as failed would make a plan without checks look like a plan that failed them.
+
+**The older shape is still a plan.** A deployment answering with a list of sentences is not failing — it is planning without a graph, which is what every plan in this project has been until now, and the parser takes both.
+
+Fixing the compaction path found a defect: the outstanding steps were being numbered twice, once by the plan and once by the compactor, so a compacted plan read `2. 3. test it`. The existing compaction fixture caught it.
 
 ### P3 — a measurable beta
 

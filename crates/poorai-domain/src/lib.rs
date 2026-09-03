@@ -699,6 +699,15 @@ pub enum RunEvent {
         #[serde(default)]
         note: Option<String>,
     },
+    /// A claimed step was checked against its own command.
+    ///
+    /// The harness still never infers that a step is done. It checks a claim,
+    /// which is what it already does for completion.
+    SubgoalChecked {
+        step: usize,
+        passed: bool,
+        command: String,
+    },
     PlanReconciled {
         steps_total: usize,
         steps_recorded_done: usize,
@@ -888,6 +897,7 @@ impl RunEvent {
             Self::TaskStarted(_) => "task.started",
             Self::TaskTransition(_) => "task.transition",
             Self::TaskPlan { .. } => "task.plan",
+            Self::SubgoalChecked { .. } => "subgoal.checked",
             Self::PlanReconciled { .. } => "plan.reconciled",
             Self::TurnGenerated { .. } => "turn.generated",
             Self::ActionMalformed { .. } => "action.malformed",
@@ -963,6 +973,7 @@ fn tag_for(event_type: &str) -> Option<&'static str> {
         "session.opened" => "session_opened",
         "task.transition" => "task_transition",
         "task.plan" => "task_plan",
+        "subgoal.checked" => "subgoal_checked",
         "plan.reconciled" => "plan_reconciled",
         "turn.generated" => "turn_generated",
         "action.malformed" => "action_malformed",

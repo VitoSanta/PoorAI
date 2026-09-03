@@ -1,5 +1,6 @@
 //! Durable task-state transitions and evidence-bounded profile selection.
 pub mod context;
+pub mod plan;
 
 use futures_util::StreamExt;
 use poorai_domain::{
@@ -1573,7 +1574,7 @@ fn compact_history(
     run_id: poorai_domain::Id,
     request: &mut poorai_domain::ModelRequest,
     step: u8,
-    plan: &[String],
+    plan: &crate::plan::Plan,
     steps_done: &[usize],
 ) -> Result<bool, String> {
     if request.messages.len() <= 3 {
@@ -1598,19 +1599,17 @@ fn compact_history(
     // exactly when a long task most needs its plan, and dropping it here is
     // what made the plan context rather than authority.
     if !plan.is_empty() {
-        let outstanding: Vec<String> = plan
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !steps_done.contains(&(i + 1)))
-            .map(|(i, s)| format!("{}. {s}", i + 1))
-            .collect();
+        let _ = steps_done;
         kept.push(poorai_domain::ChatMessage {
             role: "tool".into(),
             content: format!(
                 "Your plan, still in force. Done: {} of {}.\nStill outstanding:\n{}",
-                steps_done.len(),
+                // The plan's own count, which is claims that held rather than
+                // claims that were made: a step whose check did not pass is
+                // outstanding however loudly it was claimed.
+                plan.done_count(),
                 plan.len(),
-                outstanding.join("\n")
+                plan.outstanding().join("\n")
             ),
         });
     }
@@ -1660,12 +1659,33 @@ pub fn edited_paths(store: &Store, run_id: poorai_domain::Id) -> Result<Vec<Stri
     Ok(paths)
 }
 
-/// Renders plan steps as a numbered list, one per line.
-fn numbered(steps: &[String]) -> String {
-    steps
+/// The plan as the deployment reads it, with its dependencies and its checks.
+///
+/// A step that waits on another, and one the harness can verify, are both
+/// facts the deployment needs before it decides what to do next -- and a plain
+/// numbered list said neither.
+fn numbered_plan(plan: &crate::plan::Plan) -> String {
+    plan.steps
         .iter()
         .enumerate()
-        .map(|(i, step)| format!("{}. {step}\n", i + 1))
+        .map(|(index, step)| {
+            let mut line = format!("{}. {}", index + 1, step.statement);
+            if !step.depends_on.is_empty() {
+                line.push_str(&format!(
+                    " (after {})",
+                    step.depends_on
+                        .iter()
+                        .map(usize::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            if let Some(command) = &step.verify {
+                line.push_str(&format!(" (checked by `{}`)", command.join(" ")));
+            }
+            line.push('\n');
+            line
+        })
         .collect()
 }
 
@@ -1790,7 +1810,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
     // loop state it survives compaction, appears in the status of every turn,
     // and is reconciled when completion is declared.
     let mut task_state = TaskState::Plan;
-    let plan: Vec<String> = if plan_first {
+    let mut plan: crate::plan::Plan = if plan_first {
         match plan_task(provider, store, run_id, &request).await {
             Ok(plan) => plan,
             Err(error) => {
@@ -1805,7 +1825,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
             }
         }
     } else {
-        Vec::new()
+        crate::plan::Plan::default()
     };
     task_state = persist_transition(
         store,
@@ -1825,7 +1845,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
             content: format!(
                 "Your plan. It is not binding: if it turns out to be wrong, depart from it \
                  and say so. Call record_progress as you finish each step.\n{}",
-                numbered(&plan)
+                numbered_plan(&plan)
             ),
         });
     }
@@ -2119,13 +2139,8 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                     Some(run_id),
                     &poorai_domain::RunEvent::PlanReconciled {
                         steps_total: plan.len(),
-                        steps_recorded_done: steps_done.len(),
-                        steps_outstanding: plan
-                            .iter()
-                            .enumerate()
-                            .filter(|(i, _)| !steps_done.contains(&(i + 1)))
-                            .map(|(i, step)| format!("{}. {step}", i + 1))
-                            .collect(),
+                        steps_recorded_done: plan.done_count(),
+                        steps_outstanding: plan.outstanding(),
                     },
                 )
                 .map_err(|e| e.to_string())?;
@@ -2586,25 +2601,77 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
         } else if edited {
             idle_since_pass = 0;
         }
-        if let Some(claimed) = progress_claim
-            && !steps_done.contains(&claimed)
-        {
-            steps_done.push(claimed);
+        if let Some(claimed) = progress_claim {
+            if !steps_done.contains(&claimed) {
+                steps_done.push(claimed);
+            }
+            plan.claim(claimed);
+            // A claim on a step that carries a check is checked. The harness
+            // still never *infers* that a step is done -- inferring would be
+            // the harness deciding the task had progressed -- but a claim it
+            // can test against a command is a claim it should test, which is
+            // exactly what it already does for completion.
+            //
+            // The command runs under the run's own policy, so a step cannot
+            // authorise something the run could not otherwise execute.
+            if let Some((executable, args)) = plan.verifier(claimed) {
+                let checked =
+                    poorai_verify::baseline(&policy, std::slice::from_ref(&(executable, args)))
+                        .await
+                        .map_err(|e| e.to_string())?;
+                let passed = checked
+                    .checks
+                    .iter()
+                    .all(|check| check.result.exit_code == Some(0));
+                plan.record_verification(claimed, passed);
+                store
+                    .append_event(
+                        Some(run_id),
+                        &poorai_domain::RunEvent::SubgoalChecked {
+                            step: claimed,
+                            passed,
+                            command: checked
+                                .checks
+                                .first()
+                                .map(|check| check.command.clone())
+                                .unwrap_or_default(),
+                        },
+                    )
+                    .map_err(|e| e.to_string())?;
+                if !passed {
+                    // Said plainly, and the step is not done. A claim the
+                    // harness could check and that did not hold is the one
+                    // case where recording it as progress would be recording
+                    // something untrue.
+                    request.messages.push(poorai_domain::ChatMessage {
+                        role: "tool".into(),
+                        content: serde_json::json!({
+                            "subgoal_not_verified": format!(
+                                "Step {claimed} is not done: its check did not pass. It stays outstanding."
+                            )
+                        })
+                        .to_string(),
+                    });
+                }
+            }
         }
         let mut status = serde_json::json!({"actions_remaining": remaining});
         if !plan.is_empty() {
             // The plan is repeated every turn rather than referred back to: on a
             // long task the message carrying it has usually been compacted away,
             // and a step the deployment can no longer read is not a plan.
-            let outstanding: Vec<String> = plan
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| !steps_done.contains(&(i + 1)))
-                .map(|(i, step)| format!("{}. {step}", i + 1))
-                .collect();
-            status["plan_steps_done"] = serde_json::json!(steps_done.len());
+            status["plan_steps_done"] = serde_json::json!(plan.done_count());
             status["plan_steps_total"] = serde_json::json!(plan.len());
-            status["plan_steps_outstanding"] = serde_json::json!(outstanding);
+            status["plan_steps_outstanding"] = serde_json::json!(plan.outstanding());
+            // Which steps can be started now, and which are waiting on
+            // another. A list hid this: every step looked available, so a
+            // deployment had no way to see that three of them were blocked on
+            // the one it had not done.
+            status["plan_steps_ready"] = serde_json::json!(plan.ready());
+            let blocked = plan.blocked();
+            if !blocked.is_empty() {
+                status["plan_steps_blocked"] = serde_json::json!(blocked);
+            }
         }
         if let Some(passed_at) = checks_passed_at
             && idle_since_pass > 0
@@ -2691,7 +2758,7 @@ pub async fn plan_task<P: ModelProvider>(
     store: &Store,
     run_id: poorai_domain::Id,
     request: &poorai_domain::ModelRequest,
-) -> Result<Vec<String>, String> {
+) -> Result<crate::plan::Plan, String> {
     let schema = serde_json::json!([{
         "type": "function",
         "function": {
@@ -2700,7 +2767,24 @@ pub async fn plan_task<P: ModelProvider>(
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "steps": {"type": "array", "items": {"type": "string"}},
+                    "steps": {
+                        "type": "array",
+                        "description": "Each step is a sentence, or an object with `step`, an optional `depends_on` list of earlier step numbers, and an optional `verify` command as an argv array. Give a verify command only where one already exists in this repository and actually decides whether the step is done.",
+                        "items": {
+                            "anyOf": [
+                                {"type": "string"},
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "step": {"type": "string"},
+                                        "depends_on": {"type": "array", "items": {"type": "integer"}},
+                                        "verify": {"type": "array", "items": {"type": "string"}},
+                                    },
+                                    "required": ["step"],
+                                },
+                            ]
+                        },
+                    },
                 },
                 "required": ["steps"],
             }
@@ -2718,16 +2802,18 @@ pub async fn plan_task<P: ModelProvider>(
         poorai_provider::collect_reply(provider.chat(planning).await.map_err(|e| e.to_string())?)
             .await
             .map_err(|e| e.to_string())?;
-    let steps: Vec<String> = reply
+    let steps = reply
         .tool_calls
         .iter()
         .find(|call| call.name == "plan")
         .and_then(|call| call.arguments.get("steps").cloned())
-        .and_then(|steps| serde_json::from_value::<Vec<String>>(steps).ok())
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|step| !step.trim().is_empty())
-        .take(MAX_PLAN_STEPS)
+        .map(|steps| crate::plan::parse_steps(&steps, MAX_PLAN_STEPS))
+        .unwrap_or_default();
+    let plan = crate::plan::Plan::new(steps);
+    let steps: Vec<String> = plan
+        .steps
+        .iter()
+        .map(|step| step.statement.clone())
         .collect();
     store
         .append(
@@ -2735,10 +2821,17 @@ pub async fn plan_task<P: ModelProvider>(
             "task.plan",
             // Recorded even when empty: a deployment that was asked for a plan
             // and produced none is a fact about the deployment.
-            serde_json::json!({"steps": steps, "produced": !steps.is_empty()}),
+            serde_json::json!({
+                "steps": steps,
+                "produced": !steps.is_empty(),
+                // The graph, where the deployment gave one. A plan that says
+                // nothing about order or checks is still a plan, and recording
+                // the difference is how we find out whether the shape is used.
+                "subgoals": plan.steps,
+            }),
         )
         .map_err(|e| e.to_string())?;
-    Ok(steps)
+    Ok(plan)
 }
 
 /// The typed actions offered to a deployment as native tools.
@@ -4019,7 +4112,17 @@ mod tests {
                 },
             ],
         };
-        assert!(compact_history(&store, run_id, &mut request, 1, &[], &[]).unwrap());
+        assert!(
+            compact_history(
+                &store,
+                run_id,
+                &mut request,
+                1,
+                &crate::plan::Plan::default(),
+                &[],
+            )
+            .unwrap()
+        );
         assert_eq!(request.messages[1].content, "prior session ledger");
         assert_eq!(request.messages[2].role, "user");
         assert_eq!(request.messages[2].content, "the actual task");

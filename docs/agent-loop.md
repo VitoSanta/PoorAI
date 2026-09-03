@@ -66,7 +66,9 @@ Three consecutive malformed calls do end the run. A deployment that cannot form 
 
 **Non-progress is a window over what changed, not over what was proposed.** Progress is the workspace or the verification standing somewhere new — a read succeeds and changes nothing — so the signature covers the files the run has written and the failing checks' own diagnostics, and the loop says so when six actions end where they began. A window containing anything the run had not tried before is never flagged: reading six unfamiliar files is investigation, and interrupting that would be worse than the problem it solves. As with a named loop, the fact is stated and nothing is decided on the deployment's behalf.
 
-**A plan is a list of claims, not a graph.** `record_progress` records what the deployment says it finished and the harness verifies none of it independently, by design. Subgoals carrying their own verifiers — where finishing a step is something the harness can check — is the thing that would make a long task tractable, and it does not exist.
+**A plan is a graph, and a claim on a checked step is checked.** A subgoal carries its dependencies, so the status of every turn says which steps are ready and which are blocked — a list hid that, since every step looked available. And a subgoal can carry its own command: `record_progress` on such a step runs it, and the step stays outstanding if it does not pass, however loudly it was claimed.
+
+The boundary is unchanged. The harness still never infers that a step is done — that would be the harness deciding the task had progressed. It tests a claim against a command, which is what it already does for completion, and under the run's own policy, so a step cannot authorise something the run could not otherwise execute. A step with no check is done when it is claimed: absent is not failed, and a plan without checks must not look like one that failed them.
 
 **A completion is refused where nothing can verify it.** A repository with no discoverable checks used to complete successfully; it now fails, naming the absent verifier. See `verification-recovery.md`.
 

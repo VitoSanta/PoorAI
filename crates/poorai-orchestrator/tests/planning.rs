@@ -144,5 +144,65 @@ async fn a_plan_is_bounded_and_drops_empty_steps() {
     )
     .await
     .unwrap();
-    assert_eq!(steps, vec!["real step"]);
+    assert_eq!(
+        steps
+            .steps
+            .iter()
+            .map(|step| step.statement.as_str())
+            .collect::<Vec<_>>(),
+        vec!["real step"]
+    );
+}
+
+/// A plan is a graph, and a list is the graph where every step waits on the one
+/// before it. Most plans are not that shape: three files can be edited in any
+/// order and the fourth step needs all three, which a list cannot say.
+#[tokio::test]
+async fn a_plan_may_carry_dependencies_and_its_own_checks() {
+    let store = Store::open(":memory:").unwrap();
+    let plan = poorai_orchestrator::plan_task(
+        &PlanningProvider {
+            steps: Some(serde_json::json!([
+                {"step": "add the parser"},
+                {"step": "add the lexer"},
+                {"step": "wire them together", "depends_on": [1, 2], "verify": ["cargo", "test"]},
+            ])),
+        },
+        &store,
+        poorai_domain::new_id(),
+        &request(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(plan.len(), 3);
+    // Two steps can start; the third waits on both.
+    assert_eq!(plan.ready(), vec![1, 2]);
+    assert_eq!(plan.blocked(), vec![3]);
+    assert_eq!(
+        plan.verifier(3),
+        Some(("cargo".to_string(), vec!["test".to_string()]))
+    );
+    assert!(plan.verifier(1).is_none(), "a step invented a check");
+}
+
+/// The older shape is still a plan. A deployment answering with a list of
+/// sentences is not failing -- it is planning without a graph, which is what
+/// every plan in this project has been until now.
+#[tokio::test]
+async fn a_plain_list_of_sentences_is_still_a_plan() {
+    let store = Store::open(":memory:").unwrap();
+    let plan = poorai_orchestrator::plan_task(
+        &PlanningProvider {
+            steps: Some(serde_json::json!(["read it", "fix it"])),
+        },
+        &store,
+        poorai_domain::new_id(),
+        &request(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(plan.len(), 2);
+    // Nothing waits on anything, so everything is ready.
+    assert_eq!(plan.ready(), vec![1, 2]);
+    assert!(plan.blocked().is_empty());
 }
