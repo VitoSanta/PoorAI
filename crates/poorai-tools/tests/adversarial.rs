@@ -671,3 +671,78 @@ async fn a_command_line_in_the_executable_field_says_so() {
         .unwrap();
     assert_eq!(result.exit_code, Some(0));
 }
+
+/// The index walked under full gitignore semantics while the tools skipped
+/// four known directory names, so a file excluded from retrieval on purpose
+/// stayed reachable through a tool. The ignore rules held in one direction.
+#[test]
+fn an_ignored_file_is_invisible_to_search_and_to_the_listing() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join(".gitignore"), ".env\nbuild/\n").unwrap();
+    fs::write(root.path().join(".env"), "API_TOKEN=cafebabe-secret\n").unwrap();
+    fs::create_dir(root.path().join("build")).unwrap();
+    fs::write(
+        root.path().join("build/generated.txt"),
+        "API_TOKEN=cafebabe-secret\n",
+    )
+    .unwrap();
+    fs::write(root.path().join("src.rs"), "let token = 1;\n").unwrap();
+
+    let policy = policy(root.path());
+    let matches = search(&policy, "cafebabe", 20).unwrap();
+    assert!(
+        matches.is_empty(),
+        "ignored files leaked into search: {matches:?}"
+    );
+
+    let listed = list_tree(&policy, 100).unwrap();
+    let paths: Vec<&str> = listed.iter().map(|entry| entry.path.as_str()).collect();
+    assert!(!paths.contains(&".env"), "{paths:?}");
+    assert!(!paths.iter().any(|p| p.starts_with("build")), "{paths:?}");
+    // The rule excludes what the repository excluded, not everything.
+    assert!(paths.contains(&"src.rs"), "{paths:?}");
+}
+
+/// A listing that feeds a prompt must not depend on directory order, or two
+/// runs over an unchanged workspace differ for no reason a reader can see.
+#[test]
+fn a_listing_is_ordered_and_repeatable() {
+    let root = tempfile::tempdir().unwrap();
+    for name in ["zeta.rs", "alpha.rs", "mid.rs"] {
+        fs::write(root.path().join(name), "x").unwrap();
+    }
+    fs::create_dir(root.path().join("beta")).unwrap();
+    fs::write(root.path().join("beta/inner.rs"), "x").unwrap();
+
+    let policy = policy(root.path());
+    let first: Vec<String> = list_tree(&policy, 100)
+        .unwrap()
+        .into_iter()
+        .map(|entry| entry.path)
+        .collect();
+    let second: Vec<String> = list_tree(&policy, 100)
+        .unwrap()
+        .into_iter()
+        .map(|entry| entry.path)
+        .collect();
+    assert_eq!(first, second);
+    let mut sorted = first.clone();
+    sorted.sort();
+    assert_eq!(first, sorted, "{first:?}");
+}
+
+/// `git clean` discards uncommitted work exactly as `reset --hard` does. The
+/// comment beside the reset gate named it; nothing checked it.
+#[test]
+fn git_clean_needs_the_same_approval_as_a_history_rewrite() {
+    assert_eq!(
+        command_approval("git", &["clean".into(), "-fd".into()]),
+        Some(Approval::HistoryRewrite)
+    );
+    assert_eq!(
+        command_approval("git", &["reset".into(), "--hard".into()]),
+        Some(Approval::HistoryRewrite)
+    );
+    // Reading history is not destroying it.
+    assert_eq!(command_approval("git", &["status".into()]), None);
+}

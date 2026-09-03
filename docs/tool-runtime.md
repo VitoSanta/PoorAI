@@ -54,17 +54,15 @@ A timeout kills the process group rather than the process. A child that outlives
 
 ## What the surface still does not have
 
-`Search` and `ListTree` walk `read_dir` and skip four known directory names. They do not honour `.gitignore`, which the repository index does — so a file that is excluded from retrieval on purpose, an environment file among them, is still reachable through a tool. One walker should serve both.
+One walker serves the index and the tools as of 2026-09-03, so `.gitignore` excludes a file from a tool result exactly as it excludes it from retrieval, and the listing is sorted rather than in directory order.
 
 There is no `mkdir`, `delete`, `move` or `rename`, no read-only `git status` or `diff`, and no multi-hunk patch. A task that reorganises files cannot be expressed with what exists, and a task that needs to see what it has changed can only re-read files it remembers touching.
 
 The sandbox confines writing and denies the network; it does not confine **reading**. Nine known credential paths are denied and everything else on the host is legible to a sandboxed command. Under `--provision`, which grants an arbitrary executable and a network together, that is the shape of an exfiltration and the flag's help says so.
 
-`git clean` is not gated. `reset --hard` requires the history-rewriting approval and the comment beside it names `git clean -fd` as the other way to discard uncommitted work — which nothing checks. The gate should be on the effect, as publishing and history rewriting already are.
+`git clean` now needs the same approval as `reset --hard`: both discard uncommitted work, and only one of them was checked.
 
-`ListTree` returns the walk in directory order rather than sorted, so two listings of an unchanged workspace can differ. A tool whose output feeds a prompt should be deterministic.
-
-A tool outcome is allowed, denied or failed. A timeout, an I/O failure, a non-zero exit and a protocol failure all land in the last of those, which is enough to count a failure and not enough to diagnose one.
+A tool outcome is one of five — `allowed_success`, `allowed_failure`, `policy_denial`, `timeout`, `protocol_failure` — rather than allowed or not. A command that ran and exited non-zero used to be recorded exactly like one that worked, which is what made the evaluation's failure rate meaningless.
 
 `ToolCapability` is an enum left over from an earlier design and no longer corresponds to the typed actions above. It is two vocabularies for one concept, and one of them is wrong.
 

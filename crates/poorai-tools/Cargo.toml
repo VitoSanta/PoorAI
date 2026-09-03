@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+ignore.workspace = true
 poorai-domain = { path = "../poorai-domain" }
 blake3.workspace = true
 futures-util.workspace = true

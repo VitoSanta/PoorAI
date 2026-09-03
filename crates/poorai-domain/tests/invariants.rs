@@ -590,3 +590,19 @@ fn a_context_policy_must_be_ordered() {
     assert!(!policy(131_072, 65_536, 262_144).is_coherent());
     assert!(!policy(65_536, 262_144, 131_072).is_coherent());
 }
+
+/// Every persisted contract carries a schema version and nothing compared it
+/// against the version in force, so an artifact from another build was read
+/// whenever its shape happened to fit -- which is exactly when the fields that
+/// changed would be read wrongly.
+#[test]
+fn an_artifact_from_another_schema_is_refused_rather_than_read() {
+    assert!(poorai_domain::check_schema_version(poorai_domain::SCHEMA_VERSION, "profile").is_ok());
+    let error = poorai_domain::check_schema_version(poorai_domain::SCHEMA_VERSION + 1, "profile")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("schema version"), "{error}");
+    // Older is refused too: there are no migrations, and reading an old
+    // artifact as though it were current is the failure this prevents.
+    assert!(poorai_domain::check_schema_version(0, "profile").is_err());
+}

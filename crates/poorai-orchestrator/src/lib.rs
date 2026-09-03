@@ -406,6 +406,21 @@ pub fn select_compatible_profile_with_runtime(
     )
 }
 
+/// Whether an allowed action actually did what it was asked.
+///
+/// `run_command` returning `Ok` means the command ran, not that it worked: a
+/// non-zero exit is a real outcome the audit needs to separate from success,
+/// or "allowed" counts a failing build as a working one.
+fn outcome_class(outcome: &serde_json::Value) -> &'static str {
+    match outcome.get("exit_code") {
+        Some(serde_json::Value::Number(code)) if code.as_i64() == Some(0) => "allowed_success",
+        Some(serde_json::Value::Number(_)) => "allowed_failure",
+        // A command killed by a signal reports no exit code at all.
+        Some(serde_json::Value::Null) if outcome.get("duration_ms").is_some() => "allowed_failure",
+        _ => "allowed_success",
+    }
+}
+
 /// Executes one typed action under policy and audits the attempt.
 ///
 /// Every attempt is recorded, allowed or denied. A policy denial is the security
@@ -422,16 +437,19 @@ pub async fn execute_action(
         Ok(outcome) => serde_json::json!({
             "action": action,
             "status": "allowed",
+            "outcome_class": outcome_class(outcome),
             "outcome": outcome,
         }),
         Err(ActionExecutionError::Denied(denial)) => serde_json::json!({
             "action": action,
             "status": "denied",
+            "outcome_class": "policy_denial",
             "denial": denial,
         }),
         Err(error) => serde_json::json!({
             "action": action,
             "status": "failed",
+            "outcome_class": error.outcome_class(),
             "failure": error.to_string(),
             "failure_category": error.category(),
         }),
@@ -472,6 +490,21 @@ impl std::fmt::Display for ActionExecutionError {
 impl std::error::Error for ActionExecutionError {}
 
 impl ActionExecutionError {
+    /// Which of the five outcomes this is.
+    ///
+    /// A tool attempt had two shapes -- allowed or not -- so a timeout, an I/O
+    /// failure and a malformed action were one bucket, and a command that ran
+    /// and exited non-zero was indistinguishable from one that worked. That is
+    /// enough to count a failure and not enough to diagnose one.
+    fn outcome_class(&self) -> &'static str {
+        match self {
+            Self::Denied(_) => "policy_denial",
+            Self::Timeout => "timeout",
+            Self::Io(_) => "io_failure",
+            Self::Invalid(_) | Self::Serialization(_) | Self::Audit(_) => "protocol_failure",
+        }
+    }
+
     fn category(&self) -> &'static str {
         match self {
             Self::Denied(_) => "policy",
@@ -3367,6 +3400,49 @@ mod tests {
 
     /// Silent truncation is the case with no other signal: the deployment
     /// answers a prompt it never received, and nothing in the reply says so.
+    /// A tool attempt had two shapes, so a command that ran and exited 1 was
+    /// counted as "allowed" beside one that worked. The evaluation's tool
+    /// failure rate is computed from this, which is why it is asserted here
+    /// rather than left to the caller.
+    #[test]
+    fn a_command_that_ran_and_failed_is_not_a_success() {
+        assert_eq!(
+            outcome_class(&serde_json::json!({"exit_code": 0, "duration_ms": 3})),
+            "allowed_success"
+        );
+        assert_eq!(
+            outcome_class(&serde_json::json!({"exit_code": 1, "duration_ms": 3})),
+            "allowed_failure"
+        );
+        // Killed by a signal: no exit code at all, and not a success.
+        assert_eq!(
+            outcome_class(&serde_json::json!({"exit_code": null, "duration_ms": 3})),
+            "allowed_failure"
+        );
+        // A read or a listing has no exit code and did what it was asked.
+        assert_eq!(
+            outcome_class(&serde_json::json!({"entries": []})),
+            "allowed_success"
+        );
+    }
+
+    #[test]
+    fn every_failure_shape_is_named_distinctly() {
+        assert_eq!(
+            ActionExecutionError::Denied("x".into()).outcome_class(),
+            "policy_denial"
+        );
+        assert_eq!(ActionExecutionError::Timeout.outcome_class(), "timeout");
+        assert_eq!(
+            ActionExecutionError::Io("x".into()).outcome_class(),
+            "io_failure"
+        );
+        assert_eq!(
+            ActionExecutionError::Invalid("x".into()).outcome_class(),
+            "protocol_failure"
+        );
+    }
+
     #[test]
     fn a_backend_reading_far_less_than_was_sent_is_a_finding() {
         let metrics = poorai_domain::GenerationMetrics {

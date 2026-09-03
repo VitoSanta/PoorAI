@@ -268,8 +268,14 @@ pub fn command_approval(executable: &str, args: &[String]) -> Option<Approval> {
         {
             return Some(Approval::HistoryRewrite);
         }
-        // `git reset --hard` and `git clean -fd` discard uncommitted work.
+        // Both of these discard uncommitted work, which is the agent's own
+        // output as often as the user's. The comment here used to name `clean`
+        // while only `reset` was checked, so the destructive half nobody had
+        // written down was the one that ran.
         if args.iter().any(|arg| arg == "reset") && args.iter().any(|arg| arg == "--hard") {
+            return Some(Approval::HistoryRewrite);
+        }
+        if args.iter().any(|arg| arg == "clean") {
             return Some(Approval::HistoryRewrite);
         }
     }
@@ -556,72 +562,87 @@ pub struct ApplyResult {
 }
 
 /// Lists a bounded, policy-filtered workspace tree.
-pub fn list_tree(policy: &ToolPolicy, max_entries: usize) -> Result<Vec<TreeEntry>, ToolError> {
-    let mut output = Vec::new();
-    let mut output_bytes = 0usize;
-    let deadline = std::time::Instant::now() + policy.timeout;
-    list_dir(
-        &policy.root,
-        &policy.root,
-        max_entries,
-        policy.output_limit,
-        deadline,
-        &mut output_bytes,
-        &mut output,
-    )?;
-    Ok(output)
-}
-fn list_dir(
-    root: &Path,
-    directory: &Path,
-    max: usize,
-    byte_limit: usize,
-    deadline: std::time::Instant,
-    output_bytes: &mut usize,
-    output: &mut Vec<TreeEntry>,
-) -> Result<(), ToolError> {
-    for entry in std::fs::read_dir(directory)? {
-        if std::time::Instant::now() >= deadline {
-            return Err(ToolError::Timeout);
-        }
-        if output.len() >= max || *output_bytes >= byte_limit {
-            break;
-        }
-        let entry = entry?;
-        let path = entry.path();
-        let name = entry.file_name();
-        if [".git", "target", "node_modules", ".poorai"]
-            .iter()
-            .any(|blocked| name == *blocked)
-        {
+/// Directories excluded whatever the repository says about them.
+/// Files above this are inventory, not searchable text.
+const MAX_SEARCHED_BYTES: u64 = 1_000_000;
+
+const POLICY_EXCLUSIONS: [&str; 4] = [".git", "target", "node_modules", ".poorai"];
+
+/// Walks the workspace the way the index does.
+///
+/// `Search` and `ListTree` used to do their own `read_dir` and skip four known
+/// directory names, while the repository index walked under full gitignore
+/// semantics. A file deliberately excluded from retrieval -- an environment
+/// file among them -- was therefore still reachable through a tool, which is
+/// the ignore rules holding in one direction only.
+///
+/// Order is by path rather than by whatever the filesystem returns, so two
+/// listings of an unchanged workspace are the same listing. A tool result that
+/// feeds a prompt should not depend on directory order.
+fn walk_workspace(root: &Path) -> Result<Vec<(PathBuf, bool)>, ToolError> {
+    let walker = ignore::WalkBuilder::new(root)
+        .hidden(false)
+        .git_ignore(true)
+        // A workspace is untrusted input whether or not it is a checkout.
+        .require_git(false)
+        .git_global(false)
+        .git_exclude(true)
+        .parents(false)
+        .follow_links(false)
+        .sort_by_file_path(|a, b| a.cmp(b))
+        .filter_entry(|entry| {
+            !POLICY_EXCLUSIONS
+                .iter()
+                .any(|blocked| entry.file_name() == *blocked)
+        })
+        .build();
+    let mut entries = Vec::new();
+    for entry in walker {
+        let entry =
+            entry.map_err(|error| ToolError::Denied(format!("unreadable path: {error}")))?;
+        let path = entry.path().to_path_buf();
+        if path == root {
             continue;
         }
+        // symlink_metadata keeps a link pointing outside the root from being
+        // presented as though it lived inside it.
         let metadata = std::fs::symlink_metadata(&path)?;
         if metadata.file_type().is_symlink() {
             continue;
         }
-        let directory = metadata.is_dir();
+        entries.push((path, metadata.is_dir()));
+    }
+    Ok(entries)
+}
+
+pub fn list_tree(policy: &ToolPolicy, max_entries: usize) -> Result<Vec<TreeEntry>, ToolError> {
+    let deadline = std::time::Instant::now() + policy.timeout;
+    let mut output = Vec::new();
+    let mut output_bytes = 0usize;
+    for (path, directory) in walk_workspace(&policy.root)? {
+        if std::time::Instant::now() >= deadline {
+            return Err(ToolError::Timeout);
+        }
+        if output.len() >= max_entries {
+            break;
+        }
         let relative = path
-            .strip_prefix(root)
+            .strip_prefix(&policy.root)
             .unwrap_or(&path)
             .display()
             .to_string();
         let cost = relative.len().saturating_add(1);
-        if output_bytes.saturating_add(cost) > byte_limit {
+        if output_bytes.saturating_add(cost) > policy.output_limit {
             break;
         }
-        *output_bytes = output_bytes.saturating_add(cost);
+        output_bytes = output_bytes.saturating_add(cost);
         output.push(TreeEntry {
             path: relative,
             directory,
         });
-        if directory {
-            list_dir(root, &path, max, byte_limit, deadline, output_bytes, output)?;
-        }
     }
-    Ok(())
+    Ok(output)
 }
-
 /// Replaces text only when the caller supplies the current content hash, preventing stale edits.
 pub fn apply_replace(
     policy: &ToolPolicy,
@@ -971,92 +992,60 @@ pub fn search(
     if query.is_empty() {
         return Err(ToolError::Denied("empty search query".into()));
     }
+    let deadline = std::time::Instant::now() + policy.timeout;
     let mut output = Vec::new();
     let mut output_bytes = 0usize;
-    let deadline = std::time::Instant::now() + policy.timeout;
-    search_dir(
-        policy,
-        &policy.root,
-        query,
-        max_matches,
-        deadline,
-        &mut output_bytes,
-        &mut output,
-    )?;
-    Ok(output)
-}
-fn search_dir(
-    policy: &ToolPolicy,
-    directory: &Path,
-    query: &str,
-    max: usize,
-    deadline: std::time::Instant,
-    output_bytes: &mut usize,
-    output: &mut Vec<SearchMatch>,
-) -> Result<(), ToolError> {
-    for entry in std::fs::read_dir(directory)? {
+    'files: for (path, directory) in walk_workspace(&policy.root)? {
         if std::time::Instant::now() >= deadline {
             return Err(ToolError::Timeout);
         }
-        if output.len() >= max || *output_bytes >= policy.output_limit {
+        if output.len() >= max_matches || output_bytes >= policy.output_limit {
             break;
         }
-        let entry = entry?;
-        let path = entry.path();
-        let name = entry.file_name();
-        if [".git", "target", "node_modules", ".poorai"]
-            .iter()
-            .any(|blocked| name == *blocked)
-        {
+        if directory {
             continue;
         }
         let metadata = std::fs::symlink_metadata(&path)?;
-        if metadata.file_type().is_symlink() {
+        if metadata.len() > MAX_SEARCHED_BYTES {
             continue;
         }
-        if metadata.is_dir() {
-            search_dir(policy, &path, query, max, deadline, output_bytes, output)?;
-        } else if path.is_file() {
-            if metadata.len() > 1_000_000 {
+        let bytes = std::fs::read(&path)?;
+        if bytes.iter().take(4096).any(|b| *b == 0) {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(&policy.root)
+            .unwrap_or(&path)
+            .display()
+            .to_string();
+        for (number, line) in String::from_utf8_lossy(&bytes).lines().enumerate() {
+            if !line.contains(query) {
                 continue;
             }
-            let bytes = std::fs::read(&path)?;
-            if bytes.iter().take(4096).any(|b| *b == 0) {
-                continue;
+            let remaining = policy
+                .output_limit
+                .saturating_sub(output_bytes)
+                .saturating_sub(relative.len());
+            if remaining == 0 {
+                break 'files;
             }
-            for (number, line) in String::from_utf8_lossy(&bytes).lines().enumerate() {
-                if line.contains(query) {
-                    let relative = path
-                        .strip_prefix(&policy.root)
-                        .unwrap_or(&path)
-                        .display()
-                        .to_string();
-                    let remaining = policy
-                        .output_limit
-                        .saturating_sub(*output_bytes)
-                        .saturating_sub(relative.len());
-                    if remaining == 0 {
-                        break;
-                    }
-                    let raw: String = line.chars().take(remaining).collect();
-                    let (excerpt, redacted) = policy.redact(&raw);
-                    *output_bytes = output_bytes
-                        .saturating_add(relative.len())
-                        .saturating_add(excerpt.len());
-                    output.push(SearchMatch {
-                        path: relative,
-                        line: number + 1,
-                        excerpt,
-                        redacted,
-                    });
-                    if output.len() >= max {
-                        break;
-                    }
-                }
+            let raw: String = line.chars().take(remaining).collect();
+            let (excerpt, redacted) = policy.redact(&raw);
+            output_bytes = output_bytes
+                .saturating_add(relative.len())
+                .saturating_add(excerpt.len());
+            output.push(SearchMatch {
+                path: relative.clone(),
+                line: number + 1,
+                excerpt,
+                redacted,
+            });
+            if output.len() >= max_matches {
+                break 'files;
             }
         }
     }
-    Ok(())
+    Ok(output)
 }
 pub async fn run_command(
     policy: &ToolPolicy,

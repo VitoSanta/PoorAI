@@ -447,18 +447,30 @@ The four items that had to be true before another campaign, and are now.
 |---|---|---|
 | A repository with no checks can only fail | Completion is refused where nothing verifies, which is right, and leaves no way forward: the agent cannot propose a check, because a command nobody authorised is not a verifier | A verifier the run can be given, or one the agent proposes and a person approves through the existing approval path — the two toolchain-provisioning runs are the case this would unblock |
 | Cancellation is not demonstrated | `ProviderError::Cancelled` is never constructed and the trait exposes no cancellation handle; the probe drops the stream and calls `/api/ps` alive, which does not show the backend stopped | An explicit cancellation handle on the provider trait, and a fixture asserting the connection closed and generation stopped server-side |
-| `Search` and `ListTree` do not honour `.gitignore` | The indexer uses the ripgrep `ignore` walker; the tools walk `read_dir` and skip four known directory names, so an ignored file absent from retrieval is still reachable through a tool | One walker behind both, with the same policy exclusions |
 | Resume is continuity, not a checkpoint | A session carries facts forward; a crashed run restarts from a summary rather than from the state it was in | Run state is a typed projection of the event log through one reducer, and a checkpoint is resumable |
 | Non-progress is detected only as repeated refusals | Successful reads in a circle, identical searches, an edit and its revert, or commands that change nothing are all invisible | A no-progress window over workspace hash, check state and repeated diagnostics, not just consecutive denials |
 | Reading outside the workspace is not denied | seatbelt confines writes and denies nine known credential paths; everything else on the host is readable, and `ToolchainInstall` with `NetworkAccess` is an arbitrary executable with a network | Deny-read outside the workspace with a minimal allowlist for runtime and dylibs; provisioning in a separate process or VM |
-| The CLI says things it does not do | `report --format md` accepts only JSON, and every error exits 4 whatever its category | Either implement the documented surface or narrow the specification to what exists; the exit codes are already carried by `SafeError::category` |
-| Schema versions are not checked | `SCHEMA_VERSION` exists and no persisted artifact is compared against it | Loading an artifact of an unknown version refuses rather than deserialising what happens to fit |
-| A tool outcome has two shapes, not five | Attempts are now counted as allowed, denied or failed; a timeout, an I/O failure, a non-zero exit and a protocol failure are one bucket | `allowed_success`, `allowed_failure`, `policy_denial`, `timeout` and `protocol_failure` counted separately, with a mutation test that forces at least one fixture to increment the failure counter |
-| `git clean` discards work and is not gated | `reset --hard` requires an approval and the comment beside it names `git clean -fd`, which nothing checks | Destructive VCS subcommands gated by effect, the way publishing and history rewriting already are |
-| `ListTree` output is not ordered | The walk emits directory order, so two runs over an unchanged workspace can present the same tree differently | Sorted output, so a diff between two runs means something |
 | The capability gate is presence, not rate | A deployment observed at 2 of 3 on `edit` passes exactly as one observed at 3 of 3; the measured intermittency buys no defensive strategy | The rate is an input to the strategy — more trials, a narrower tool schema, or a refusal — rather than a number recorded and rounded to a boolean |
-| `ModelStrategy.max_actions` binds evaluations only | `poorai run` takes the CLI override or the execution profile, so the strategy declares a budget that the normal path ignores | One budget resolution shared by both paths |
-| A run does not record which strategy produced it | No strategy hash in the run, so two campaigns cannot be told apart by the policy they ran under | The strategy hash joins the calibration id and model digest in `run.started` |
+
+### P1, the mechanical half — 2026-09-03
+
+Eight items that needed no design, only doing.
+
+**One walker serves the index and the tools.** `Search` and `ListTree` did their own `read_dir` and skipped four known directory names while the index walked under full gitignore semantics, so a file excluded from retrieval on purpose — an environment file among them — stayed reachable through a tool. The ignore rules held in one direction only. Both now use the same walk, which also sorts: a listing that feeds a prompt should not depend on directory order, and two listings of an unchanged workspace are now the same listing.
+
+**`git clean` is gated.** The comment beside the `reset --hard` gate named it as the other way to discard uncommitted work, and nothing checked it. The destructive half nobody had written down was the one that ran.
+
+**Exit codes say which kind of failure it was.** The specification declared six and the implementation returned 4 for everything, so a caller scripting around poorAI could not tell a policy denial from the backend being down. The category was already on every error; only the mapping was missing. 1 is the work failing — a task or a verification — which is the one outcome that is not poorAI malfunctioning.
+
+**`report --format md` exists.** The audit trail was complete and shaped for a JSON viewer. The Markdown rendering counts what the run did and lists the sequence, including the denials rather than only the successes; nothing in it is computed, every line is a recorded event.
+
+**A schema version is compared.** `SCHEMA_VERSION` existed and no artifact was ever checked against it, so one written by another build deserialised whenever its shape happened to fit — the case where silence is worst, since the fields that changed are the ones that would be read wrongly. An older version is refused rather than migrated: there are no migrations, and reading an old artifact as though it were current is the failure this prevents.
+
+**A tool outcome has five shapes.** It had two — allowed or not — so a timeout, an I/O failure and a malformed action were one bucket, and a command that ran and exited non-zero was recorded exactly like one that worked. The evaluation's failure count is computed from this, which is why the arithmetic that produces it now has a fixture containing a real failure and demanding the count see it. That count was zero by construction for the whole life of the project; this is the guard against it becoming so again.
+
+**A strategy's action budget binds `run`, not only `eval`.** The same deployment ran under two different limits depending on which command started it. And a run now records the strategy and model-profile hashes beside its calibration and digest, so two campaigns differing only in policy are no longer indistinguishable in the log — which is usually the difference a comparison is trying to isolate.
+
+`cargo test --workspace`: 372 passed, 2 ignored.
 
 ### P2 — an agent for whole codebases
 

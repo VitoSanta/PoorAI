@@ -8,6 +8,29 @@ use uuid::Uuid;
 
 pub const SCHEMA_VERSION: u32 = 1;
 
+/// Refuses an artifact written by a schema this build does not know.
+///
+/// Every persisted contract carries a `schema_version` and nothing compared it
+/// against the version in force, so an artifact from another build
+/// deserialised whenever its shape happened to fit -- which is the case where
+/// silence is worst, because the fields that changed are exactly the ones that
+/// would be read wrongly.
+///
+/// An older version is refused rather than migrated: there are no migrations
+/// yet, and reading one as though it were current is the failure this exists
+/// to prevent.
+pub fn check_schema_version(found: u32, artifact: &'static str) -> Result<(), DomainError> {
+    if found == SCHEMA_VERSION {
+        return Ok(());
+    }
+    Err(DomainError::Invalid {
+        field: "schema_version",
+        reason: format!(
+            "{artifact} declares schema version {found}, and this build reads {SCHEMA_VERSION}"
+        ),
+    })
+}
+
 pub type Id = Uuid;
 
 #[derive(Debug, Error)]

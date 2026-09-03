@@ -231,6 +231,34 @@ struct SafeError {
     context: String,
 }
 
+/// The exit code a category means.
+///
+/// `CLI-spec.md` has always declared six codes and the implementation returned
+/// 4 for every failure, so a caller scripting around poorAI could not tell a
+/// policy denial from a backend being down. The category was already carried on
+/// every error; only the mapping was missing.
+///
+/// 1 is reserved for the work failing -- a task or a verification -- which is
+/// the one outcome that is not poorAI malfunctioning.
+fn exit_code(category: &str) -> i32 {
+    match category {
+        "task_failed" => 1,
+        "invalid_input" | "conflict" | "missing_evidence" | "incompatible_model"
+        | "calibration" => 2,
+        "policy_denied" => 3,
+        // Busy is the host refusing to run two models at once, which from the
+        // caller's side is the backend being unavailable to it right now.
+        "provider_unavailable"
+        | "provider_protocol"
+        | "provider_context_limit"
+        | "provider_truncated"
+        | "provider_cancelled"
+        | "cancelled"
+        | "resource_busy" => 4,
+        _ => 5,
+    }
+}
+
 fn write_immutable_artifact(path: &Path, bytes: &[u8]) -> Result<(), SafeError> {
     use std::io::Write as _;
     let parent = path.parent().ok_or_else(|| SafeError {
@@ -338,6 +366,16 @@ fn load_agent_capability_evidence(
             // prove which deployment was probed.
             continue;
         };
+        // An artifact from another schema is skipped rather than read: the
+        // fields that changed between versions are the ones a gate depends on.
+        if poorai_domain::check_schema_version(
+            inspection.definition.schema_version,
+            "capability evidence",
+        )
+        .is_err()
+        {
+            continue;
+        }
         if inspection.definition.digest == digest
             && inspection.deployment.fingerprint() == deployment.fingerprint()
         {
@@ -395,6 +433,7 @@ fn print<T: Serialize>(json: bool, result: Result<T, SafeError>) -> i32 {
             0
         }
         Err(error) => {
+            let code = exit_code(error.category);
             if json {
                 println!(
                     "{}",
@@ -409,7 +448,7 @@ fn print<T: Serialize>(json: bool, result: Result<T, SafeError>) -> i32 {
             } else {
                 eprintln!("{}: {}", error.category, error.context);
             }
-            4
+            code
         }
     }
 }
@@ -1549,16 +1588,10 @@ async fn evaluate_task(
     for event in &events {
         *outcome.events.entry(event.event_type.clone()).or_insert(0) += 1;
     }
-    for event in &events {
-        if event.event_type == "tool.action" {
-            outcome.tool_attempts += 1;
-            if event.payload["status"] == "denied" {
-                outcome.tool_denials += 1;
-            } else if event.payload["status"] == "failed" {
-                outcome.tool_failures += 1;
-            }
-        }
-    }
+    let tally = tool_tally(&events);
+    outcome.tool_attempts += tally.attempts;
+    outcome.tool_denials += tally.denials;
+    outcome.tool_failures += tally.failures;
     if task.kind == poorai_eval::TaskKind::PolicyAttack {
         outcome.violation = attack_violation(&events);
     }
@@ -2003,6 +2036,12 @@ fn load_calibration(path: &Path) -> Result<poorai_domain::CalibrationProfile, Sa
                 .into(),
         });
     }
+    poorai_domain::check_schema_version(profile.schema_version, "calibration profile").map_err(
+        |e| SafeError {
+            category: "invalid_input",
+            context: e.to_string(),
+        },
+    )?;
     profile.validate().map_err(|e| SafeError {
         category: "invalid_input",
         context: format!("calibration profile is not valid: {e}"),
@@ -2441,6 +2480,12 @@ async fn prepare_profiled_run(
                 "network_enabled": policy.network_allowed(),
                 "capability_evidence_id": capability_evidence.definition.id,
                 "capability_evidence_observed_at": capability_evidence.definition.provenance.observed_at,
+                // Without this two campaigns cannot be told apart by the
+                // policy they ran under, which is the thing a comparison is
+                // usually trying to isolate.
+                "strategy_id": strategy.map(|s| s.id),
+                "strategy_hash": strategy.map(strategy_hash),
+                "model_profile_hash": model_profile.map(profile_hash),
             }),
         )
         .map_err(|e| SafeError {
@@ -2521,17 +2566,22 @@ async fn prepare_profiled_run(
         request,
         &policy,
         &checks,
-        max_actions.unwrap_or_else(|| {
-            // Installing a toolchain is a different scale of work from editing
-            // a file, so it gets its own number rather than the same one
-            // stretched.
-            let budgeted = budgets.max_actions;
-            if provision {
-                budgeted.max(poorai_orchestrator::PROVISIONING_MAX_ACTIONS)
-            } else {
-                budgeted
-            }
-        }),
+        max_actions
+            // A strategy declaring a budget was honoured by evaluations and
+            // ignored here, so the same deployment ran under two different
+            // limits depending on which command started it.
+            .or_else(|| strategy.and_then(|s| s.max_actions))
+            .unwrap_or_else(|| {
+                // Installing a toolchain is a different scale of work from
+                // editing a file, so it gets its own number rather than the
+                // same one stretched.
+                let budgeted = budgets.max_actions;
+                if provision {
+                    budgeted.max(poorai_orchestrator::PROVISIONING_MAX_ACTIONS)
+                } else {
+                    budgeted
+                }
+            }),
         &recovery_budget,
         &context_tiers,
         &TerminalApproval,
@@ -2579,11 +2629,134 @@ fn index_repository(path: PathBuf) -> Result<serde_json::Value, SafeError> {
         })?;
     Ok(serde_json::json!({"index":index,"artifact":artifact,"stale":false}))
 }
+/// The identity of the policy a run was executed under.
+///
+/// A run recorded its calibration, its model digest and its hardware key, and
+/// not which strategy or model profile shaped the request -- so two campaigns
+/// differing only in policy were indistinguishable in the log, which is
+/// usually the difference a comparison is trying to isolate.
+fn strategy_hash(strategy: &poorai_domain::ModelStrategy) -> String {
+    poorai_domain::hash_bytes(serde_json::to_vec(strategy).unwrap_or_default())
+}
+
+fn profile_hash(profile: &poorai_domain::ModelProfile) -> String {
+    poorai_domain::hash_bytes(serde_json::to_vec(profile).unwrap_or_default())
+}
+
+/// What the tool attempts in a run amounted to.
+///
+/// Extracted so it can be tested. The failure count is a promotion metric and
+/// was zero by construction for the whole life of the project -- initialised
+/// and never incremented -- so the arithmetic that produces it is the last
+/// place to leave uncovered.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ToolTally {
+    attempts: usize,
+    denials: usize,
+    failures: usize,
+}
+
+fn tool_tally(events: &[poorai_store::EventRecord]) -> ToolTally {
+    let mut tally = ToolTally::default();
+    for event in events {
+        if event.event_type != "tool.action" {
+            continue;
+        }
+        tally.attempts += 1;
+        // Counted from the recorded class rather than the coarse status, so a
+        // command that ran and exited non-zero is a failure while a policy
+        // denial stays what it is: the boundary working.
+        match event.payload["outcome_class"].as_str() {
+            Some("policy_denial") => tally.denials += 1,
+            Some("allowed_success") => {}
+            Some(_) => tally.failures += 1,
+            // An artifact from before the class existed. Fall back rather than
+            // silently scoring it a success.
+            None => match event.payload["status"].as_str() {
+                Some("denied") => tally.denials += 1,
+                Some("failed") => tally.failures += 1,
+                _ => {}
+            },
+        }
+    }
+    tally
+}
+
+/// Renders a run's audit as prose a person can read without a JSON viewer.
+///
+/// The trail is already complete in the event log; what was missing is a shape
+/// that answers "what happened in this run?" without the reader assembling it.
+/// Nothing here is computed -- every line is an event that was recorded.
+fn report_markdown(run_id: uuid::Uuid, events: &[poorai_store::EventRecord]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let _ = writeln!(out, "# Run {run_id}\n");
+    if let (Some(first), Some(last)) = (events.first(), events.last()) {
+        let _ = writeln!(
+            out,
+            "{} events, {} to {}.\n",
+            events.len(),
+            first.at.to_rfc3339(),
+            last.at.to_rfc3339()
+        );
+    }
+
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for event in events {
+        *counts.entry(event.event_type.as_str()).or_default() += 1;
+    }
+    let _ = writeln!(out, "## What the run did\n");
+    let _ = writeln!(out, "| Event | Count |");
+    let _ = writeln!(out, "|---|---:|");
+    for (event_type, count) in &counts {
+        let _ = writeln!(out, "| `{event_type}` | {count} |");
+    }
+
+    let _ = writeln!(out, "\n## Sequence\n");
+    for event in events {
+        // One line per event: the fields that say what happened, and the
+        // payload left out. A report that inlines every payload is the JSON
+        // with extra characters.
+        let detail = match event.event_type.as_str() {
+            "tool.action" => format!(
+                "{} — {}",
+                event.payload["action"]
+                    .as_object()
+                    .and_then(|action| action.keys().next().cloned())
+                    .unwrap_or_else(|| "action".into()),
+                event.payload["status"].as_str().unwrap_or("?")
+            ),
+            "task.transition" => format!("{:?} → {:?}", event.payload["from"], event.payload["to"]),
+            "verification.result" => format!(
+                "verified={} verifiable={}",
+                event.payload["verified"], event.payload["verifiable"]
+            ),
+            _ => event.payload["reason"]
+                .as_str()
+                .or_else(|| event.payload["step"].as_str())
+                .unwrap_or("")
+                .to_string(),
+        };
+        let _ = writeln!(
+            out,
+            "- `{}` {} {}",
+            event.at.to_rfc3339(),
+            event.event_type,
+            detail
+        );
+    }
+    let _ = writeln!(
+        out,
+        "\nEvery line above is an entry in the hash chain, not a summary of one."
+    );
+    out
+}
+
 fn report(id: String, format: String) -> Result<serde_json::Value, SafeError> {
-    if format != "json" {
+    if format != "json" && format != "md" {
         return Err(SafeError {
             category: "invalid_input",
-            context: "only json report format is currently supported".into(),
+            context: "report format must be json or md".into(),
         });
     }
     let run_id = uuid::Uuid::parse_str(&id).map_err(|_| SafeError {
@@ -2614,6 +2787,13 @@ fn report(id: String, format: String) -> Result<serde_json::Value, SafeError> {
             category: "invalid_input",
             context: "no events found for run".into(),
         });
+    }
+    if format == "md" {
+        return Ok(serde_json::json!({
+            "run_id": run_id,
+            "format": "md",
+            "markdown": report_markdown(run_id, &events),
+        }));
     }
     Ok(serde_json::json!({"run_id":run_id,"events":events}))
 }
@@ -2964,6 +3144,97 @@ mod tests {
         .await
         .unwrap();
         assert!(observed.matched_tool_call.is_some());
+    }
+
+    /// Every failure exited 4, so a caller could not tell a policy denial from
+    /// the backend being down -- and 1, the work failing, is the one outcome
+    /// that is not poorAI malfunctioning.
+    /// The metric this produces was zero for the life of the project because
+    /// nothing incremented it. This fixture fails if that ever becomes true
+    /// again: it contains a real failure and demands the count see it.
+    #[test]
+    fn a_failing_tool_attempt_is_counted_as_one() {
+        let id = uuid::Uuid::now_v7();
+        let action = |class: &str, status: &str| poorai_store::EventRecord {
+            id,
+            run_id: Some(id),
+            event_type: "tool.action".into(),
+            payload: serde_json::json!({"outcome_class": class, "status": status}),
+            at: now(),
+            previous_hash: None,
+            event_hash: "x".into(),
+        };
+        let events = vec![
+            action("allowed_success", "allowed"),
+            action("allowed_failure", "allowed"),
+            action("timeout", "failed"),
+            action("protocol_failure", "failed"),
+            action("policy_denial", "denied"),
+            poorai_store::EventRecord {
+                id,
+                run_id: Some(id),
+                event_type: "run.started".into(),
+                payload: serde_json::json!({}),
+                at: now(),
+                previous_hash: None,
+                event_hash: "x".into(),
+            },
+        ];
+        let tally = tool_tally(&events);
+        assert_eq!(tally.attempts, 5, "the non-tool event is not an attempt");
+        // A denial is the policy working and is never a tool failure.
+        assert_eq!(tally.denials, 1);
+        // A command that ran and exited non-zero counts, which is the case
+        // that made the recorded rate a tautology.
+        assert_eq!(tally.failures, 3);
+    }
+
+    #[test]
+    fn an_exit_code_says_which_kind_of_failure_it_was() {
+        assert_eq!(exit_code("task_failed"), 1);
+        assert_eq!(exit_code("invalid_input"), 2);
+        assert_eq!(exit_code("missing_evidence"), 2);
+        assert_eq!(exit_code("policy_denied"), 3);
+        assert_eq!(exit_code("provider_unavailable"), 4);
+        assert_eq!(exit_code("resource_busy"), 4);
+        assert_eq!(exit_code("internal"), 5);
+        // An unrecognised category is internal rather than success.
+        assert_eq!(exit_code("something_new"), 5);
+    }
+
+    #[test]
+    fn a_markdown_report_names_the_run_and_counts_what_it_did() {
+        let run_id = uuid::Uuid::now_v7();
+        let event = |event_type: &str, payload: serde_json::Value| poorai_store::EventRecord {
+            id: run_id,
+            run_id: Some(run_id),
+            event_type: event_type.into(),
+            payload,
+            at: now(),
+            previous_hash: None,
+            event_hash: "x".into(),
+        };
+        let events = vec![
+            event("run.started", serde_json::json!({})),
+            event(
+                "tool.action",
+                serde_json::json!({"action": {"read_file": {}}, "status": "denied"}),
+            ),
+            event(
+                "tool.action",
+                serde_json::json!({"action": {"read_file": {}}, "status": "allowed"}),
+            ),
+            event(
+                "verification.result",
+                serde_json::json!({"verified": true, "verifiable": true}),
+            ),
+        ];
+        let markdown = report_markdown(run_id, &events);
+        assert!(markdown.contains(&run_id.to_string()));
+        assert!(markdown.contains("| `tool.action` | 2 |"), "{markdown}");
+        // A denial is in the report, not only the successes.
+        assert!(markdown.contains("denied"), "{markdown}");
+        assert!(markdown.contains("verified=true"), "{markdown}");
     }
 
     #[tokio::test]
