@@ -10,4 +10,10 @@ Metrics include latency histogram, generated tokens/sec, context-tier selections
 
 What does exist is the event log, which carries more than this document credits it with: every run appends typed events under one identifier inside a hash chain — provenance, state transitions, every tool attempt allowed or denied, verification results, compaction, plans, named loops, recovery decisions — and since 2026-09-03 each turn records the backend's own counters, prompt and generated tokens and both halves of the duration. `poorai report` reads it back, and an evaluation counts events by type into its outcomes.
 
-So the facts are being captured and the observability layer is missing: what is absent is export, replay, resource sampling over time, and retention policy. Building it means giving the log typed event structs rather than free-form JSON payloads, which is the same prerequisite that a per-run hash chain and an artifact table need.
+**The layer exists as of 2026-09-03.** The events are typed, `report --format jsonl` writes the trail as one record per line, and `replay` folds it into counts: actions by outcome, turns, prompt and generated tokens, backend generation time separately from wall clock, named loops and non-progress, compactions, context downgrades, delivery divergences, turns under memory pressure, and the outcome. Everything is counted from events rather than asserted. A line this build cannot read is skipped and counted; a record whose type it does not know is left out of the export with the count stated.
+
+Memory pressure is sampled after each turn rather than once at admission, so a run that starts on a quiet machine and ends on a saturated one now records the difference.
+
+An export carries the stored hash as an identifier, not as something it can re-verify: the hash covers the event's id, run, payload, timestamp and the link before it, and an export carries only some of those. Whether the chain holds is the store's question, and `report` asks it there.
+
+Still absent: a latency histogram, and a retention policy with configurable sampling and redaction. OpenTelemetry remains an optional adapter nobody has needed.

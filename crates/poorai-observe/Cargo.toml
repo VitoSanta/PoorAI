@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 poorai-domain = { path = "../poorai-domain" }
+chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

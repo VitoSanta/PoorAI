@@ -982,6 +982,51 @@ impl RunState {
     }
 }
 
+/// What a run's loop is tuned by, beyond its budgets.
+///
+/// A struct rather than more parameters. The action loop already took eleven,
+/// and per-deployment policy is a thing this project intends to grow rather
+/// than a thing it has finished -- every future knob would otherwise be
+/// another signature change reaching every caller and every test provider.
+pub struct RunTuning {
+    /// Consecutive malformed calls tolerated, from the deployment's measured
+    /// emission rate. `MALFORMED_CALL_LIMIT` for one measured reliable.
+    pub malformed_call_limit: usize,
+    /// How long one turn may take before it is cut short.
+    ///
+    /// The transport already bounds a turn, but only by giving up on the
+    /// answer; cancelling closes the connection, which is what stops the
+    /// backend generating into a socket nobody is reading.
+    pub turn_timeout: Option<std::time::Duration>,
+    /// Sampled after each turn, when the host can be asked.
+    ///
+    /// Pressure was read once, at admission, and a run that starts on a quiet
+    /// machine and ends on a saturated one recorded nothing about the
+    /// difference -- which is the difference that explains its timings.
+    pub host: Option<std::sync::Arc<dyn HostProbe>>,
+}
+
+impl Default for RunTuning {
+    fn default() -> Self {
+        Self {
+            malformed_call_limit: MALFORMED_CALL_LIMIT,
+            turn_timeout: None,
+            host: None,
+        }
+    }
+}
+
+impl std::fmt::Debug for RunTuning {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RunTuning")
+            .field("malformed_call_limit", &self.malformed_call_limit)
+            .field("turn_timeout", &self.turn_timeout)
+            .field("host", &self.host.is_some())
+            .finish()
+    }
+}
+
 /// Consecutive malformed tool calls before the run gives up, for a deployment
 /// measured to emit them reliably.
 ///
@@ -1664,7 +1709,7 @@ pub async fn run_action_loop_with_prompt_and_budget<P: ModelProvider>(
         &measured_context_tiers,
         prompt,
         plan_first,
-        MALFORMED_CALL_LIMIT,
+        &RunTuning::default(),
     )
     .await
 }
@@ -1682,11 +1727,9 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
     measured_context_tiers: &[u32],
     prompt: &dyn ApprovalPrompt,
     plan_first: bool,
-    // How many consecutive malformed calls to tolerate, from this
-    // deployment's measured emission rate. MALFORMED_CALL_LIMIT for one
-    // measured reliable.
-    malformed_limit: usize,
+    tuning: &RunTuning,
 ) -> Result<TaskRunResult, String> {
+    let malformed_limit = tuning.malformed_call_limit;
     let _terminal_guard = TerminalEventGuard { store, run_id };
     let mut policy = policy.clone();
     // Owned, because an approved verifier joins it for the rest of the run.
@@ -4095,7 +4138,7 @@ mod tests {
             &[2048, 8192],
             &DenyWithoutAsking,
             false,
-            MALFORMED_CALL_LIMIT,
+            &RunTuning::default(),
         )
         .await;
         assert_eq!(*contexts.lock().unwrap(), vec![8192, 2048]);
@@ -4151,7 +4194,7 @@ mod tests {
                 &[2048],
                 &DenyWithoutAsking,
                 false,
-                MALFORMED_CALL_LIMIT,
+                &RunTuning::default(),
             )
             .await
             .is_err()

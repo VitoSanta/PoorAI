@@ -1615,7 +1615,10 @@ async fn evaluate_task(
         max_edit_verify_cycles: budgets.edit_verify_cycles,
         max_context_retries: budgets.context_retries,
     };
-    let malformed_limit = tolerated_malformed_calls(definition);
+    let tuning = poorai_orchestrator::RunTuning {
+        malformed_call_limit: tolerated_malformed_calls(definition),
+        ..Default::default()
+    };
     let run = tokio::time::timeout(
         Duration::from_secs(task.time_budget_secs),
         poorai_orchestrator::run_action_loop_with_prompt_budget_and_context_tiers(
@@ -1630,7 +1633,7 @@ async fn evaluate_task(
             measured_context_tiers,
             &poorai_orchestrator::DenyWithoutAsking,
             false,
-            malformed_limit,
+            &tuning,
         ),
     )
     .await;
@@ -2684,7 +2687,19 @@ async fn prepare_profiled_run(
         &TerminalApproval,
         // The flag, or a strategy that declares it.
         plan || strategy.is_some_and(|s| s.plan_first),
-        tolerated_malformed_calls(&capability_evidence.definition),
+        &poorai_orchestrator::RunTuning {
+            malformed_call_limit: tolerated_malformed_calls(&capability_evidence.definition),
+            // A turn that goes nowhere is cut short rather than waited out,
+            // and cutting it closes the connection the backend is generating
+            // into.
+            turn_timeout: Some(Duration::from_secs(turn_timeout_secs)),
+            // Sampled per turn: a run that starts on a quiet machine and ends
+            // on a saturated one recorded nothing about the difference, which
+            // is the difference that explains its timings.
+            host: Some(std::sync::Arc::new(MacosHostProbe {
+                free_percent_floor: 20,
+            })),
+        },
     )
     .await
     .map_err(|e| SafeError {
@@ -2851,10 +2866,10 @@ fn report_markdown(run_id: uuid::Uuid, events: &[poorai_store::EventRecord]) -> 
 }
 
 fn report(id: String, format: String) -> Result<serde_json::Value, SafeError> {
-    if format != "json" && format != "md" {
+    if !["json", "md", "jsonl"].contains(&format.as_str()) {
         return Err(SafeError {
             category: "invalid_input",
-            context: "report format must be json or md".into(),
+            context: "report format must be json, md or jsonl".into(),
         });
     }
     let run_id = uuid::Uuid::parse_str(&id).map_err(|_| SafeError {
@@ -2885,6 +2900,49 @@ fn report(id: String, format: String) -> Result<serde_json::Value, SafeError> {
             category: "invalid_input",
             context: "no events found for run".into(),
         });
+    }
+    if format == "jsonl" {
+        // The trail as a stream of records rather than a document: appendable,
+        // tailable, greppable, and readable by something that does not know
+        // this schema.
+        let exported: Vec<poorai_observe::ExportedEvent> = events
+            .iter()
+            .enumerate()
+            .filter_map(|(index, record)| {
+                Some(poorai_observe::ExportedEvent {
+                    run_id: run_id.to_string(),
+                    sequence: index + 1,
+                    at: record.at,
+                    event_type: record.event_type.clone(),
+                    event_hash: record.event_hash.clone(),
+                    event: poorai_domain::RunEvent::from_stored(
+                        &record.event_type,
+                        &record.payload,
+                    )?,
+                })
+            })
+            .collect();
+        let mut out = Vec::new();
+        poorai_observe::export_jsonl(&exported, &mut out).map_err(|e| SafeError {
+            category: "internal",
+            context: e.to_string(),
+        })?;
+        let chain = store.verify_run_chain(run_id).map_err(|e| SafeError {
+            category: "internal",
+            context: e.to_string(),
+        })?;
+        return Ok(serde_json::json!({
+            "run_id": run_id,
+            "format": "jsonl",
+            // Said plainly: a record this build does not know is left out of
+            // the export rather than guessed at, and the count says how many.
+            "events_exported": exported.len(),
+            "events_unknown_to_this_build": events.len() - exported.len(),
+            "chain": chain,
+            "chain_intact": chain.intact(),
+            "replay": poorai_observe::replay(&exported),
+            "jsonl": String::from_utf8_lossy(&out),
+        }));
     }
     // A trail nobody checks is a trail that can be edited. The API only ever
     // appended, and SQLite permits UPDATE and DELETE regardless.

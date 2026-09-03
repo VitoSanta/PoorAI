@@ -13,7 +13,7 @@ poorai verify [RUN_ID] [--scope targeted|full]
 poorai eval run <SUITE> --model <TAG> --profile <CALIBRATION>
                                         [--seed N] [--temperature-milli N]
                                         [--turn-timeout-secs N] [--out-dir DIR]
-poorai report <RUN_OR_EVAL_ID> [--format json|md]
+poorai report <RUN_OR_EVAL_ID> [--format json|md|jsonl]
 ```
 
 `models inspect --probe` executes the capability suite against the live deployment. `--timeout-secs` (default 300) bounds a cold load: a load that outruns it is recorded `unknown`, never as an absent capability. `--probe-trials` (default 3) repeats each sampled trial, because a single sample cannot distinguish "unsupported" from "did not happen this time".
@@ -38,4 +38,4 @@ Two claims here are not yet true, and are kept rather than quietly deleted becau
 
 **Exit codes.** The specification calls for 0 verified/success; 1 task or verification failed; 2 invalid input; 3 policy denied; 4 provider unavailable; 5 internal error. The implementation returns 0 on success and **4 for every error**, whatever its category. The category is already carried on each error and is what the mapping would use.
 
-**`report --format`.** Only `json` is accepted. `eval run` does write a Markdown report beside its JSON one; `report` does not.
+**`report --format`.** `json`, `md` and `jsonl` are accepted as of 2026-09-03. The JSONL form is the run's trail as one record per line, with a replay report and the chain verdict beside it.

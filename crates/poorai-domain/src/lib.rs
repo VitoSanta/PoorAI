@@ -789,6 +789,16 @@ pub enum RunEvent {
         concern: String,
         delivery: serde_json::Value,
     },
+    /// The host's memory pressure, sampled after a turn.
+    ///
+    /// Pressure was read once, at admission, so a run that starts on a quiet
+    /// machine and ends on a saturated one recorded nothing about the
+    /// difference -- which is usually the difference that explains its timings.
+    ResourceSampled {
+        step: u8,
+        turn: u32,
+        pressure: Observation,
+    },
     LoopDetected {
         step: u8,
         action: String,
@@ -850,6 +860,7 @@ impl RunEvent {
             Self::ContextCompacted(_) => "context.compacted",
             Self::ContextTierChanged { .. } => "context.tier_changed",
             Self::ContextDeliveryDiverged { .. } => "context.delivery_diverged",
+            Self::ResourceSampled { .. } => "resource.sampled",
             Self::LoopDetected { .. } => "loop.detected",
             Self::NoProgressDetected { .. } => "no_progress.detected",
             Self::TaskComplete { .. } => "task.complete",
@@ -919,6 +930,7 @@ fn tag_for(event_type: &str) -> Option<&'static str> {
         "verification.result" => "verification_result",
         "context.tier_changed" => "context_tier_changed",
         "context.delivery_diverged" => "context_delivery_diverged",
+        "resource.sampled" => "resource_sampled",
         "loop.detected" => "loop_detected",
         "no_progress.detected" => "no_progress_detected",
         "task.complete" => "task_complete",

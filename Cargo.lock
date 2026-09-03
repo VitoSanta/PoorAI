@@ -904,6 +904,7 @@ dependencies = [
  "futures-util",
  "poorai-domain",
  "poorai-eval",
+ "poorai-observe",
  "poorai-ollama",
  "poorai-orchestrator",
  "poorai-provider",
@@ -950,6 +951,7 @@ dependencies = [
 name = "poorai-observe"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "poorai-domain",
  "serde",
  "serde_json",

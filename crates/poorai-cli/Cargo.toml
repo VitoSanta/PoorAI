@@ -17,6 +17,7 @@ futures-util.workspace = true
 poorai-domain = { path = "../poorai-domain" }
 poorai-eval = { path = "../poorai-eval" }
 poorai-ollama = { path = "../poorai-ollama" }
+poorai-observe = { path = "../poorai-observe" }
 poorai-orchestrator = { path = "../poorai-orchestrator" }
 poorai-provider = { path = "../poorai-provider" }
 poorai-repo = { path = "../poorai-repo" }
