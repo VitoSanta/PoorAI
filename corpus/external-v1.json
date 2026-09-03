@@ -120,6 +120,52 @@
       "max_actions": 16,
       "time_budget_secs": 900,
       "provenance": "more-itertools adeda34b, committed 2025-10-28. Workspace is its parent commit; hidden test is the regression test that commit added, minus the assertions that already passed before it. Not written or adapted by poorAI."
+    },
+    {
+      "id": "external-slugify-acronyms",
+      "kind": "bugfix",
+      "statement": "slugify does not separate an acronym from a following word when that word's second letter is `s`. `slugify('HTMLEscape')` gives 'htmlescape' where it should give 'html-escape', and `slugify('XMLMsgBox')` is wrong the same way. A two-letter acronym is also not separated: `slugify('IDValue')` should give 'id-value' and `slugify('ID2')` should give 'id-2'. Plurals such as `slugify('APIs')` must still give 'apis', and every assertion already in test.js must keep passing. Fix it in index.js.",
+      "allowed_files": [
+        "index.js"
+      ],
+      "files": {},
+      "repository": {
+        "url": "https://github.com/sindresorhus/slugify.git",
+        "commit": "7c318bd1aa4b4affab29761f15a9604323fe2a3b",
+        "fix_commit": "a3b86ea93a2a7eae5cf9c8821b0491cbb6826c8f",
+        "fix_committed_at": "2026-08-29T00:00:00Z",
+        "tree_hash": "590a73afbb4b9ee4f5899d97c7c5f70c862b57bf",
+        "setup": [
+          {
+            "executable": "npm",
+            "args": [
+              "install",
+              "--silent",
+              "--no-audit",
+              "--no-fund"
+            ]
+          }
+        ]
+      },
+      "visible_verifier": {
+        "executable": "npx",
+        "args": [
+          "--no",
+          "ava"
+        ]
+      },
+      "hidden_verifier": {
+        "executable": "node",
+        "args": [
+          "hidden_regression.mjs"
+        ]
+      },
+      "hidden_files": {
+        "hidden_regression.mjs": "import assert from 'node:assert/strict';\nimport slugify from './index.js';\n\n// The regression assertions the upstream fix added.\nassert.equal(slugify('APISection'), 'api-section');\nassert.equal(slugify('HTMLEscape'), 'html-escape');\nassert.equal(slugify('XMLMsgBox'), 'xml-msg-box');\nassert.equal(slugify('IDValue'), 'id-value');\nassert.equal(slugify('ID2'), 'id-2');\nassert.equal(slugify('parseXMLDocument'), 'parse-xml-document');\nassert.equal(slugify('XMLHttpAPIResponse'), 'xml-http-api-response');\nassert.equal(slugify('HTML5Parser'), 'html-5-parser');\nconsole.log('ok');\n"
+      },
+      "max_actions": 26,
+      "time_budget_secs": 1200,
+      "provenance": "sindresorhus/slugify a3b86ea9, committed 2026-08-29. Workspace is its parent commit; the hidden test carries the assertions that commit added to test.js, rewritten against node:assert so it needs no test runner. Not written or adapted by poorAI. Note that the project ships no lockfile, so `npm install` resolves its dependencies afresh: the repository tree is pinned, its dependency tree is not."
     }
   ]
 }
