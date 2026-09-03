@@ -37,8 +37,7 @@
       "hidden_files": {
         "hidden_regression.py": "\"\"\"The regression test the upstream fix added, run after the agent finishes.\"\"\"\nimport unittest\n\nimport more_itertools as mi\n\n\nclass InterleaveEvenlyEmpty(unittest.TestCase):\n    def test_no_iterables(self):\n        self.assertEqual(list(mi.interleave_evenly([])), [])\n        self.assertEqual(list(mi.interleave_evenly([], lengths=[])), [])\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
       },
-      "max_actions": 14,
-      "time_budget_secs": 900,
+      "time_budget_secs": 3600,
       "provenance": "more-itertools f51a53bf, committed 2026-06-29. The workspace is its parent commit, so the defect is present exactly as it was upstream. The hidden test is the regression test that commit added. The task was neither written nor adapted by poorAI; the fix date is recorded so a reader can judge it against a deployment's training cutoff."
     },
     {
@@ -77,8 +76,7 @@
       "hidden_files": {
         "hidden_regression.py": "\"\"\"The regression test the upstream fix added, run after the agent finishes.\"\"\"\nimport unittest\n\nimport more_itertools as mi\n\n\nclass NumericRangeEmptyReversed(unittest.TestCase):\n    def test_empty_reversed(self):\n        self.assertEqual(list(reversed(mi.numeric_range(0))), [])\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
       },
-      "max_actions": 14,
-      "time_budget_secs": 900,
+      "time_budget_secs": 3600,
       "provenance": "more-itertools edb3346f, committed 2026-04-10. Workspace is its parent commit; hidden test is the regression test that commit added. Not written or adapted by poorAI."
     },
     {
@@ -117,8 +115,7 @@
       "hidden_files": {
         "hidden_regression.py": "\"\"\"The regression test the upstream fix added, run after the agent finishes.\"\"\"\nimport unittest\nfrom itertools import repeat\nfrom operator import not_\n\nimport more_itertools as mi\n\n\nclass ExactlyNBoundaries(unittest.TestCase):\n    def test_true(self):\n        self.assertTrue(mi.exactly_n(repeat(True, 100), 100))\n        self.assertTrue(mi.exactly_n(repeat(False, 100), 100, predicate=not_))\n\n    def test_false(self):\n        self.assertFalse(mi.exactly_n([True], -10))\n        self.assertFalse(mi.exactly_n([], -1))\n        self.assertFalse(mi.exactly_n([], -10))\n        self.assertFalse(mi.exactly_n([True], 0))\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
       },
-      "max_actions": 16,
-      "time_budget_secs": 900,
+      "time_budget_secs": 3600,
       "provenance": "more-itertools adeda34b, committed 2025-10-28. Workspace is its parent commit; hidden test is the regression test that commit added, minus the assertions that already passed before it. Not written or adapted by poorAI."
     },
     {
@@ -163,8 +160,7 @@
       "hidden_files": {
         "hidden_regression.mjs": "import assert from 'node:assert/strict';\nimport slugify from './index.js';\n\n// The regression assertions the upstream fix added.\nassert.equal(slugify('APISection'), 'api-section');\nassert.equal(slugify('HTMLEscape'), 'html-escape');\nassert.equal(slugify('XMLMsgBox'), 'xml-msg-box');\nassert.equal(slugify('IDValue'), 'id-value');\nassert.equal(slugify('ID2'), 'id-2');\nassert.equal(slugify('parseXMLDocument'), 'parse-xml-document');\nassert.equal(slugify('XMLHttpAPIResponse'), 'xml-http-api-response');\nassert.equal(slugify('HTML5Parser'), 'html-5-parser');\nconsole.log('ok');\n"
       },
-      "max_actions": 26,
-      "time_budget_secs": 1200,
+      "time_budget_secs": 3600,
       "provenance": "sindresorhus/slugify a3b86ea9, committed 2026-08-29. Workspace is its parent commit; the hidden test carries the assertions that commit added to test.js, rewritten against node:assert so it needs no test runner. Not written or adapted by poorAI. Note that the project ships no lockfile, so `npm install` resolves its dependencies afresh: the repository tree is pinned, its dependency tree is not."
     }
   ]
