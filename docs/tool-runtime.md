@@ -68,4 +68,4 @@ A tool outcome is allowed, denied or failed. A timeout, an I/O failure, a non-ze
 
 `ToolCapability` is an enum left over from an earlier design and no longer corresponds to the typed actions above. It is two vocabularies for one concept, and one of them is wrong.
 
-Evaluation is the exception to all of this: corpus materialisation and external verifiers shell out directly, with no sandbox, timeout or output cap. A corpus file describes commands, and today those commands run outside the boundary this document is about.
+Evaluation used to be the exception to all of this. Corpus materialisation and external verifiers shelled out directly, with no sandbox, timeout or output cap; they now run through `run_command` under their own bounded policy. See `security-sandboxing.md`.

@@ -850,6 +850,43 @@ fn action_fingerprint(action: &ActionProposal) -> String {
     }
 }
 
+/// Compares what the budget believed it sent with what the backend says it read.
+///
+/// A configured context limit is not one the backend can be trusted to enforce:
+/// measured across seven local deployments, one accepted a prompt beyond the
+/// limit whole, one rejected it with a typed error, and one evaluated 258
+/// tokens of 4095 and said nothing. The third is the case that matters, because
+/// the reply reads like an answer to a prompt that was never delivered.
+///
+/// `prompt_eval_count` is the only signal that deployment offers, so it is
+/// checked rather than recorded. The estimate is characters over four and is
+/// therefore loose in both directions; only a divergence too large to be the
+/// estimate is worth a finding.
+fn prompt_delivery(
+    estimated_tokens: usize,
+    context_tokens: u32,
+    metrics: Option<&poorai_domain::GenerationMetrics>,
+) -> Option<serde_json::Value> {
+    let reported = metrics?.prompt_tokens?;
+    let estimated = estimated_tokens as u64;
+    let context = u64::from(context_tokens);
+    // The estimate is worth no more than a factor of two either way.
+    let concern = if reported > context {
+        Some("backend read more than the authorised context")
+    } else if estimated > 0 && reported.saturating_mul(2) < estimated {
+        Some("backend read far less than was sent; the prompt may have been silently truncated")
+    } else {
+        None
+    };
+    Some(serde_json::json!({
+        "reported_prompt_tokens": reported,
+        "estimated_prompt_tokens": estimated,
+        "authorised_context_tokens": context,
+        "estimate_basis": "characters divided by 4; not a provider count",
+        "concern": concern,
+    }))
+}
+
 /// Characters per token. A documented estimate, not a count: exact counts are
 /// provider-specific and only available when a backend reports them.
 const CHARS_PER_TOKEN: usize = 4;
@@ -1525,6 +1562,11 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
         // was the difference between a usable agent and an unusable one, and
         // the audit could only say how long it took, never whether the time
         // went into reading a long prompt or generating a long answer.
+        let delivery = prompt_delivery(
+            estimated_tokens(&request.messages),
+            request.context_tokens,
+            reply.metrics.as_ref(),
+        );
         store
             .append(
                 Some(run_id),
@@ -1539,9 +1581,31 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                         .and_then(poorai_domain::GenerationMetrics::tokens_per_second),
                     "thinking_chars": reply.thinking.len(),
                     "content_chars": reply.content.len(),
+                    "prompt_delivery": delivery,
                 }),
             )
             .map_err(|e| e.to_string())?;
+        if let Some(concern) = delivery
+            .as_ref()
+            .and_then(|delivery| delivery.get("concern"))
+            .and_then(|concern| concern.as_str())
+        {
+            // Evented on its own as well as inside the turn, because a prompt
+            // that did not arrive explains a reply that makes no sense, and
+            // nobody reading a confusing answer thinks to open the counters.
+            store
+                .append(
+                    Some(run_id),
+                    "context.delivery_diverged",
+                    serde_json::json!({
+                        "step": step,
+                        "turn": turns,
+                        "concern": concern,
+                        "delivery": delivery,
+                    }),
+                )
+                .map_err(|e| e.to_string())?;
+        }
         request.messages.push(poorai_domain::ChatMessage {
             role: "assistant".into(),
             content: if reply.content.trim().is_empty() {
@@ -3299,6 +3363,55 @@ mod tests {
         assert_eq!(request.messages[1].content, "prior session ledger");
         assert_eq!(request.messages[2].role, "user");
         assert_eq!(request.messages[2].content, "the actual task");
+    }
+
+    /// Silent truncation is the case with no other signal: the deployment
+    /// answers a prompt it never received, and nothing in the reply says so.
+    #[test]
+    fn a_backend_reading_far_less_than_was_sent_is_a_finding() {
+        let metrics = poorai_domain::GenerationMetrics {
+            prompt_tokens: Some(258),
+            ..Default::default()
+        };
+        let delivery = prompt_delivery(4095, 8192, Some(&metrics)).unwrap();
+        assert_eq!(
+            delivery["concern"],
+            "backend read far less than was sent; the prompt may have been silently truncated"
+        );
+        assert_eq!(delivery["reported_prompt_tokens"], 258);
+    }
+
+    #[test]
+    fn a_backend_reading_past_the_authorised_context_is_a_finding() {
+        let metrics = poorai_domain::GenerationMetrics {
+            prompt_tokens: Some(40_000),
+            ..Default::default()
+        };
+        let delivery = prompt_delivery(39_000, 32_768, Some(&metrics)).unwrap();
+        assert_eq!(
+            delivery["concern"],
+            "backend read more than the authorised context"
+        );
+    }
+
+    #[test]
+    fn an_estimate_within_its_own_looseness_is_not_a_finding() {
+        // Four characters per token is loose in both directions, so ordinary
+        // disagreement must not read as a defect -- a check that fires on
+        // every turn is one nobody looks at.
+        let metrics = poorai_domain::GenerationMetrics {
+            prompt_tokens: Some(3_000),
+            ..Default::default()
+        };
+        let delivery = prompt_delivery(4_095, 8_192, Some(&metrics)).unwrap();
+        assert!(delivery["concern"].is_null());
+    }
+
+    #[test]
+    fn a_backend_reporting_no_counts_yields_no_claim() {
+        assert!(prompt_delivery(4_095, 8_192, None).is_none());
+        let metrics = poorai_domain::GenerationMetrics::default();
+        assert!(prompt_delivery(4_095, 8_192, Some(&metrics)).is_none());
     }
 
     #[tokio::test]

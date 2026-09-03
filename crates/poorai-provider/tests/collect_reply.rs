@@ -129,3 +129,24 @@ async fn a_stream_error_propagates() {
     .await;
     assert!(failed.is_err());
 }
+
+/// A short answer and an abandoned one assemble into the same text. The only
+/// thing that separates them is the terminal chunk, so its absence is a
+/// failure rather than the end of a reply.
+#[tokio::test]
+async fn a_stream_that_ends_without_a_terminal_chunk_is_truncated() {
+    let failed = collect_reply(stream(vec![Ok(content("half an ans")), Ok(content("wer"))])).await;
+    assert!(matches!(failed, Err(ProviderError::Truncated { .. })));
+}
+
+#[tokio::test]
+async fn hitting_the_chunk_bound_is_an_error_rather_than_a_short_reply() {
+    // A deployment that never stops emitting is bounded, and what was read up
+    // to the bound is not an answer: returning it would report a fragment as a
+    // complete reply and let it be parsed as an action.
+    let chunks: Vec<_> = std::iter::repeat_with(|| Ok(content("x")))
+        .take(poorai_provider::MAX_REPLY_CHUNKS + 1)
+        .collect();
+    let failed = collect_reply(stream(chunks)).await;
+    assert!(matches!(failed, Err(ProviderError::Truncated { .. })));
+}

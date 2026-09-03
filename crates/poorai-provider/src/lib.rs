@@ -22,6 +22,14 @@ pub enum ProviderError {
     ContextLimit { safe_context: String },
     #[error("provider operation cancelled")]
     Cancelled,
+    /// The reply stopped without the backend saying it was finished.
+    ///
+    /// A short answer and an abandoned one look identical in the assembled
+    /// text, so this is the difference between a deployment that answered
+    /// briefly and a connection that died mid-generation. Treating the second
+    /// as the first is how a truncated reply becomes a recorded result.
+    #[error("provider reply was truncated: {safe_context}")]
+    Truncated { safe_context: String },
 }
 
 /// One model reply, assembled from every chunk of its stream.
@@ -47,6 +55,7 @@ pub const MAX_REPLY_CHUNKS: usize = 16_384;
 /// Reads a stream to completion and returns the assembled reply.
 pub async fn collect_reply(mut stream: ModelStream) -> Result<ModelReply, ProviderError> {
     let mut reply = ModelReply::default();
+    let mut done = false;
     while let Some(next) = stream.next().await {
         let chunk = next?;
         reply.chunks += 1;
@@ -58,13 +67,27 @@ pub async fn collect_reply(mut stream: ModelStream) -> Result<ModelReply, Provid
         if chunk.metrics.is_some() {
             reply.metrics = chunk.metrics;
         }
-        if chunk.done || reply.chunks >= MAX_REPLY_CHUNKS {
+        if chunk.done {
+            done = true;
             break;
+        }
+        if reply.chunks >= MAX_REPLY_CHUNKS {
+            return Err(ProviderError::Truncated {
+                safe_context: "reply exceeded the chunk bound before the backend finished".into(),
+            });
         }
     }
     if reply.chunks == 0 {
         return Err(ProviderError::Protocol {
             safe_context: "provider returned an empty stream".into(),
+        });
+    }
+    if !done {
+        // The stream ended without a terminal chunk. What was assembled may be
+        // a whole answer or the first half of one, and nothing here can tell
+        // the two apart -- so it is not returned as an answer.
+        return Err(ProviderError::Truncated {
+            safe_context: "stream ended without a terminal chunk".into(),
         });
     }
     Ok(reply)

@@ -4,7 +4,7 @@ use poorai_domain::{
     ChatMessage, DeploymentDescriptor, HardwareProfile, ModelRequest, Observation, Provenance,
     ToolCall, Validate, hash_bytes, new_id, now,
 };
-use poorai_ollama::OllamaProvider;
+use poorai_ollama::{BackendEndpoint, OllamaProvider};
 use poorai_provider::ModelProvider;
 use serde::Serialize;
 use std::{
@@ -22,6 +22,13 @@ struct Cli {
     json: bool,
     #[arg(long, global = true, default_value = "http://127.0.0.1:11434/")]
     ollama_endpoint: String,
+    /// Send prompts and repository contents to a backend off this machine.
+    ///
+    /// The default refuses one. A prompt carries excerpts of the repository, so
+    /// choosing a non-local backend is a disclosure decision and is named
+    /// rather than inferred from the address.
+    #[arg(long, global = true)]
+    allow_remote_endpoint: bool,
 }
 #[derive(Subcommand)]
 enum Command {
@@ -407,8 +414,20 @@ fn print<T: Serialize>(json: bool, result: Result<T, SafeError>) -> i32 {
     }
 }
 async fn dispatch(cli: Cli) -> i32 {
+    // Resolved once. Every path below is handed a value that already carries
+    // whether leaving this machine was granted, so no later constructor can
+    // reach a remote backend without having been given one that says so.
+    let endpoint = if cli.allow_remote_endpoint {
+        BackendEndpoint::remote_approved(&cli.ollama_endpoint)
+    } else {
+        BackendEndpoint::local(&cli.ollama_endpoint)
+    };
+    let endpoint = match endpoint {
+        Ok(endpoint) => endpoint,
+        Err(error) => return print::<()>(cli.json, Err(provider_error(error))),
+    };
     match cli.command {
-        Command::Doctor => print(cli.json, doctor(&cli.ollama_endpoint).await),
+        Command::Doctor => print(cli.json, doctor(&endpoint).await),
         Command::Models(m) => match m.command {
             ModelsCommand::Inspect {
                 model,
@@ -418,7 +437,7 @@ async fn dispatch(cli: Cli) -> i32 {
             } => print(
                 cli.json,
                 inspect(
-                    &cli.ollama_endpoint,
+                    &endpoint,
                     model,
                     probe,
                     Duration::from_secs(timeout_secs),
@@ -443,7 +462,7 @@ async fn dispatch(cli: Cli) -> i32 {
         } => print(
             cli.json,
             calibrate(
-                &cli.ollama_endpoint,
+                &endpoint,
                 model,
                 ladder,
                 seed,
@@ -479,11 +498,11 @@ async fn dispatch(cli: Cli) -> i32 {
                     provision,
                     max_actions,
                 },
-                &cli.ollama_endpoint,
+                &endpoint,
             )
             .await,
         ),
-        Command::CheckCorpus { suite } => print(cli.json, check_corpus(&suite)),
+        Command::CheckCorpus { suite } => print(cli.json, check_corpus(&suite).await),
         Command::Session(args) => print(
             cli.json,
             match args.command {
@@ -503,7 +522,7 @@ async fn dispatch(cli: Cli) -> i32 {
             } => print(
                 cli.json,
                 evaluate(
-                    &cli.ollama_endpoint,
+                    &endpoint,
                     suite,
                     model,
                     profile,
@@ -545,7 +564,7 @@ async fn main() {
 /// commit it starts from, and the hidden test really distinguishes the repaired
 /// tree from the broken one. Both are properties of the upstream commits rather
 /// than of anything poorAI wrote, so both are checked instead of asserted.
-fn check_corpus(suite: &Path) -> Result<serde_json::Value, SafeError> {
+async fn check_corpus(suite: &Path) -> Result<serde_json::Value, SafeError> {
     let suite = poorai_eval::Suite::load(suite).map_err(|e| SafeError {
         category: "invalid_input",
         context: e.to_string(),
@@ -553,10 +572,12 @@ fn check_corpus(suite: &Path) -> Result<serde_json::Value, SafeError> {
     let mut checks = Vec::new();
     let mut unsound = Vec::new();
     for task in suite.tasks.iter().filter(|t| t.repository.is_some()) {
-        let check = poorai_eval::check_external_task(task).map_err(|e| SafeError {
-            category: "invalid_input",
-            context: e.to_string(),
-        })?;
+        let check = poorai_eval::check_external_task(task)
+            .await
+            .map_err(|e| SafeError {
+                category: "invalid_input",
+                context: e.to_string(),
+            })?;
         if !check.sound() {
             unsound.push(check.task_id.clone());
         }
@@ -695,7 +716,7 @@ fn show_session(name: &str) -> Result<serde_json::Value, SafeError> {
     }))
 }
 
-async fn doctor(endpoint: &str) -> Result<serde_json::Value, SafeError> {
+async fn doctor(endpoint: &BackendEndpoint) -> Result<serde_json::Value, SafeError> {
     let hardware = probe_hardware().await;
     let provider = OllamaProvider::new(endpoint, Duration::from_secs(4)).map_err(provider_error)?;
     let runtime = provider.runtime_state().await.map_err(provider_error);
@@ -972,7 +993,7 @@ async fn probe_edit_once(
 /// against a verifier the agent never saw.
 #[allow(clippy::too_many_arguments)]
 async fn evaluate(
-    endpoint: &str,
+    endpoint: &BackendEndpoint,
     suite_path: PathBuf,
     model: String,
     profile: PathBuf,
@@ -996,7 +1017,7 @@ async fn evaluate(
         schema_version: 1,
         id: new_id(),
         provider: "ollama".into(),
-        endpoint: endpoint.into(),
+        endpoint: endpoint.as_str().into(),
         model_ref: model,
         backend_options: BTreeMap::new(),
         auth_ref: None,
@@ -1368,7 +1389,7 @@ async fn evaluate_task(
             return outcome;
         }
     };
-    if let Err(error) = poorai_eval::materialise(task, &root) {
+    if let Err(error) = poorai_eval::materialise(task, &root).await {
         outcome.error = Some(error.to_string());
         return outcome;
     }
@@ -1782,7 +1803,7 @@ async fn probe_cancellation(
 }
 
 async fn inspect(
-    endpoint: &str,
+    endpoint: &BackendEndpoint,
     model: String,
     probe: bool,
     timeout: Duration,
@@ -1800,7 +1821,7 @@ async fn inspect(
         schema_version: 1,
         id: new_id(),
         provider: "ollama".into(),
-        endpoint: endpoint.into(),
+        endpoint: endpoint.as_str().into(),
         model_ref: model,
         backend_options: BTreeMap::new(),
         auth_ref: None,
@@ -1991,7 +2012,7 @@ fn load_calibration(path: &Path) -> Result<poorai_domain::CalibrationProfile, Sa
 
 #[allow(clippy::too_many_arguments)]
 async fn calibrate(
-    endpoint: &str,
+    endpoint: &BackendEndpoint,
     model: String,
     ladder: Vec<u32>,
     seed: u64,
@@ -2010,7 +2031,7 @@ async fn calibrate(
         schema_version: 1,
         id: new_id(),
         provider: "ollama".into(),
-        endpoint: endpoint.into(),
+        endpoint: endpoint.as_str().into(),
         model_ref: model,
         backend_options: BTreeMap::new(),
         auth_ref: None,
@@ -2101,7 +2122,10 @@ struct RunOptions {
     max_actions: Option<u8>,
 }
 
-async fn run(options: RunOptions, endpoint: &str) -> Result<serde_json::Value, SafeError> {
+async fn run(
+    options: RunOptions,
+    endpoint: &BackendEndpoint,
+) -> Result<serde_json::Value, SafeError> {
     if !options.dry_run {
         return prepare_profiled_run(options, endpoint).await;
     }
@@ -2167,7 +2191,7 @@ async fn run(options: RunOptions, endpoint: &str) -> Result<serde_json::Value, S
 }
 async fn prepare_profiled_run(
     options: RunOptions,
-    endpoint: &str,
+    endpoint: &BackendEndpoint,
 ) -> Result<serde_json::Value, SafeError> {
     let RunOptions {
         task,
@@ -2229,7 +2253,7 @@ async fn prepare_profiled_run(
         schema_version: 1,
         id: new_id(),
         provider: "ollama".into(),
-        endpoint: endpoint.into(),
+        endpoint: endpoint.as_str().into(),
         model_ref: model,
         backend_options: BTreeMap::new(),
         auth_ref: None,
@@ -2689,6 +2713,7 @@ fn provider_error(e: poorai_provider::ProviderError) -> SafeError {
         poorai_provider::ProviderError::ContextLimit { .. } => "provider_context_limit",
         poorai_provider::ProviderError::Protocol { .. } => "provider_protocol",
         poorai_provider::ProviderError::Cancelled => "provider_cancelled",
+        poorai_provider::ProviderError::Truncated { .. } => "provider_truncated",
     };
     SafeError {
         category,

@@ -88,8 +88,8 @@ fn a_task_declaring_both_is_refused() {
 /// checked anyway, because a silent mismatch would mean a run was measured
 /// against a workspace nobody declared — and that is the one outcome worth
 /// ruling out rather than trusting.
-#[test]
-fn a_checkout_that_does_not_match_the_declared_tree_is_refused() {
+#[tokio::test]
+async fn a_checkout_that_does_not_match_the_declared_tree_is_refused() {
     let upstream = tempfile::tempdir().unwrap();
     let git = |args: &[&str]| {
         let status = std::process::Command::new("git")
@@ -127,6 +127,7 @@ fn a_checkout_that_does_not_match_the_declared_tree_is_refused() {
 
     let into = tempfile::tempdir().unwrap();
     let error = poorai_eval::materialise_repository(&source, into.path())
+        .await
         .unwrap_err()
         .to_string();
     assert!(error.contains("but the corpus declares"), "{error}");
@@ -134,12 +135,13 @@ fn a_checkout_that_does_not_match_the_declared_tree_is_refused() {
 
 /// Without a declared tree hash there is nothing to verify the checkout
 /// against, so materialising is refused rather than done unchecked.
-#[test]
-fn a_source_without_a_tree_hash_is_refused() {
+#[tokio::test]
+async fn a_source_without_a_tree_hash_is_refused() {
     let mut source = source();
     source.tree_hash = String::new();
     let into = tempfile::tempdir().unwrap();
     let error = poorai_eval::materialise_repository(&source, into.path())
+        .await
         .unwrap_err()
         .to_string();
     assert!(error.contains("declares no tree hash"), "{error}");

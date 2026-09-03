@@ -12,24 +12,94 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, time::Duration};
 
+/// A backend address, carrying whether reaching off this machine was granted.
+///
+/// "Local" was a default rather than a guarantee: the endpoint accepted any
+/// HTTP(S) URL, so a prompt and the repository excerpts inside it could be sent
+/// to another host without anything asking. The grant travels with the address
+/// instead of being a flag somewhere above, because every constructor below
+/// then has to have been given it.
+#[derive(Clone, Debug)]
+pub struct BackendEndpoint {
+    url: Url,
+    remote_approved: bool,
+}
+
+impl BackendEndpoint {
+    /// The default: refuses any address that is not this machine.
+    pub fn local(raw: &str) -> Result<Self, ProviderError> {
+        let url = Self::parse(raw)?;
+        if !Self::is_loopback(&url) {
+            return Err(ProviderError::Protocol {
+                safe_context: format!(
+                    "{} is not a local backend; pass --allow-remote-endpoint to send prompts and repository contents off this machine",
+                    url.host_str().unwrap_or("the endpoint")
+                ),
+            });
+        }
+        Ok(Self {
+            url,
+            remote_approved: false,
+        })
+    }
+
+    /// A remote backend the operator named explicitly.
+    pub fn remote_approved(raw: &str) -> Result<Self, ProviderError> {
+        Ok(Self {
+            url: Self::parse(raw)?,
+            remote_approved: true,
+        })
+    }
+
+    pub fn is_remote(&self) -> bool {
+        self.remote_approved && !Self::is_loopback(&self.url)
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.url.as_str()
+    }
+
+    fn parse(raw: &str) -> Result<Url, ProviderError> {
+        Url::parse(raw).map_err(|_| ProviderError::Protocol {
+            safe_context: "invalid Ollama endpoint".into(),
+        })
+    }
+
+    fn is_loopback(url: &Url) -> bool {
+        let Some(host) = url.host_str() else {
+            return false;
+        };
+        if host.eq_ignore_ascii_case("localhost") || host.eq_ignore_ascii_case("localhost.") {
+            return true;
+        }
+        // An IPv6 host arrives bracketed, and the whole 127.0.0.0/8 block is
+        // loopback -- not only 127.0.0.1.
+        let host = host.trim_start_matches('[').trim_end_matches(']');
+        host.parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+    }
+}
+
 #[derive(Clone)]
 pub struct OllamaProvider {
     client: Client,
     endpoint: Url,
 }
 impl OllamaProvider {
-    pub fn new(endpoint: &str, timeout: Duration) -> Result<Self, ProviderError> {
-        let endpoint = Url::parse(endpoint).map_err(|_| ProviderError::Protocol {
-            safe_context: "invalid Ollama endpoint".into(),
-        })?;
-        let client =
-            Client::builder()
-                .timeout(timeout)
-                .build()
-                .map_err(|_| ProviderError::Unavailable {
-                    safe_context: "could not configure local HTTP client".into(),
-                })?;
-        Ok(Self { client, endpoint })
+    pub fn new(endpoint: &BackendEndpoint, timeout: Duration) -> Result<Self, ProviderError> {
+        let client = Client::builder()
+            .timeout(timeout)
+            // A redirect can change host after the address was judged, which
+            // would make that judgement advisory rather than binding.
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|_| ProviderError::Unavailable {
+                safe_context: "could not configure local HTTP client".into(),
+            })?;
+        Ok(Self {
+            client,
+            endpoint: endpoint.url.clone(),
+        })
     }
     fn url(&self, path: &str) -> Result<Url, ProviderError> {
         self.endpoint
@@ -67,18 +137,11 @@ impl OllamaProvider {
                     break;
                 }
             }
-            let body = String::from_utf8_lossy(&body).to_ascii_lowercase();
-            if ["context length", "input length", "num_ctx", "too long"]
-                .iter()
-                .any(|needle| body.contains(needle))
-            {
-                return Err(ProviderError::ContextLimit {
-                    safe_context: "Ollama rejected the measured context tier".into(),
-                });
-            }
-            return Err(ProviderError::Protocol {
-                safe_context: format!("Ollama returned HTTP {status}"),
-            });
+            let body = String::from_utf8_lossy(&body);
+            return Err(classify_backend_error(
+                &body,
+                format!("Ollama returned HTTP {status}"),
+            ));
         }
         Ok(response)
     }
@@ -176,6 +239,11 @@ struct ChatRequest<'a> {
 }
 #[derive(Deserialize)]
 struct ChatResponse {
+    /// Ollama reports some failures as an error field in a 200 body rather
+    /// than as a status. Without this the chunk deserialises into a reply with
+    /// no content, and a backend failure becomes a valid empty answer.
+    #[serde(default)]
+    error: Option<String>,
     #[serde(default)]
     message: Option<NativeMessage>,
     #[serde(default)]
@@ -259,6 +327,26 @@ fn prune_bulk_arrays(value: serde_json::Value) -> serde_json::Value {
     }
 }
 
+/// Reads a backend failure message and says which kind of failure it is.
+///
+/// The same message arrives two ways -- as a non-2xx body, and as an `error`
+/// field inside a 200 -- so the classification lives in one place rather than
+/// being right in whichever path was written first.
+fn classify_backend_error(message: &str, fallback: String) -> ProviderError {
+    let message = message.to_ascii_lowercase();
+    if ["context length", "input length", "num_ctx", "too long"]
+        .iter()
+        .any(|needle| message.contains(needle))
+    {
+        return ProviderError::ContextLimit {
+            safe_context: "Ollama rejected the measured context tier".into(),
+        };
+    }
+    ProviderError::Protocol {
+        safe_context: fallback,
+    }
+}
+
 pub fn parse_ndjson_chunks(body: &str) -> Result<Vec<ModelChunk>, ProviderError> {
     body.lines()
         .filter(|line| !line.trim().is_empty())
@@ -267,6 +355,12 @@ pub fn parse_ndjson_chunks(body: &str) -> Result<Vec<ModelChunk>, ProviderError>
                 serde_json::from_str(line).map_err(|_| ProviderError::Protocol {
                     safe_context: "malformed Ollama streaming chunk".into(),
                 })?;
+            if let Some(error) = &response.error {
+                return Err(classify_backend_error(
+                    error,
+                    "Ollama reported an error in place of a reply".into(),
+                ));
+            }
             let metrics = response.metrics();
             let message = response.message.unwrap_or_default();
             Ok(ModelChunk {
@@ -546,10 +640,64 @@ mod tests {
         });
         format!("http://{address}/")
     }
+    /// Every fixture server binds loopback, which is what the default allows.
+    fn local(raw: &str) -> BackendEndpoint {
+        BackendEndpoint::local(raw).expect("fixture endpoints are loopback")
+    }
+
     #[test]
     fn rejects_non_url() {
-        assert!(OllamaProvider::new("bad", Duration::from_secs(1)).is_err());
+        assert!(BackendEndpoint::local("bad").is_err());
     }
+
+    /// The default is not merely loopback-shaped: an address that leaves this
+    /// machine is refused until someone says otherwise, because a prompt
+    /// carries repository contents with it.
+    #[test]
+    fn a_non_local_endpoint_is_refused_unless_it_was_approved() {
+        assert!(BackendEndpoint::local("http://198.51.100.7:11434/").is_err());
+        assert!(BackendEndpoint::local("https://ollama.example.com/").is_err());
+        assert!(BackendEndpoint::remote_approved("https://ollama.example.com/").is_ok());
+        assert!(
+            BackendEndpoint::remote_approved("https://ollama.example.com/")
+                .unwrap()
+                .is_remote()
+        );
+    }
+
+    #[test]
+    fn the_whole_loopback_block_counts_as_local() {
+        for raw in [
+            "http://127.0.0.1:11434/",
+            "http://127.0.0.7:11434/",
+            "http://localhost:11434/",
+            "http://LocalHost:11434/",
+            "http://[::1]:11434/",
+        ] {
+            assert!(BackendEndpoint::local(raw).is_ok(), "{raw} is loopback");
+        }
+        // A name that merely starts with the word is another host entirely.
+        assert!(BackendEndpoint::local("http://localhost.evil.example/").is_err());
+    }
+    /// Ollama answers some failures with HTTP 200 and an error field. Without
+    /// the field on the DTO the chunk deserialises into a message with no
+    /// content, and a backend failure reaches the loop as a valid empty reply.
+    #[test]
+    fn an_error_field_in_a_200_body_is_a_failure_not_an_empty_reply() {
+        let failed = parse_ndjson_chunks(r#"{"error":"model requires more system memory"}"#);
+        assert!(matches!(failed, Err(ProviderError::Protocol { .. })));
+    }
+
+    #[test]
+    fn an_error_field_naming_the_context_is_classified_as_a_context_limit() {
+        // The same message arrives as a non-2xx body and inside a 200. A tier
+        // downgrade must be reachable from both, or the retry depends on which
+        // shape the backend happened to use.
+        let failed =
+            parse_ndjson_chunks(r#"{"error":"input length 5000 exceeds context length 4096"}"#);
+        assert!(matches!(failed, Err(ProviderError::ContextLimit { .. })));
+    }
+
     #[test]
     fn native_dto_defaults_do_not_infer_capabilities() {
         let parsed: ShowResponse =
@@ -659,7 +807,7 @@ mod tests {
             show,
             r#"{"models":[{"name":"fixture","digest":"sha256:abc"}]}"#.to_string(),
         ]);
-        let provider = OllamaProvider::new(&endpoint, Duration::from_secs(2)).unwrap();
+        let provider = OllamaProvider::new(&local(&endpoint), Duration::from_secs(2)).unwrap();
         let deployment = DeploymentDescriptor {
             schema_version: 1,
             id: poorai_domain::new_id(),
@@ -687,7 +835,7 @@ mod tests {
             r#"{"details":{"family":"test"},"capabilities":["completion"],"model_info":{}}"#,
             r#"{"models":[{"name":"fixture","digest":"sha256:abc"}]}"#,
         ]);
-        let provider = OllamaProvider::new(&endpoint, Duration::from_secs(2)).unwrap();
+        let provider = OllamaProvider::new(&local(&endpoint), Duration::from_secs(2)).unwrap();
         let deployment = DeploymentDescriptor {
             schema_version: 1,
             id: poorai_domain::new_id(),
@@ -707,7 +855,7 @@ mod tests {
             r#"{"details":{},"model_info":{}}"#,
             r#"{"models":[{"name":"fixture"}]}"#,
         ]);
-        let provider = OllamaProvider::new(&endpoint, Duration::from_secs(2)).unwrap();
+        let provider = OllamaProvider::new(&local(&endpoint), Duration::from_secs(2)).unwrap();
         let deployment = DeploymentDescriptor {
             schema_version: 1,
             id: poorai_domain::new_id(),
@@ -725,7 +873,7 @@ mod tests {
     #[tokio::test]
     async fn inspect_rejects_malformed_show_json() {
         let endpoint = fixture_server(vec!["{invalid"]);
-        let provider = OllamaProvider::new(&endpoint, Duration::from_secs(2)).unwrap();
+        let provider = OllamaProvider::new(&local(&endpoint), Duration::from_secs(2)).unwrap();
         let deployment = DeploymentDescriptor {
             schema_version: 1,
             id: poorai_domain::new_id(),
@@ -748,8 +896,11 @@ mod tests {
             let (_stream, _) = listener.accept().unwrap();
             std::thread::sleep(Duration::from_millis(100));
         });
-        let provider =
-            OllamaProvider::new(&format!("http://{address}/"), Duration::from_millis(10)).unwrap();
+        let provider = OllamaProvider::new(
+            &local(&format!("http://{address}/")),
+            Duration::from_millis(10),
+        )
+        .unwrap();
         assert!(matches!(
             provider.runtime_state().await,
             Err(ProviderError::Timeout { .. })
@@ -765,8 +916,11 @@ mod tests {
             let _ = stream.read(&mut request);
             stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
         });
-        let provider =
-            OllamaProvider::new(&format!("http://{address}/"), Duration::from_secs(1)).unwrap();
+        let provider = OllamaProvider::new(
+            &local(&format!("http://{address}/")),
+            Duration::from_secs(1),
+        )
+        .unwrap();
         assert!(matches!(
             provider.runtime_state().await,
             Err(ProviderError::Protocol { .. })
@@ -776,7 +930,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_state_rejects_malformed_json() {
         let endpoint = fixture_server(vec!["{not-json"]);
-        let provider = OllamaProvider::new(&endpoint, Duration::from_secs(1)).unwrap();
+        let provider = OllamaProvider::new(&local(&endpoint), Duration::from_secs(1)).unwrap();
         assert!(matches!(
             provider.runtime_state().await,
             Err(ProviderError::Protocol { .. })
@@ -786,7 +940,7 @@ mod tests {
     #[tokio::test]
     async fn chat_rejects_an_unbounded_ndjson_line() {
         let endpoint = fixture_server_owned(vec!["x".repeat(MAX_STREAM_LINE_BYTES + 1)]);
-        let provider = OllamaProvider::new(&endpoint, Duration::from_secs(2)).unwrap();
+        let provider = OllamaProvider::new(&local(&endpoint), Duration::from_secs(2)).unwrap();
         let deployment = DeploymentDescriptor {
             schema_version: 1,
             id: poorai_domain::new_id(),
@@ -837,7 +991,7 @@ mod tests {
                 .unwrap();
         });
         let endpoint = format!("http://{address}/");
-        let provider = OllamaProvider::new(&endpoint, Duration::from_secs(1)).unwrap();
+        let provider = OllamaProvider::new(&local(&endpoint), Duration::from_secs(1)).unwrap();
         let deployment = DeploymentDescriptor {
             schema_version: 1,
             id: poorai_domain::new_id(),

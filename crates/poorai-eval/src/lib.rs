@@ -8,6 +8,7 @@ use poorai_domain::hash_bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::time::Duration;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EvalError {
@@ -275,28 +276,77 @@ impl ExternalTaskCheck {
     }
 }
 
+/// The policy every command this crate runs is bounded by.
+///
+/// A corpus file is data that describes commands -- a clone URL, setup steps,
+/// a verifier -- and until now those commands ran through
+/// `std::process::Command` with no sandbox, no timeout and no output cap. That
+/// bypassed the entire tool boundary in one step, from the one place that
+/// executes text nobody in this repository wrote.
+///
+/// It is a distinct policy rather than the run's: preparing a corpus needs the
+/// network, which a task must not have, and needs `git` and whatever toolchain
+/// the declared steps name. Everything else it shares -- writes confined to the
+/// directory being prepared, a wall-clock bound, a bounded output, and a
+/// process group killed when either is exceeded.
+fn corpus_policy(root: &Path, executables: &[String]) -> poorai_tools::ToolPolicy {
+    let mut allow_commands: Vec<String> = vec!["git".into()];
+    for executable in executables {
+        if !allow_commands.contains(executable) {
+            allow_commands.push(executable.clone());
+        }
+    }
+    poorai_tools::ToolPolicy {
+        root: root.to_path_buf(),
+        allow_commands,
+        output_limit: 256 * 1024,
+        timeout: Duration::from_secs(600),
+        sandbox: poorai_tools::SandboxPolicy::Preferred,
+        // Fetching the pinned commit is the one thing preparation cannot do
+        // without. The task the agent then runs is given no such grant.
+        approvals: vec![poorai_tools::Approval::NetworkAccess],
+    }
+}
+
+/// Runs one command from a corpus file, bounded, and says what it produced.
+async fn corpus_command(
+    policy: &poorai_tools::ToolPolicy,
+    executable: &str,
+    args: &[String],
+) -> Result<poorai_tools::ToolResult, EvalError> {
+    poorai_tools::run_command(policy, executable, args)
+        .await
+        .map_err(|error| {
+            EvalError::Invalid(format!(
+                "`{executable} {}` could not be run under the corpus policy: {error}",
+                args.join(" ")
+            ))
+        })
+}
+
 /// Checks that an external task is fair before any deployment is measured on it.
-pub fn check_external_task(task: &Task) -> Result<ExternalTaskCheck, EvalError> {
+pub async fn check_external_task(task: &Task) -> Result<ExternalTaskCheck, EvalError> {
     let Some(source) = &task.repository else {
         return Err(EvalError::Invalid(format!(
             "task {} is not set in an external repository",
             task.id
         )));
     };
-    let run = |root: &Path, verifier: &Verifier| -> bool {
-        std::process::Command::new(&verifier.executable)
-            .args(&verifier.args)
-            .current_dir(root)
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
-    };
+    async fn run(root: &Path, verifier: &Verifier) -> bool {
+        // A verifier is a command a corpus file names, so it is bounded like
+        // any other. A verifier that cannot be run under the policy is not a
+        // passing verifier.
+        let policy = corpus_policy(root, std::slice::from_ref(&verifier.executable));
+        corpus_command(&policy, &verifier.executable, &verifier.args)
+            .await
+            .is_ok_and(|result| result.exit_code == Some(0))
+    }
 
     let start = tempfile::tempdir()?;
-    materialise_repository(source, start.path())?;
-    let visible_passes_at_start = run(start.path(), &task.visible_verifier);
+    materialise_repository(source, start.path()).await?;
+    let visible_passes_at_start = run(start.path(), &task.visible_verifier).await;
     materialise_hidden(task, start.path())?;
-    let hidden_fails_at_start = !run(start.path(), &task.hidden_verifier);
+    let hidden_fails_at_start = !run(start.path(), &task.hidden_verifier).await;
 
     // The same repository at the upstream fix. Its tree is whatever that
     // commit produced, so no tree hash is declared for it and none is checked.
@@ -306,9 +356,9 @@ pub fn check_external_task(task: &Task) -> Result<ExternalTaskCheck, EvalError> 
         tree_hash: String::new(),
         ..source.clone()
     };
-    materialise_repository_unchecked(&at_fix, fixed.path())?;
+    materialise_repository_unchecked(&at_fix, fixed.path()).await?;
     materialise_hidden(task, fixed.path())?;
-    let hidden_passes_at_fix = run(fixed.path(), &task.hidden_verifier);
+    let hidden_passes_at_fix = run(fixed.path(), &task.hidden_verifier).await;
 
     Ok(ExternalTaskCheck {
         task_id: task.id.clone(),
@@ -330,9 +380,9 @@ pub fn materialise_hidden(task: &Task, root: &Path) -> Result<(), EvalError> {
 /// Writes a task's initial workspace into `root`.
 ///
 /// Either the inline files, or a checkout of the repository the task pins.
-pub fn materialise(task: &Task, root: &Path) -> Result<(), EvalError> {
+pub async fn materialise(task: &Task, root: &Path) -> Result<(), EvalError> {
     match &task.repository {
-        Some(source) => materialise_repository(source, root),
+        Some(source) => materialise_repository(source, root).await,
         None => write_all(&task.files, root),
     }
 }
@@ -341,48 +391,55 @@ pub fn materialise(task: &Task, root: &Path) -> Result<(), EvalError> {
 ///
 /// The clone is shallow at one commit: a project's whole history is not the
 /// workspace, and fetching it would make every run pay for it.
-pub fn materialise_repository(source: &RepositorySource, root: &Path) -> Result<(), EvalError> {
+pub async fn materialise_repository(
+    source: &RepositorySource,
+    root: &Path,
+) -> Result<(), EvalError> {
     if source.tree_hash.is_empty() {
         return Err(EvalError::Invalid(format!(
             "{} at {} declares no tree hash, so the checkout could not be verified",
             source.url, source.commit
         )));
     }
-    materialise_repository_unchecked(source, root)
+    materialise_repository_unchecked(source, root).await
 }
 
 /// The same, without requiring a declared tree hash. Used only to visit the
 /// upstream fix while checking a task, where the tree is whatever that commit
 /// produced and there is nothing to declare it against.
-fn materialise_repository_unchecked(
+async fn materialise_repository_unchecked(
     source: &RepositorySource,
     root: &Path,
 ) -> Result<(), EvalError> {
-    let git = |args: &[&str]| -> Result<String, EvalError> {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .current_dir(root)
-            .output()?;
-        if !output.status.success() {
+    std::fs::create_dir_all(root)?;
+    let setup_executables: Vec<String> = source
+        .setup
+        .iter()
+        .map(|step| step.executable.clone())
+        .collect();
+    let policy = corpus_policy(root, &setup_executables);
+    let git = async |args: &[&str]| -> Result<String, EvalError> {
+        let args: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+        let result = corpus_command(&policy, "git", &args).await?;
+        if result.exit_code != Some(0) {
             return Err(EvalError::Invalid(format!(
                 "git {} failed: {}",
                 args.join(" "),
-                String::from_utf8_lossy(&output.stderr).trim()
+                result.stderr.trim()
             )));
         }
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        Ok(result.stdout.trim().to_string())
     };
-    std::fs::create_dir_all(root)?;
-    git(&["init", "-q"])?;
-    git(&["remote", "add", "origin", &source.url])?;
-    git(&["fetch", "-q", "--depth", "1", "origin", &source.commit])?;
-    git(&["checkout", "-q", "FETCH_HEAD"])?;
+    git(&["init", "-q"]).await?;
+    git(&["remote", "add", "origin", &source.url]).await?;
+    git(&["fetch", "-q", "--depth", "1", "origin", &source.commit]).await?;
+    git(&["checkout", "-q", "FETCH_HEAD"]).await?;
 
     // A commit id is a content address, so this should never differ. It is
     // checked because if it ever did, the run would have been measured against
     // a workspace nobody declared, and silence about that is the one outcome
     // worth ruling out.
-    let tree = git(&["rev-parse", "HEAD^{tree}"])?;
+    let tree = git(&["rev-parse", "HEAD^{tree}"]).await?;
     if !source.tree_hash.is_empty() && tree != source.tree_hash {
         return Err(EvalError::Invalid(format!(
             "checkout of {} at {} produced tree {tree}, but the corpus declares {}",
@@ -393,16 +450,13 @@ fn materialise_repository_unchecked(
     // would let an agent read the fix out of the log.
     std::fs::remove_dir_all(root.join(".git"))?;
     for step in &source.setup {
-        let output = std::process::Command::new(&step.executable)
-            .args(&step.args)
-            .current_dir(root)
-            .output()?;
-        if !output.status.success() {
+        let result = corpus_command(&policy, &step.executable, &step.args).await?;
+        if result.exit_code != Some(0) {
             return Err(EvalError::Invalid(format!(
                 "setup step `{} {}` failed: {}",
                 step.executable,
                 step.args.join(" "),
-                String::from_utf8_lossy(&output.stderr).trim()
+                result.stderr.trim()
             )));
         }
     }
@@ -916,5 +970,62 @@ impl SuiteReport {
             ));
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The corpus is the one place this project executes text nobody here
+    /// wrote. Every bound on that is asserted, because losing one is silent:
+    /// the commands still run, and only an unbounded one behaves differently.
+    #[test]
+    fn corpus_commands_are_bounded_and_confined() {
+        let root = tempfile::tempdir().unwrap();
+        let policy = corpus_policy(root.path(), &["poetry".into()]);
+        assert_eq!(policy.root, root.path());
+        assert!(policy.timeout > Duration::ZERO);
+        assert!(policy.output_limit > 0);
+        assert!(matches!(
+            policy.sandbox,
+            poorai_tools::SandboxPolicy::Preferred | poorai_tools::SandboxPolicy::Required
+        ));
+    }
+
+    /// Preparation needs the network to fetch a pinned commit. The task the
+    /// agent is then measured on must not have it, which is why this is a
+    /// separate policy rather than the run's.
+    #[test]
+    fn preparation_is_granted_the_network_and_nothing_else() {
+        let root = tempfile::tempdir().unwrap();
+        let policy = corpus_policy(root.path(), &[]);
+        assert_eq!(
+            policy.approvals,
+            vec![poorai_tools::Approval::NetworkAccess]
+        );
+    }
+
+    #[test]
+    fn only_git_and_the_declared_executables_may_run() {
+        let root = tempfile::tempdir().unwrap();
+        let policy = corpus_policy(root.path(), &["poetry".into(), "poetry".into()]);
+        assert_eq!(policy.allow_commands, vec!["git", "poetry"]);
+        // A corpus file that did not declare it does not get to run it.
+        assert!(!policy.allow_commands.iter().any(|c| c == "curl"));
+    }
+
+    /// A verifier is a command a corpus file names, so it runs under a policy
+    /// naming only itself. A verifier that shells out to something undeclared
+    /// is refused rather than trusted because it was called a verifier.
+    #[tokio::test]
+    async fn a_verifier_may_not_run_an_undeclared_executable() {
+        let root = tempfile::tempdir().unwrap();
+        let policy = corpus_policy(root.path(), &["pytest".into()]);
+        assert!(
+            corpus_command(&policy, "curl", &["https://example.com".into()])
+                .await
+                .is_err()
+        );
     }
 }

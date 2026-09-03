@@ -28,6 +28,8 @@ Commands default to the current repository but require an explicit resolved root
 
 A non-dry `run` and an `eval run` also require an active capability artifact for the deployment — one written by `models inspect --probe` whose model digest and deployment fingerprint match what is being addressed, and which observed `chat`, `streaming`, `structured_tools`, `edit`, `cancellation` and `context_boundary`. A tag that Ollama happens to serve is not evidence that the deployment can be driven.
 
+`--allow-remote-endpoint` is required before `--ollama-endpoint` may name anything but this machine. A prompt carries repository excerpts with it, so choosing a non-local backend is a disclosure decision and is named rather than inferred from the address; redirects are refused, since one can change host after the address was judged.
+
 Any command that loads a model takes a host-wide runtime lease, so a second `run`, `calibrate`, `eval` or live probe is refused while the first holds it, naming the operation to wait for. The lease lives outside any repository: two workspaces on one machine contend for the same hardware.
 
 ## Where this specification is ahead of the implementation

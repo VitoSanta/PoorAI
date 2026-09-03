@@ -251,11 +251,11 @@ fn a_file_the_agent_wrote_outside_its_scope_is_still_caught() {
     );
 }
 
-#[test]
-fn materialising_writes_the_initial_workspace() {
+#[tokio::test]
+async fn materialising_writes_the_initial_workspace() {
     let t = task("a", TaskKind::Bugfix);
     let root = tempfile::tempdir().unwrap();
-    materialise(&t, root.path()).unwrap();
+    materialise(&t, root.path()).await.unwrap();
     assert_eq!(
         std::fs::read_to_string(root.path().join("src/lib.rs")).unwrap(),
         "broken"
@@ -452,11 +452,11 @@ fn generation_scope_is_the_protected_files_only() {
 
 /// A generation task produces nothing but created files. A walk that only
 /// compared known paths would score every one of them as no change at all.
-#[test]
-fn created_files_are_detected_as_changes() {
+#[tokio::test]
+async fn created_files_are_detected_as_changes() {
     let t = generation_task();
     let root = tempfile::tempdir().unwrap();
-    materialise(&t, root.path()).unwrap();
+    materialise(&t, root.path()).await.unwrap();
     assert!(changed_files(&t, root.path()).unwrap().is_empty());
     std::fs::create_dir_all(root.path().join("src")).unwrap();
     std::fs::write(root.path().join("server.js"), "x").unwrap();
@@ -466,11 +466,11 @@ fn created_files_are_detected_as_changes() {
 }
 
 /// Dependency and harness directories are not the agent's work.
-#[test]
-fn package_and_harness_directories_are_not_scored_as_changes() {
+#[tokio::test]
+async fn package_and_harness_directories_are_not_scored_as_changes() {
     let t = generation_task();
     let root = tempfile::tempdir().unwrap();
-    materialise(&t, root.path()).unwrap();
+    materialise(&t, root.path()).await.unwrap();
     for dir in [
         "node_modules/lodash",
         ".poorai",

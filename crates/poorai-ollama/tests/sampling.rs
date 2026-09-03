@@ -4,7 +4,7 @@
 //! record says.
 
 use poorai_domain::{ChatMessage, DeploymentDescriptor, ModelRequest};
-use poorai_ollama::OllamaProvider;
+use poorai_ollama::{BackendEndpoint, OllamaProvider};
 use poorai_provider::ModelProvider;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -70,7 +70,11 @@ fn request(
 #[tokio::test]
 async fn a_seed_and_temperature_reach_the_backend() {
     let (endpoint, rx) = capturing_server();
-    let provider = OllamaProvider::new(&endpoint, Duration::from_secs(5)).unwrap();
+    let provider = OllamaProvider::new(
+        &BackendEndpoint::local(&endpoint).unwrap(),
+        Duration::from_secs(5),
+    )
+    .unwrap();
     let _ = provider
         .chat(request(
             &endpoint,
@@ -87,7 +91,11 @@ async fn a_seed_and_temperature_reach_the_backend() {
 #[tokio::test]
 async fn an_unset_control_is_left_to_the_backend_default() {
     let (endpoint, rx) = capturing_server();
-    let provider = OllamaProvider::new(&endpoint, Duration::from_secs(5)).unwrap();
+    let provider = OllamaProvider::new(
+        &BackendEndpoint::local(&endpoint).unwrap(),
+        Duration::from_secs(5),
+    )
+    .unwrap();
     let _ = provider
         .chat(request(&endpoint, None, Default::default()))
         .await;
@@ -103,7 +111,11 @@ async fn an_unset_control_is_left_to_the_backend_default() {
 #[tokio::test]
 async fn thinking_is_promoted_to_the_ollama_request_field() {
     let (endpoint, rx) = capturing_server();
-    let provider = OllamaProvider::new(&endpoint, Duration::from_secs(5)).unwrap();
+    let provider = OllamaProvider::new(
+        &BackendEndpoint::local(&endpoint).unwrap(),
+        Duration::from_secs(5),
+    )
+    .unwrap();
     let _ = provider
         .chat(request(
             &endpoint,
@@ -119,7 +131,11 @@ async fn thinking_is_promoted_to_the_ollama_request_field() {
 #[tokio::test]
 async fn a_fractional_temperature_is_sent_as_a_fraction() {
     let (endpoint, rx) = capturing_server();
-    let provider = OllamaProvider::new(&endpoint, Duration::from_secs(5)).unwrap();
+    let provider = OllamaProvider::new(
+        &BackendEndpoint::local(&endpoint).unwrap(),
+        Duration::from_secs(5),
+    )
+    .unwrap();
     let _ = provider
         .chat(request(
             &endpoint,
@@ -160,7 +176,11 @@ async fn a_streaming_timeout_is_reported_as_a_timeout() {
         std::thread::sleep(std::time::Duration::from_secs(5));
     });
     let endpoint = format!("http://{address}/");
-    let provider = OllamaProvider::new(&endpoint, Duration::from_millis(600)).unwrap();
+    let provider = OllamaProvider::new(
+        &BackendEndpoint::local(&endpoint).unwrap(),
+        Duration::from_millis(600),
+    )
+    .unwrap();
     let stream = provider
         .chat(request(&endpoint, None, Default::default()))
         .await
