@@ -1,15 +1,113 @@
 //! Durable task-state transitions and evidence-bounded profile selection.
 use futures_util::StreamExt;
 use poorai_domain::{
-    CalibrationProfile, DeploymentDescriptor, EvidenceLabel, ExecutionProfile, HardwareProfile,
-    Observation, RuntimeSnapshot, Validate, new_id, now,
+    BackendState, CalibrationProfile, DeploymentDescriptor, EvidenceLabel, ExecutionProfile,
+    HardwareProfile, Observation, RuntimeSnapshot, Validate, new_id, now,
 };
 use poorai_provider::ModelProvider;
 use poorai_store::Store;
-use poorai_tools::{ActionProposal, ToolPolicy};
+use poorai_tools::{ActionProposal, ToolError, ToolPolicy};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+/// Cross-process ownership of the single local model runtime.
+///
+/// Ollama may accept two clients while the hardware cannot keep two large
+/// deployments resident. The lease uses atomic file creation, records only
+/// process-safe operational data, and recovers a lock whose owning process no
+/// longer exists. It deliberately lives outside a repository so two poorAI
+/// workspaces still contend for the same host resource.
+pub struct ModelRuntimeLease {
+    path: PathBuf,
+    record: String,
+}
+
+impl ModelRuntimeLease {
+    pub fn acquire(operation: &str, model: &str) -> Result<Self, String> {
+        Self::acquire_at(
+            std::env::temp_dir().join("poorai-model-runtime.lock"),
+            operation,
+            model,
+        )
+    }
+
+    fn acquire_at(path: PathBuf, operation: &str, model: &str) -> Result<Self, String> {
+        let record = serde_json::json!({
+            "token": new_id(),
+            "pid": std::process::id(),
+            "operation": operation,
+            "model": model,
+            "acquired_at": now(),
+        })
+        .to_string();
+        for attempt in 0..2 {
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(mut file) => {
+                    file.write_all(record.as_bytes()).map_err(|error| {
+                        let _ = fs::remove_file(&path);
+                        format!("could not record model runtime lease: {error}")
+                    })?;
+                    if let Err(error) = file.sync_all() {
+                        let _ = fs::remove_file(&path);
+                        return Err(format!("could not persist model runtime lease: {error}"));
+                    }
+                    return Ok(Self { path, record });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let holder = fs::read_to_string(&path).map_err(|e| {
+                        format!("model runtime is busy and its lease is unreadable: {e}")
+                    })?;
+                    let pid = serde_json::from_str::<serde_json::Value>(&holder)
+                        .ok()
+                        .and_then(|value| value.get("pid").and_then(|pid| pid.as_u64()));
+                    let alive = pid.is_none_or(process_is_alive);
+                    if alive || attempt > 0 {
+                        let operation = serde_json::from_str::<serde_json::Value>(&holder)
+                            .ok()
+                            .and_then(|value| {
+                                value
+                                    .get("operation")
+                                    .and_then(|field| field.as_str())
+                                    .map(str::to_owned)
+                            })
+                            .unwrap_or_else(|| "unknown operation".into());
+                        return Err(format!(
+                            "model runtime is busy with {operation}; wait for that run to finish"
+                        ));
+                    }
+                    // The exact owner is no longer alive. Atomic creation on
+                    // the retry arbitrates if another process races us here.
+                    fs::remove_file(&path)
+                        .map_err(|e| format!("could not clear stale model runtime lease: {e}"))?;
+                }
+                Err(error) => {
+                    return Err(format!("could not acquire model runtime lease: {error}"));
+                }
+            }
+        }
+        Err("could not acquire model runtime lease".into())
+    }
+}
+
+fn process_is_alive(pid: u64) -> bool {
+    std::process::Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+impl Drop for ModelRuntimeLease {
+    fn drop(&mut self) {
+        // Never remove a lease that was replaced between acquisition and drop.
+        if fs::read_to_string(&self.path).is_ok_and(|record| record == self.record) {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TaskState {
     Discover,
@@ -110,6 +208,7 @@ pub fn transition(
             | (TaskState::Index, TaskState::Plan)
             | (TaskState::Plan, TaskState::Act)
             | (TaskState::Act, TaskState::Verify)
+            | (TaskState::Act, TaskState::Recover)
             | (TaskState::Verify, TaskState::Complete)
             | (TaskState::Verify, TaskState::Recover)
             | (TaskState::Recover, TaskState::Act)
@@ -125,6 +224,78 @@ pub fn transition(
         detail: detail.into(),
     })
 }
+
+fn persist_transition(
+    store: &Store,
+    run_id: poorai_domain::Id,
+    from: TaskState,
+    to: TaskState,
+    detail: impl Into<String>,
+) -> Result<TaskState, String> {
+    let checkpoint = transition(from, to.clone(), detail)?;
+    store
+        .append(
+            Some(run_id),
+            "task.transition",
+            serde_json::to_value(checkpoint).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(to)
+}
+
+fn persist_failure(
+    store: &Store,
+    run_id: poorai_domain::Id,
+    state: &mut TaskState,
+    reason: &str,
+    detail: serde_json::Value,
+) -> Result<(), String> {
+    *state = persist_transition(store, run_id, state.clone(), TaskState::Failed, reason)?;
+    store
+        .append(
+            Some(run_id),
+            "task.failed",
+            serde_json::json!({"reason": reason, "detail": detail}),
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+/// Ensures cancellation or an unexpected early return still leaves a terminal
+/// state in the append-only run log.
+struct TerminalEventGuard<'a> {
+    store: &'a Store,
+    run_id: poorai_domain::Id,
+}
+
+impl Drop for TerminalEventGuard<'_> {
+    fn drop(&mut self) {
+        let already_terminal = self.store.events_for_run(self.run_id).is_ok_and(|events| {
+            events
+                .iter()
+                .any(|event| matches!(event.event_type.as_str(), "task.complete" | "task.failed"))
+        });
+        if already_terminal {
+            return;
+        }
+        let checkpoint = TaskCheckpoint {
+            id: new_id(),
+            state: TaskState::Failed,
+            at: now(),
+            detail: "run interrupted before a terminal result".into(),
+        };
+        let _ = self.store.append(
+            Some(self.run_id),
+            "task.transition",
+            serde_json::to_value(checkpoint).unwrap_or_else(|_| serde_json::json!({})),
+        );
+        let _ = self.store.append(
+            Some(self.run_id),
+            "task.failed",
+            serde_json::json!({"reason":"run interrupted or cancelled"}),
+        );
+    }
+}
 pub trait HardwareProbe: Send + Sync {
     fn probe(&self, workspace_root: &Path) -> Result<HardwareProfile, String>;
 }
@@ -133,7 +304,7 @@ pub fn snapshot(
     deployment: &DeploymentDescriptor,
     available_memory_bytes: Option<u64>,
     pressure: Observation,
-    backend_state: serde_json::Value,
+    backend: &BackendState,
 ) -> RuntimeSnapshot {
     RuntimeSnapshot {
         schema_version: 1,
@@ -143,8 +314,8 @@ pub fn snapshot(
         timestamp: now(),
         available_memory_bytes,
         pressure,
-        loaded_models: vec![],
-        backend_state,
+        loaded_models: backend.loaded_models.clone(),
+        backend_state: backend.state.clone(),
     }
 }
 pub fn select_profile(
@@ -205,6 +376,36 @@ pub fn select_compatible_profile(
     select_profile(strategy_id, Some(calibration), &hardware.compatibility_key)
 }
 
+/// Selects measured capacity only after admitting the fresh runtime snapshot.
+pub fn select_compatible_profile_with_runtime(
+    strategy_id: poorai_domain::Id,
+    calibration: &CalibrationProfile,
+    model_digest: &str,
+    deployment: &DeploymentDescriptor,
+    hardware: &HardwareProfile,
+    harness_rev: &str,
+    runtime: &RuntimeSnapshot,
+) -> Result<ExecutionProfile, String> {
+    if runtime.hardware_id != hardware.id || runtime.deployment_id != deployment.id {
+        return Err("runtime snapshot does not describe this hardware and deployment".into());
+    }
+    if matches!(
+        &runtime.pressure,
+        Observation::Observed(value)
+            if value.get("under_pressure").and_then(serde_json::Value::as_bool) == Some(true)
+    ) {
+        return Err("runtime admission refused: host memory is under pressure".into());
+    }
+    select_compatible_profile(
+        strategy_id,
+        calibration,
+        model_digest,
+        deployment,
+        hardware,
+        harness_rev,
+    )
+}
+
 /// Executes one typed action under policy and audits the attempt.
 ///
 /// Every attempt is recorded, allowed or denied. A policy denial is the security
@@ -215,7 +416,7 @@ pub async fn execute_action(
     run_id: poorai_domain::Id,
     policy: &ToolPolicy,
     action: ActionProposal,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, ActionExecutionError> {
     let result = attempt_action(policy, &action).await;
     let payload = match &result {
         Ok(outcome) => serde_json::json!({
@@ -223,18 +424,81 @@ pub async fn execute_action(
             "status": "allowed",
             "outcome": outcome,
         }),
-        Err(denial) => serde_json::json!({
+        Err(ActionExecutionError::Denied(denial)) => serde_json::json!({
             "action": action,
             "status": "denied",
             "denial": denial,
+        }),
+        Err(error) => serde_json::json!({
+            "action": action,
+            "status": "failed",
+            "failure": error.to_string(),
+            "failure_category": error.category(),
         }),
     };
     // The audit is written before the denial propagates, so a refused action
     // cannot leave the run without a record of what was asked.
     store
         .append(Some(run_id), "tool.action", payload)
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| ActionExecutionError::Audit(error.to_string()))?;
     result
+}
+
+#[derive(Debug)]
+pub enum ActionExecutionError {
+    Denied(String),
+    Io(String),
+    Timeout,
+    Invalid(String),
+    Serialization(String),
+    Audit(String),
+}
+
+impl std::fmt::Display for ActionExecutionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Denied(reason) => write!(formatter, "policy denied: {reason}"),
+            Self::Io(reason) => write!(formatter, "tool I/O failure: {reason}"),
+            Self::Timeout => formatter.write_str("tool timed out"),
+            Self::Invalid(reason) => write!(formatter, "invalid action: {reason}"),
+            Self::Serialization(reason) => {
+                write!(formatter, "could not serialize tool outcome: {reason}")
+            }
+            Self::Audit(reason) => write!(formatter, "could not append tool audit event: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ActionExecutionError {}
+
+impl ActionExecutionError {
+    fn category(&self) -> &'static str {
+        match self {
+            Self::Denied(_) => "policy",
+            Self::Io(_) => "io",
+            Self::Timeout => "timeout",
+            Self::Invalid(_) => "invalid_action",
+            Self::Serialization(_) => "serialization",
+            Self::Audit(_) => "audit",
+        }
+    }
+}
+
+impl From<ToolError> for ActionExecutionError {
+    fn from(error: ToolError) -> Self {
+        match error {
+            ToolError::Denied(reason) => Self::Denied(reason),
+            ToolError::Io(error) => Self::Io(error.to_string()),
+            ToolError::Timeout => Self::Timeout,
+        }
+    }
+}
+
+fn serialize_tool_result<T: Serialize>(
+    result: Result<T, ToolError>,
+) -> Result<serde_json::Value, ActionExecutionError> {
+    serde_json::to_value(result.map_err(ActionExecutionError::from)?)
+        .map_err(|error| ActionExecutionError::Serialization(error.to_string()))
 }
 
 /// Runs one action under policy, without auditing. Callers go through
@@ -242,8 +506,10 @@ pub async fn execute_action(
 async fn attempt_action(
     policy: &ToolPolicy,
     action: &ActionProposal,
-) -> Result<serde_json::Value, String> {
-    action.validate().map_err(|e| e.to_string())?;
+) -> Result<serde_json::Value, ActionExecutionError> {
+    action
+        .validate()
+        .map_err(|error| ActionExecutionError::Invalid(error.to_string()))?;
     match action {
         ActionProposal::Complete { rationale } => {
             Ok(serde_json::json!({"complete":true,"rationale":rationale}))
@@ -257,75 +523,53 @@ async fn attempt_action(
             path,
             first_line,
             max_lines,
-        } => serde_json::to_value(
-            poorai_tools::read_file_window(
-                policy,
-                std::path::Path::new(path),
-                *first_line,
-                *max_lines,
-            )
-            .map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string()),
-        ActionProposal::Search { query, max_matches } => serde_json::to_value(
-            poorai_tools::search(policy, query, *max_matches).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string()),
-        ActionProposal::ListTree { max_entries } => serde_json::to_value(
-            poorai_tools::list_tree(policy, *max_entries).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string()),
+        } => serialize_tool_result(poorai_tools::read_file_window(
+            policy,
+            std::path::Path::new(path),
+            *first_line,
+            *max_lines,
+        )),
+        ActionProposal::Search { query, max_matches } => {
+            serialize_tool_result(poorai_tools::search(policy, query, *max_matches))
+        }
+        ActionProposal::ListTree { max_entries } => {
+            serialize_tool_result(poorai_tools::list_tree(policy, *max_entries))
+        }
         ActionProposal::ApplyReplace {
             path,
             expected_hash,
             replacement,
-        } => serde_json::to_value(
-            poorai_tools::apply_replace(
-                policy,
-                std::path::Path::new(path),
-                expected_hash,
-                replacement,
-            )
-            .map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string()),
+        } => serialize_tool_result(poorai_tools::apply_replace(
+            policy,
+            std::path::Path::new(path),
+            expected_hash,
+            replacement,
+        )),
         ActionProposal::ReplaceText {
             path,
             expected_hash,
             find,
             replace,
-        } => serde_json::to_value(
-            poorai_tools::replace_text(
-                policy,
-                std::path::Path::new(path),
-                expected_hash,
-                find,
-                replace,
-            )
-            .map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string()),
-        ActionProposal::WriteFile { path, content } => serde_json::to_value(
-            poorai_tools::write_file(policy, std::path::Path::new(path), content)
-                .map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string()),
+        } => serialize_tool_result(poorai_tools::replace_text(
+            policy,
+            std::path::Path::new(path),
+            expected_hash,
+            find,
+            replace,
+        )),
+        ActionProposal::WriteFile { path, content } => serialize_tool_result(
+            poorai_tools::write_file(policy, std::path::Path::new(path), content),
+        ),
         ActionProposal::RunCommand {
             executable,
             args,
             stdin,
-        } => serde_json::to_value(
-            poorai_tools::run_command_with_stdin(policy, executable, args, stdin.as_deref())
-                .await
-                .map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string()),
-        ActionProposal::FetchUrl { url } => serde_json::to_value(
-            poorai_tools::fetch_url(policy, url)
-                .await
-                .map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string()),
+        } => serialize_tool_result(
+            poorai_tools::run_command_with_stdin(policy, executable, args, stdin.as_deref()).await,
+        ),
+        ActionProposal::FetchUrl { url } => {
+            serialize_tool_result(poorai_tools::fetch_url(policy, url).await)
+        }
     }
 }
 
@@ -336,14 +580,89 @@ pub fn checkpoint_recovery(
     edit_attempts: u8,
     context_attempts: u8,
 ) -> Result<poorai_verify::RecoveryDecision, String> {
-    let decision = poorai_verify::recovery_decision(
+    checkpoint_recovery_with_budget(
+        store,
+        run_id,
         class,
         edit_attempts,
         context_attempts,
         &poorai_verify::RecoveryBudget::default(),
-    );
-    store.append(Some(run_id),"task.recovery",serde_json::json!({"decision":decision,"edit_attempts":edit_attempts,"context_attempts":context_attempts})).map_err(|e|e.to_string())?;
+    )
+}
+
+pub fn checkpoint_recovery_with_budget(
+    store: &Store,
+    run_id: poorai_domain::Id,
+    class: poorai_verify::FailureClass,
+    edit_attempts: u8,
+    context_attempts: u8,
+    budget: &poorai_verify::RecoveryBudget,
+) -> Result<poorai_verify::RecoveryDecision, String> {
+    let decision =
+        poorai_verify::recovery_decision(class.clone(), edit_attempts, context_attempts, budget);
+    store
+        .append(
+            Some(run_id),
+            "task.recovery",
+            serde_json::json!({
+                "failure_class": class,
+                "decision": decision,
+                "edit_attempts": edit_attempts,
+                "context_attempts": context_attempts,
+                "budget": budget,
+            }),
+        )
+        .map_err(|e| e.to_string())?;
     Ok(decision)
+}
+
+fn recover_at_lower_measured_context(
+    store: &Store,
+    run_id: poorai_domain::Id,
+    request: &mut poorai_domain::ModelRequest,
+    measured_context_tiers: &[u32],
+    context_attempts: u8,
+    budget: &poorai_verify::RecoveryBudget,
+    provider_error: &str,
+) -> Result<bool, String> {
+    let decision = checkpoint_recovery_with_budget(
+        store,
+        run_id,
+        poorai_verify::FailureClass::Provider,
+        0,
+        context_attempts,
+        budget,
+    )?;
+    let Some(next) = measured_context_tiers
+        .iter()
+        .copied()
+        .filter(|tier| *tier > 0 && *tier < request.context_tokens)
+        .max()
+    else {
+        return Ok(false);
+    };
+    if !matches!(
+        decision,
+        poorai_verify::RecoveryDecision::RetryContextTier { .. }
+    ) {
+        return Ok(false);
+    }
+    let previous = request.context_tokens;
+    request.context_tokens = next;
+    store
+        .append(
+            Some(run_id),
+            "context.tier_changed",
+            serde_json::json!({
+                "previous_context_tokens": previous,
+                "context_tokens": next,
+                "evidence": "compatible calibration stable point",
+                "provider_error": provider_error,
+                "attempt": context_attempts.saturating_add(1),
+            }),
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(true)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -385,15 +704,19 @@ pub async fn run_single_action<P: ModelProvider>(
             .await
             .map_err(|e| e.to_string())?;
     let action = action_from_reply(&reply)?;
-    let outcome = execute_action(store, run_id, policy, action).await?;
+    let outcome = execute_action(store, run_id, policy, action)
+        .await
+        .map_err(|error| error.to_string())?;
     let after = poorai_verify::baseline(policy, checks)
         .await
         .map_err(|e| e.to_string())?;
     let comparison = poorai_verify::compare(&before, &after);
-    let verified = after
-        .checks
-        .iter()
-        .all(|check| check.result.exit_code == Some(0))
+    let verifiable = !after.checks.is_empty();
+    let verified = verifiable
+        && after
+            .checks
+            .iter()
+            .all(|check| check.result.exit_code == Some(0))
         && comparison.regression_free;
     store
         .append(
@@ -405,7 +728,7 @@ pub async fn run_single_action<P: ModelProvider>(
     Ok(TaskRunResult {
         run_id,
         verified,
-        verifiable: !after.checks.is_empty(),
+        verifiable,
         action_outcome: outcome,
     })
 }
@@ -778,11 +1101,15 @@ fn compact_history(
     }
     let before = estimated_tokens(&request.messages);
     let ledger = task_ledger(store, run_id)?;
-    let system = request.messages.first().cloned();
-    let task = request.messages.get(1).cloned();
-    let mut kept = Vec::new();
-    kept.extend(system);
-    kept.extend(task);
+    let task_index = request
+        .messages
+        .iter()
+        .position(|message| message.role == "user")
+        .ok_or("cannot compact history without an original user task")?;
+    // Session runs may insert an immutable tool ledger between system and
+    // user. Preserve the entire prefix through the first user message; using
+    // a fixed index silently replaced the real task with that ledger.
+    let mut kept = request.messages[..=task_index].to_vec();
     kept.push(poorai_domain::ChatMessage {
         role: "tool".into(),
         content: ledger,
@@ -902,13 +1229,74 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
     store: &Store,
     provider: &P,
     run_id: poorai_domain::Id,
-    mut request: poorai_domain::ModelRequest,
+    request: poorai_domain::ModelRequest,
     policy: &ToolPolicy,
     checks: &[(String, Vec<String>)],
     max_actions: u8,
     prompt: &dyn ApprovalPrompt,
     plan_first: bool,
 ) -> Result<TaskRunResult, String> {
+    let recovery_budget = poorai_verify::RecoveryBudget::default();
+    run_action_loop_with_prompt_and_budget(
+        store,
+        provider,
+        run_id,
+        request,
+        policy,
+        checks,
+        max_actions,
+        &recovery_budget,
+        prompt,
+        plan_first,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn run_action_loop_with_prompt_and_budget<P: ModelProvider>(
+    store: &Store,
+    provider: &P,
+    run_id: poorai_domain::Id,
+    request: poorai_domain::ModelRequest,
+    policy: &ToolPolicy,
+    checks: &[(String, Vec<String>)],
+    max_actions: u8,
+    recovery_budget: &poorai_verify::RecoveryBudget,
+    prompt: &dyn ApprovalPrompt,
+    plan_first: bool,
+) -> Result<TaskRunResult, String> {
+    let measured_context_tiers = [request.context_tokens];
+    run_action_loop_with_prompt_budget_and_context_tiers(
+        store,
+        provider,
+        run_id,
+        request,
+        policy,
+        checks,
+        max_actions,
+        recovery_budget,
+        &measured_context_tiers,
+        prompt,
+        plan_first,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvider>(
+    store: &Store,
+    provider: &P,
+    run_id: poorai_domain::Id,
+    mut request: poorai_domain::ModelRequest,
+    policy: &ToolPolicy,
+    checks: &[(String, Vec<String>)],
+    max_actions: u8,
+    recovery_budget: &poorai_verify::RecoveryBudget,
+    measured_context_tiers: &[u32],
+    prompt: &dyn ApprovalPrompt,
+    plan_first: bool,
+) -> Result<TaskRunResult, String> {
+    let _terminal_guard = TerminalEventGuard { store, run_id };
     let mut policy = policy.clone();
     let mut once_granted: Option<poorai_tools::Approval> = None;
     // A plan pushed once as a message is context, not authority: nothing
@@ -916,11 +1304,35 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
     // the decomposition is gone exactly when it would start to matter. Held as
     // loop state it survives compaction, appears in the status of every turn,
     // and is reconciled when completion is declared.
+    let mut task_state = TaskState::Plan;
     let plan: Vec<String> = if plan_first {
-        plan_task(provider, store, run_id, &request).await?
+        match plan_task(provider, store, run_id, &request).await {
+            Ok(plan) => plan,
+            Err(error) => {
+                persist_failure(
+                    store,
+                    run_id,
+                    &mut task_state,
+                    "planning failed",
+                    serde_json::json!({"error": error}),
+                )?;
+                return Err(error);
+            }
+        }
     } else {
         Vec::new()
     };
+    task_state = persist_transition(
+        store,
+        run_id,
+        task_state,
+        TaskState::Act,
+        if plan_first {
+            "plan recorded; action loop entered"
+        } else {
+            "planning skipped by strategy; action loop entered"
+        },
+    )?;
     let mut steps_done: Vec<usize> = Vec::new();
     if !plan.is_empty() {
         request.messages.push(poorai_domain::ChatMessage {
@@ -936,9 +1348,21 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
     let mut malformed = 0usize;
     let mut checks_passed_at: Option<u8> = None;
     let mut idle_since_pass = 0usize;
-    let before = poorai_verify::baseline(&policy, checks)
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut edit_recovery_attempts = 0u8;
+    let mut context_recovery_attempts = 0u8;
+    let before = match poorai_verify::baseline(&policy, checks).await {
+        Ok(before) => before,
+        Err(error) => {
+            persist_failure(
+                store,
+                run_id,
+                &mut task_state,
+                "verification baseline failed",
+                serde_json::json!({"error": error.to_string()}),
+            )?;
+            return Err(error.to_string());
+        }
+    };
     store
         .append(
             Some(run_id),
@@ -988,29 +1412,107 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
     while step < max_actions {
         turns += 1;
         if turns > u32::from(max_actions) * TURNS_PER_ACTION {
-            store
-                .append(
-                    Some(run_id),
-                    "task.failed",
-                    serde_json::json!({
-                        "reason": "turn ceiling reached",
-                        "actions_used": step,
-                        "turns": turns,
-                    }),
-                )
-                .map_err(|e| e.to_string())?;
+            persist_failure(
+                store,
+                run_id,
+                &mut task_state,
+                "turn ceiling reached",
+                serde_json::json!({"actions_used": step, "turns": turns}),
+            )?;
             return Err(format!(
                 "{turns} turns produced only {step} actions; the deployment is not emitting usable calls"
             ));
         }
-        let reply = poorai_provider::collect_reply(
-            provider
-                .chat(request.clone())
-                .await
-                .map_err(|e| e.to_string())?,
-        )
-        .await
-        .map_err(|e| e.to_string())?;
+        let stream = match provider.chat(request.clone()).await {
+            Ok(stream) => stream,
+            Err(error) => {
+                if matches!(
+                    &error,
+                    poorai_provider::ProviderError::Timeout { .. }
+                        | poorai_provider::ProviderError::ContextLimit { .. }
+                ) {
+                    task_state = persist_transition(
+                        store,
+                        run_id,
+                        task_state,
+                        TaskState::Recover,
+                        "provider failure eligible for measured context recovery",
+                    )?;
+                    if recover_at_lower_measured_context(
+                        store,
+                        run_id,
+                        &mut request,
+                        measured_context_tiers,
+                        context_recovery_attempts,
+                        recovery_budget,
+                        &error.to_string(),
+                    )? {
+                        context_recovery_attempts = context_recovery_attempts.saturating_add(1);
+                        task_state = persist_transition(
+                            store,
+                            run_id,
+                            task_state,
+                            TaskState::Act,
+                            "retrying at a lower measured stable context tier",
+                        )?;
+                        continue;
+                    }
+                }
+                persist_failure(
+                    store,
+                    run_id,
+                    &mut task_state,
+                    "provider request failed",
+                    serde_json::json!({"error": error.to_string()}),
+                )?;
+                return Err(error.to_string());
+            }
+        };
+        let reply = match poorai_provider::collect_reply(stream).await {
+            Ok(reply) => reply,
+            Err(error) => {
+                if matches!(
+                    &error,
+                    poorai_provider::ProviderError::Timeout { .. }
+                        | poorai_provider::ProviderError::ContextLimit { .. }
+                ) {
+                    task_state = persist_transition(
+                        store,
+                        run_id,
+                        task_state,
+                        TaskState::Recover,
+                        "provider stream failure eligible for measured context recovery",
+                    )?;
+                    if recover_at_lower_measured_context(
+                        store,
+                        run_id,
+                        &mut request,
+                        measured_context_tiers,
+                        context_recovery_attempts,
+                        recovery_budget,
+                        &error.to_string(),
+                    )? {
+                        context_recovery_attempts = context_recovery_attempts.saturating_add(1);
+                        task_state = persist_transition(
+                            store,
+                            run_id,
+                            task_state,
+                            TaskState::Act,
+                            "retrying at a lower measured stable context tier",
+                        )?;
+                        continue;
+                    }
+                }
+                persist_failure(
+                    store,
+                    run_id,
+                    &mut task_state,
+                    "provider stream failed",
+                    serde_json::json!({"error": error.to_string()}),
+                )?;
+                return Err(error.to_string());
+            }
+        };
         // The deployment's own turn goes into the history before the result of
         // it does. Without this the history is the task followed by a run of
         // tool messages answering nothing, and the deployment cannot see what
@@ -1064,13 +1566,13 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
                     .map_err(|e| e.to_string())?;
                 malformed += 1;
                 if malformed > MALFORMED_CALL_LIMIT {
-                    store
-                        .append(
-                            Some(run_id),
-                            "task.failed",
-                            serde_json::json!({"reason": "repeatedly malformed tool calls"}),
-                        )
-                        .map_err(|e| e.to_string())?;
+                    persist_failure(
+                        store,
+                        run_id,
+                        &mut task_state,
+                        "repeatedly malformed tool calls",
+                        serde_json::json!({"problem": problem}),
+                    )?;
                     return Err(format!(
                         "{MALFORMED_CALL_LIMIT} malformed tool calls in a row: {problem}"
                     ));
@@ -1110,6 +1612,13 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
                 .map_err(|e| e.to_string())?;
         }
         if matches!(action, ActionProposal::Complete { .. }) {
+            task_state = persist_transition(
+                store,
+                run_id,
+                task_state,
+                TaskState::Verify,
+                "deployment declared completion; deterministic verification started",
+            )?;
             // A completion is an action, and every action is audited. Handling
             // it before the audit left the declared rationale out of the log
             // entirely -- the one part of a completion that says anything.
@@ -1128,10 +1637,9 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
                 .await
                 .map_err(|e| e.to_string())?;
             let comparison = poorai_verify::compare(&before, &after);
-            // With no deterministic checks there is nothing to verify, and a
-            // completion cannot claim to have been verified by nothing. The run
-            // still ends -- looping until the budget runs out would report a
-            // missing verifier as the deployment's failure.
+            // With no deterministic checks there is nothing to verify. This is
+            // an orchestration/configuration failure, never successful task
+            // completion: model confidence cannot stand in for a verifier.
             let verifiable = !after.checks.is_empty();
             let verified = verifiable
                 && after
@@ -1152,12 +1660,32 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
                     }),
                 )
                 .map_err(|e| e.to_string())?;
-            if verified || !verifiable {
+            if !verifiable {
+                persist_failure(
+                    store,
+                    run_id,
+                    &mut task_state,
+                    "no deterministic verifier",
+                    serde_json::json!({"step": step}),
+                )?;
+                return Err(
+                    "completion refused: no deterministic verifier was configured or discovered"
+                        .into(),
+                );
+            }
+            if verified {
+                persist_transition(
+                    store,
+                    run_id,
+                    task_state,
+                    TaskState::Complete,
+                    "deterministic verification passed",
+                )?;
                 store
                     .append(
                         Some(run_id),
                         "task.complete",
-                        serde_json::json!({"step": step, "verified": verified}),
+                        serde_json::json!({"step": step, "verified": true}),
                     )
                     .map_err(|e| e.to_string())?;
                 return Ok(TaskRunResult {
@@ -1167,28 +1695,85 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
                     action_outcome: serde_json::json!({"complete":true,"step":step}),
                 });
             }
-            let decision = checkpoint_recovery(
+            task_state = persist_transition(
                 store,
                 run_id,
-                poorai_verify::FailureClass::Assertion,
-                step,
-                0,
+                task_state,
+                TaskState::Recover,
+                "deterministic verification failed",
             )?;
+            let failing_diagnostics: Vec<serde_json::Value> = after
+                .checks
+                .iter()
+                .filter(|check| check.result.exit_code != Some(0))
+                .map(|check| {
+                    serde_json::json!({
+                        "command": check.command,
+                        "exit_code": check.result.exit_code,
+                        "stdout": check.result.stdout,
+                        "stderr": check.result.stderr,
+                        "duration_ms": check.result.duration_ms,
+                        "artifact_hash": check.result.artifact_hash,
+                        "stdout_truncated": check.result.stdout_truncated,
+                        "stderr_truncated": check.result.stderr_truncated,
+                    })
+                })
+                .collect();
+            let failure_class = if let Some((index, failed)) = after
+                .checks
+                .iter()
+                .enumerate()
+                .find(|(_, check)| check.result.exit_code != Some(0))
+            {
+                let (command, args) = checks
+                    .get(index)
+                    .ok_or("verification result did not match configured checks")?;
+                poorai_verify::classify_with_reproduction(&policy, command, args, &failed.result)
+                    .await
+                    .map_err(|error| format!("could not reproduce failing verifier: {error}"))?
+            } else {
+                poorai_verify::FailureClass::Environment
+            };
+            let decision = checkpoint_recovery_with_budget(
+                store,
+                run_id,
+                failure_class,
+                edit_recovery_attempts,
+                context_recovery_attempts,
+                recovery_budget,
+            )?;
+            if matches!(
+                decision,
+                poorai_verify::RecoveryDecision::EditAndRetry { .. }
+            ) {
+                edit_recovery_attempts = edit_recovery_attempts.saturating_add(1);
+            }
             if matches!(decision, poorai_verify::RecoveryDecision::Stop { .. }) {
-                store
-                    .append(
-                        Some(run_id),
-                        "task.failed",
-                        serde_json::json!({"reason":"recovery budget exhausted"}),
-                    )
-                    .map_err(|e| e.to_string())?;
+                persist_failure(
+                    store,
+                    run_id,
+                    &mut task_state,
+                    "recovery stopped",
+                    serde_json::json!({"decision": decision}),
+                )?;
                 return Err("verification failed and recovery budget exhausted".into());
             }
             request.messages.push(poorai_domain::ChatMessage {
                 role: "tool".into(),
-                content: serde_json::json!({"verification_failed":true,"recovery":decision})
-                    .to_string(),
+                content: serde_json::json!({
+                    "verification_failed": true,
+                    "recovery": decision,
+                    "failing_checks": failing_diagnostics,
+                })
+                .to_string(),
             });
+            task_state = persist_transition(
+                store,
+                run_id,
+                task_state,
+                TaskState::Act,
+                "bounded recovery authorised another action",
+            )?;
             continue;
         }
         // A deployment repeating a refused action is not short of budget; it
@@ -1262,7 +1847,13 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
         // budget, not the first refusal, is what bounds the loop.
         let outcome = match execute_action(store, run_id, &policy, action).await {
             Ok(outcome) => outcome,
-            Err(denial) => serde_json::json!({"denied": denial}),
+            Err(ActionExecutionError::Denied(denial)) => {
+                serde_json::json!({"denied": denial})
+            }
+            Err(error) => serde_json::json!({
+                "tool_failure": error.to_string(),
+                "failure_category": error.category(),
+            }),
         };
         // A one-time grant expires with the action it was given for.
         if let Some(approval) = once_granted.take() {
@@ -1284,11 +1875,22 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
             let after = poorai_verify::baseline(&policy, checks)
                 .await
                 .map_err(|e| e.to_string())?;
-            let failing: Vec<&str> = after
+            let failing: Vec<serde_json::Value> = after
                 .checks
                 .iter()
                 .filter(|check| check.result.exit_code != Some(0))
-                .map(|check| check.command.as_str())
+                .map(|check| {
+                    serde_json::json!({
+                        "command": check.command,
+                        "exit_code": check.result.exit_code,
+                        "stdout": check.result.stdout,
+                        "stderr": check.result.stderr,
+                        "duration_ms": check.result.duration_ms,
+                        "artifact_hash": check.result.artifact_hash,
+                        "stdout_truncated": check.result.stdout_truncated,
+                        "stderr_truncated": check.result.stderr_truncated,
+                    })
+                })
                 .collect();
             store
                 .append(
@@ -1374,19 +1976,18 @@ pub async fn run_action_loop_with_prompt<P: ModelProvider>(
     // deployment's behalf -- that would be the harness solving the task -- but
     // the state it stopped in is reported truthfully.
     let checks_passing = checks_passed_at.is_some();
-    store
-        .append(
-            Some(run_id),
-            "task.failed",
-            serde_json::json!({
-                "reason": "action budget exhausted",
-                "actions_used": step,
-                "turns": turns,
-                "checks_passing_at_exit": checks_passing,
-                "checks_passing_since_step": checks_passed_at,
-            }),
-        )
-        .map_err(|e| e.to_string())?;
+    persist_failure(
+        store,
+        run_id,
+        &mut task_state,
+        "action budget exhausted",
+        serde_json::json!({
+            "actions_used": step,
+            "turns": turns,
+            "checks_passing_at_exit": checks_passing,
+            "checks_passing_since_step": checks_passed_at,
+        }),
+    )?;
     Err(if checks_passing {
         format!(
             "action budget of {max_actions} exhausted; repository checks were passing but \
@@ -1624,9 +2225,13 @@ pub fn action_from_tool_call(call: &poorai_domain::ToolCall) -> Result<ActionPro
 /// Takes the action from a reply: the native tool channel where the deployment
 /// used it, and a bare JSON object otherwise.
 fn action_from_reply(reply: &poorai_provider::ModelReply) -> Result<ActionProposal, String> {
-    match reply.tool_calls.first() {
-        Some(call) => action_from_tool_call(call),
-        None => parse_action_proposal(&reply.content),
+    match reply.tool_calls.as_slice() {
+        [call] => action_from_tool_call(call),
+        [] => parse_action_proposal(&reply.content),
+        calls => Err(format!(
+            "one turn must contain exactly one action, but the deployment emitted {} tool calls",
+            calls.len()
+        )),
     }
 }
 
@@ -2123,6 +2728,38 @@ mod tests {
             })])))
         }
     }
+    struct ContextRetryProvider {
+        turns: std::sync::Mutex<usize>,
+        contexts: std::sync::Arc<std::sync::Mutex<Vec<u32>>>,
+    }
+    #[async_trait]
+    impl ModelProvider for ContextRetryProvider {
+        async fn inspect(
+            &self,
+            _: &DeploymentDescriptor,
+        ) -> Result<ModelInspection, ProviderError> {
+            unreachable!()
+        }
+        async fn runtime_state(&self) -> Result<BackendState, ProviderError> {
+            unreachable!()
+        }
+        async fn chat(&self, request: ModelRequest) -> Result<ModelStream, ProviderError> {
+            self.contexts.lock().unwrap().push(request.context_tokens);
+            let mut turns = self.turns.lock().unwrap();
+            *turns += 1;
+            if *turns == 1 {
+                return Err(ProviderError::ContextLimit {
+                    safe_context: "fixture".into(),
+                });
+            }
+            Ok(Box::pin(stream::iter([Ok(ModelChunk {
+                content: r#"{"capability":"complete","rationale":"done"}"#.into(),
+                done: true,
+                ..Default::default()
+            })])))
+        }
+    }
+
     fn hardware() -> HardwareProfile {
         HardwareProfile {
             schema_version: 1,
@@ -2420,6 +3057,25 @@ mod tests {
             Ok(ActionProposal::ReadFile { .. })
         ));
     }
+    #[test]
+    fn a_reply_with_multiple_native_calls_is_not_partially_executed() {
+        let reply = poorai_provider::ModelReply {
+            tool_calls: vec![
+                poorai_domain::ToolCall {
+                    name: "list_tree".into(),
+                    arguments: serde_json::json!({"max_entries": 1}),
+                    id: None,
+                },
+                poorai_domain::ToolCall {
+                    name: "complete".into(),
+                    arguments: serde_json::json!({"rationale": "done"}),
+                    id: None,
+                },
+            ],
+            ..Default::default()
+        };
+        assert!(action_from_reply(&reply).is_err());
+    }
     #[tokio::test]
     async fn locked_smoke_action_is_audited() {
         let root = tempfile::tempdir().unwrap();
@@ -2448,7 +3104,7 @@ mod tests {
         std::fs::write(root.path().join("fixture.txt"), "safe").unwrap();
         let policy = ToolPolicy {
             root: root.path().to_path_buf(),
-            allow_commands: vec!["cargo".into()],
+            allow_commands: vec!["true".into()],
             output_limit: 1024,
             timeout: Duration::from_secs(10),
             sandbox: poorai_tools::SandboxPolicy::Disabled,
@@ -2461,11 +3117,16 @@ mod tests {
             tools: None,
             seed: None,
             sampling: Default::default(),
-            messages: vec![],
+            messages: vec![poorai_domain::ChatMessage {
+                role: "user".into(),
+                content: "read the fixture".into(),
+            }],
         };
-        let result = run_single_action(&store, &ActionProvider, new_id(), request, &policy, &[])
-            .await
-            .unwrap();
+        let checks = vec![("true".into(), Vec::new())];
+        let result =
+            run_single_action(&store, &ActionProvider, new_id(), request, &policy, &checks)
+                .await
+                .unwrap();
         assert!(result.verified);
         assert_eq!(store.events_for_run(result.run_id).unwrap().len(), 3);
     }
@@ -2505,7 +3166,10 @@ mod tests {
             tools: None,
             seed: None,
             sampling: Default::default(),
-            messages: vec![],
+            messages: vec![poorai_domain::ChatMessage {
+                role: "user".into(),
+                content: "make the marker pass its verifier".into(),
+            }],
         };
         let checks = vec![("sh".into(), vec!["check.sh".into()])];
         let result = run_action_loop(&store, &provider, new_id(), request, &policy, &checks, 4)
@@ -2518,6 +3182,269 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|event| event.event_type == "task.recovery")
+        );
+    }
+
+    #[test]
+    fn model_runtime_lease_is_exclusive_and_released_on_drop() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("runtime.lock");
+        let first = ModelRuntimeLease::acquire_at(path.clone(), "test one", "fixture").unwrap();
+        let second = ModelRuntimeLease::acquire_at(path.clone(), "test two", "fixture");
+        assert!(second.is_err());
+        drop(first);
+        assert!(ModelRuntimeLease::acquire_at(path, "test three", "fixture").is_ok());
+    }
+
+    #[test]
+    fn runtime_snapshot_preserves_backend_residency() {
+        let hardware = hardware();
+        let deployment = deployment();
+        let backend = BackendState {
+            observed_at: now(),
+            loaded_models: vec!["fixture:30b".into()],
+            state: serde_json::json!({"source":"fixture"}),
+        };
+        let runtime = snapshot(
+            &hardware,
+            &deployment,
+            Some(1024),
+            Observation::Observed(serde_json::json!({"under_pressure":false})),
+            &backend,
+        );
+        assert_eq!(runtime.loaded_models, vec!["fixture:30b"]);
+        assert_eq!(runtime.backend_state["source"], "fixture");
+    }
+
+    #[test]
+    fn runtime_pressure_refuses_an_otherwise_compatible_profile() {
+        let hardware = hardware();
+        let deployment = deployment();
+        let calibration = CalibrationProfile {
+            schema_version: 1,
+            id: new_id(),
+            compatibility_key: hardware.compatibility_key.clone(),
+            model_digest: "digest".into(),
+            deployment_fingerprint: deployment.fingerprint(),
+            harness_rev: "harness".into(),
+            thresholds: Default::default(),
+            stable_points: vec![poorai_domain::StablePoint {
+                context_tokens: 4096,
+                samples: 3,
+                success_rate: 1.0,
+                median_first_token_ms: 1.0,
+                generation_tokens_per_second: 1.0,
+                variance: 0.0,
+                memory_pressure_observed: false,
+            }],
+            raw_artifact_hashes: vec!["artifact".into()],
+            created_at: now(),
+        };
+        let backend = BackendState {
+            observed_at: now(),
+            loaded_models: vec![],
+            state: serde_json::json!({}),
+        };
+        let runtime = snapshot(
+            &hardware,
+            &deployment,
+            None,
+            Observation::Observed(serde_json::json!({"under_pressure":true})),
+            &backend,
+        );
+        assert!(
+            select_compatible_profile_with_runtime(
+                new_id(),
+                &calibration,
+                "digest",
+                &deployment,
+                &hardware,
+                "harness",
+                &runtime,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn compaction_preserves_a_session_ledger_and_the_real_user_task() {
+        let store = Store::open(":memory:").unwrap();
+        let run_id = new_id();
+        let mut request = ModelRequest {
+            deployment: deployment(),
+            context_tokens: 1024,
+            tools: None,
+            seed: None,
+            sampling: Default::default(),
+            messages: vec![
+                poorai_domain::ChatMessage {
+                    role: "system".into(),
+                    content: "system".into(),
+                },
+                poorai_domain::ChatMessage {
+                    role: "tool".into(),
+                    content: "prior session ledger".into(),
+                },
+                poorai_domain::ChatMessage {
+                    role: "user".into(),
+                    content: "the actual task".into(),
+                },
+                poorai_domain::ChatMessage {
+                    role: "assistant".into(),
+                    content: "discard me".into(),
+                },
+            ],
+        };
+        assert!(compact_history(&store, run_id, &mut request, 1, &[], &[]).unwrap());
+        assert_eq!(request.messages[1].content, "prior session ledger");
+        assert_eq!(request.messages[2].role, "user");
+        assert_eq!(request.messages[2].content, "the actual task");
+    }
+
+    #[tokio::test]
+    async fn a_context_failure_retries_at_the_next_measured_tier() {
+        // The tier is a calibration point, never arithmetic on the current
+        // value: an uncalibrated context is what requirement 4 prohibits, and
+        // it is no more acceptable as a fallback than as a default.
+        let root = tempfile::tempdir().unwrap();
+        let policy = ToolPolicy {
+            root: root.path().to_path_buf(),
+            allow_commands: vec![],
+            output_limit: 1024,
+            timeout: Duration::from_secs(1),
+            sandbox: poorai_tools::SandboxPolicy::Disabled,
+            approvals: Vec::new(),
+        };
+        let contexts = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let provider = ContextRetryProvider {
+            turns: std::sync::Mutex::new(0),
+            contexts: contexts.clone(),
+        };
+        let store = Store::open(":memory:").unwrap();
+        let run_id = new_id();
+        let request = ModelRequest {
+            deployment: deployment(),
+            context_tokens: 8192,
+            tools: None,
+            seed: None,
+            sampling: Default::default(),
+            messages: vec![poorai_domain::ChatMessage {
+                role: "user".into(),
+                content: "do work".into(),
+            }],
+        };
+        // 4096 is not offered: only a measured point may be retried at.
+        let _ = run_action_loop_with_prompt_budget_and_context_tiers(
+            &store,
+            &provider,
+            run_id,
+            request,
+            &policy,
+            &[],
+            4,
+            &poorai_verify::RecoveryBudget::default(),
+            &[2048, 8192],
+            &DenyWithoutAsking,
+            false,
+        )
+        .await;
+        assert_eq!(*contexts.lock().unwrap(), vec![8192, 2048]);
+        let events = store.events_for_run(run_id).unwrap();
+        let changed = events
+            .iter()
+            .find(|event| event.event_type == "context.tier_changed")
+            .expect("the downgrade is evented, not silent");
+        assert_eq!(changed.payload["previous_context_tokens"], 8192);
+        assert_eq!(changed.payload["context_tokens"], 2048);
+    }
+
+    #[tokio::test]
+    async fn a_context_failure_stops_where_no_measured_tier_is_lower() {
+        let root = tempfile::tempdir().unwrap();
+        let policy = ToolPolicy {
+            root: root.path().to_path_buf(),
+            allow_commands: vec![],
+            output_limit: 1024,
+            timeout: Duration::from_secs(1),
+            sandbox: poorai_tools::SandboxPolicy::Disabled,
+            approvals: Vec::new(),
+        };
+        let contexts = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let provider = ContextRetryProvider {
+            turns: std::sync::Mutex::new(0),
+            contexts: contexts.clone(),
+        };
+        let store = Store::open(":memory:").unwrap();
+        let run_id = new_id();
+        let request = ModelRequest {
+            deployment: deployment(),
+            context_tokens: 2048,
+            tools: None,
+            seed: None,
+            sampling: Default::default(),
+            messages: vec![poorai_domain::ChatMessage {
+                role: "user".into(),
+                content: "do work".into(),
+            }],
+        };
+        assert!(
+            run_action_loop_with_prompt_budget_and_context_tiers(
+                &store,
+                &provider,
+                run_id,
+                request,
+                &policy,
+                &[],
+                4,
+                &poorai_verify::RecoveryBudget::default(),
+                &[2048],
+                &DenyWithoutAsking,
+                false,
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(*contexts.lock().unwrap(), vec![2048]);
+    }
+
+    #[tokio::test]
+    async fn completion_without_a_verifier_persists_failed_not_complete() {
+        let root = tempfile::tempdir().unwrap();
+        let policy = ToolPolicy {
+            root: root.path().to_path_buf(),
+            allow_commands: vec![],
+            output_limit: 1024,
+            timeout: Duration::from_secs(1),
+            sandbox: poorai_tools::SandboxPolicy::Disabled,
+            approvals: Vec::new(),
+        };
+        let provider = SequenceProvider(std::sync::Mutex::new(std::collections::VecDeque::from([
+            r#"{"capability":"complete","rationale":"done"}"#.into(),
+        ])));
+        let store = Store::open(":memory:").unwrap();
+        let run_id = new_id();
+        let request = ModelRequest {
+            deployment: deployment(),
+            context_tokens: 32,
+            tools: None,
+            seed: None,
+            sampling: Default::default(),
+            messages: vec![poorai_domain::ChatMessage {
+                role: "user".into(),
+                content: "do work".into(),
+            }],
+        };
+        assert!(
+            run_action_loop(&store, &provider, run_id, request, &policy, &[], 1)
+                .await
+                .is_err()
+        );
+        let events = store.events_for_run(run_id).unwrap();
+        assert!(events.iter().any(|event| event.event_type == "task.failed"));
+        assert!(
+            !events
+                .iter()
+                .any(|event| event.event_type == "task.complete")
         );
     }
 }

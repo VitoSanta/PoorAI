@@ -12,7 +12,7 @@ use std::time::Duration;
 fn policy(root: &Path) -> ToolPolicy {
     ToolPolicy {
         root: root.to_path_buf(),
-        allow_commands: vec![],
+        allow_commands: vec!["true".into()],
         output_limit: 4096,
         timeout: Duration::from_secs(5),
         sandbox: poorai_tools::SandboxPolicy::Disabled,
@@ -88,7 +88,8 @@ async fn a_malformed_action_is_recorded_rather_than_dropped() {
     );
     let events = audited(&store, run_id);
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0]["status"], "denied");
+    assert_eq!(events[0]["status"], "failed");
+    assert_eq!(events[0]["failure_category"], "invalid_action");
 }
 
 #[tokio::test]
@@ -237,7 +238,7 @@ async fn a_declared_completion_is_audited_with_its_rationale() {
         run_id,
         request,
         &policy(root.path()),
-        &[],
+        &[("true".into(), Vec::new())],
         4,
     )
     .await

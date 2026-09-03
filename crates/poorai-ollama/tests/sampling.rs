@@ -97,6 +97,23 @@ async fn an_unset_control_is_left_to_the_backend_default() {
     assert!(body["options"].get("seed").is_none());
     assert!(body["options"].get("temperature").is_none());
     assert!(body["options"].get("top_k").is_none());
+    assert!(body.get("think").is_none());
+}
+
+#[tokio::test]
+async fn thinking_is_promoted_to_the_ollama_request_field() {
+    let (endpoint, rx) = capturing_server();
+    let provider = OllamaProvider::new(&endpoint, Duration::from_secs(5)).unwrap();
+    let _ = provider
+        .chat(request(
+            &endpoint,
+            None,
+            sampling([("think", serde_json::json!(true))]),
+        ))
+        .await;
+    let body: serde_json::Value = serde_json::from_str(&rx.recv().unwrap()).unwrap();
+    assert_eq!(body["think"], true);
+    assert!(body["options"].get("think").is_none());
 }
 
 #[tokio::test]

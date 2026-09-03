@@ -165,7 +165,7 @@ async fn a_denied_action_is_returned_to_the_model_rather_than_ending_the_run() {
     std::fs::write(root.path().join("code.rs"), "broken").unwrap();
     let policy = ToolPolicy {
         root: root.path().to_path_buf(),
-        allow_commands: vec![],
+        allow_commands: vec!["true".into()],
         output_limit: 4096,
         timeout: Duration::from_secs(5),
         sandbox: SandboxPolicy::Disabled,
@@ -193,14 +193,13 @@ async fn a_denied_action_is_returned_to_the_model_rather_than_ending_the_run() {
         seed: None,
         sampling: Default::default(),
     };
-    let result =
-        poorai_orchestrator::run_action_loop(&store, &provider, run_id, request, &policy, &[], 6)
-            .await
-            .unwrap();
-    // No checks were supplied, so nothing could be verified -- but the run
-    // still finished rather than looping until its budget ran out, and the
-    // edit that followed the refusal landed.
-    assert!(!result.verified);
+    let checks = vec![("true".into(), Vec::new())];
+    let result = poorai_orchestrator::run_action_loop(
+        &store, &provider, run_id, request, &policy, &checks, 6,
+    )
+    .await
+    .unwrap();
+    assert!(result.verified);
     assert_eq!(
         std::fs::read_to_string(root.path().join("code.rs")).unwrap(),
         "fixed"
@@ -224,7 +223,7 @@ async fn the_whole_run_is_recorded_under_one_identifier() {
     std::fs::write(root.path().join("code.rs"), "broken").unwrap();
     let policy = ToolPolicy {
         root: root.path().to_path_buf(),
-        allow_commands: vec![],
+        allow_commands: vec!["true".into()],
         output_limit: 4096,
         timeout: Duration::from_secs(5),
         sandbox: SandboxPolicy::Disabled,
@@ -252,7 +251,8 @@ async fn the_whole_run_is_recorded_under_one_identifier() {
         seed: None,
         sampling: Default::default(),
     };
-    poorai_orchestrator::run_action_loop(&store, &provider, run_id, request, &policy, &[], 4)
+    let checks = vec![("true".into(), Vec::new())];
+    poorai_orchestrator::run_action_loop(&store, &provider, run_id, request, &policy, &checks, 4)
         .await
         .unwrap();
     let events = store.events_for_run(run_id).unwrap();

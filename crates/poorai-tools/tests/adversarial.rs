@@ -168,6 +168,7 @@ fn command_output_is_bounded() {
         .block_on(run_command(&policy, "echo", &["x".repeat(4096)]));
     let result = result.unwrap();
     assert!(result.stdout.chars().count() <= 16);
+    assert!(result.stdout_truncated);
 }
 
 #[test]
@@ -180,6 +181,40 @@ fn a_command_that_outruns_the_policy_timeout_is_stopped() {
         .unwrap()
         .block_on(run_command(&policy, "sleep", &["30".into()]));
     assert!(matches!(result, Err(ToolError::Timeout)));
+}
+
+#[cfg(unix)]
+#[test]
+fn timing_out_kills_descendants_before_they_can_mutate_the_workspace() {
+    let root = tempfile::tempdir().unwrap();
+    let mut policy = policy(root.path());
+    policy.allow_commands = vec!["sh".into()];
+    policy.timeout = Duration::from_millis(50);
+    let result = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(run_command(
+            &policy,
+            "sh",
+            &["-c".into(), "sleep 0.2; echo orphan > marker".into()],
+        ));
+    assert!(matches!(result, Err(ToolError::Timeout)));
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(
+        !root.path().join("marker").exists(),
+        "a descendant survived the timed-out process group"
+    );
+}
+
+#[test]
+fn one_extremely_long_line_is_read_with_bounded_retention() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("large.txt"), "x".repeat(2_000_000)).unwrap();
+    let mut policy = policy(root.path());
+    policy.output_limit = 1024;
+    let result = read_file(&policy, Path::new("large.txt")).unwrap();
+    assert_eq!(result.content.len(), 1024);
+    assert!(result.truncated);
+    assert_eq!(result.total_lines, 1);
 }
 
 // ------------------------------------------------------------ malformed input

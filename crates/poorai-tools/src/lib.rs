@@ -3,6 +3,7 @@ use poorai_domain::hash_bytes;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
+    io::Read as _,
     path::{Component, Path, PathBuf},
     time::Duration,
 };
@@ -117,6 +118,11 @@ impl ActionProposal {
             Self::ListTree { max_entries } if *max_entries == 0 => {
                 Err(ToolError::Denied("tree limit is required".into()))
             }
+            Self::ReadFile {
+                max_lines: Some(0), ..
+            } => Err(ToolError::Denied(
+                "max_lines must be greater than zero".into(),
+            )),
             Self::ReplaceText { find, .. } if find.is_empty() => {
                 Err(ToolError::Denied("find text is required".into()))
             }
@@ -499,6 +505,10 @@ pub struct ToolResult {
     pub duration_ms: u128,
     pub redacted: bool,
     pub artifact_hash: String,
+    #[serde(default)]
+    pub stdout_truncated: bool,
+    #[serde(default)]
+    pub stderr_truncated: bool,
     /// Whether the process actually ran inside a sandbox. Recorded rather than
     /// assumed so an unsandboxed run is visible in the audit.
     pub sandboxed: bool,
@@ -548,17 +558,33 @@ pub struct ApplyResult {
 /// Lists a bounded, policy-filtered workspace tree.
 pub fn list_tree(policy: &ToolPolicy, max_entries: usize) -> Result<Vec<TreeEntry>, ToolError> {
     let mut output = Vec::new();
-    list_dir(&policy.root, &policy.root, max_entries, &mut output)?;
+    let mut output_bytes = 0usize;
+    let deadline = std::time::Instant::now() + policy.timeout;
+    list_dir(
+        &policy.root,
+        &policy.root,
+        max_entries,
+        policy.output_limit,
+        deadline,
+        &mut output_bytes,
+        &mut output,
+    )?;
     Ok(output)
 }
 fn list_dir(
     root: &Path,
     directory: &Path,
     max: usize,
+    byte_limit: usize,
+    deadline: std::time::Instant,
+    output_bytes: &mut usize,
     output: &mut Vec<TreeEntry>,
 ) -> Result<(), ToolError> {
     for entry in std::fs::read_dir(directory)? {
-        if output.len() >= max {
+        if std::time::Instant::now() >= deadline {
+            return Err(ToolError::Timeout);
+        }
+        if output.len() >= max || *output_bytes >= byte_limit {
             break;
         }
         let entry = entry?;
@@ -575,16 +601,22 @@ fn list_dir(
             continue;
         }
         let directory = metadata.is_dir();
+        let relative = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .display()
+            .to_string();
+        let cost = relative.len().saturating_add(1);
+        if output_bytes.saturating_add(cost) > byte_limit {
+            break;
+        }
+        *output_bytes = output_bytes.saturating_add(cost);
         output.push(TreeEntry {
-            path: path
-                .strip_prefix(root)
-                .unwrap_or(&path)
-                .display()
-                .to_string(),
+            path: relative,
             directory,
         });
         if directory {
-            list_dir(root, &path, max, output)?;
+            list_dir(root, &path, max, byte_limit, deadline, output_bytes, output)?;
         }
     }
     Ok(())
@@ -601,6 +633,13 @@ pub fn apply_replace(
         policy.require(approval)?;
     }
     let path = policy.resolve(relative)?;
+    if std::fs::metadata(&path)?.len()
+        > u64::try_from(policy.output_limit.saturating_mul(16)).unwrap_or(u64::MAX)
+    {
+        return Err(ToolError::Denied(
+            "existing file exceeds the bounded edit size limit".into(),
+        ));
+    }
     let existing = std::fs::read(&path)?;
     if existing.iter().take(4096).any(|b| *b == 0) {
         return Err(ToolError::Denied("binary edits are denied".into()));
@@ -649,6 +688,13 @@ pub fn replace_text(
         return Err(ToolError::Denied("find text is empty".into()));
     }
     let path = policy.resolve(relative)?;
+    if std::fs::metadata(&path)?.len()
+        > u64::try_from(policy.output_limit.saturating_mul(16)).unwrap_or(u64::MAX)
+    {
+        return Err(ToolError::Denied(
+            "existing file exceeds the bounded edit size limit".into(),
+        ));
+    }
     let existing = std::fs::read(&path)?;
     if existing.iter().take(4096).any(|b| *b == 0) {
         return Err(ToolError::Denied("binary edits are denied".into()));
@@ -752,17 +798,31 @@ pub async fn fetch_url(policy: &ToolPolicy, url: &str) -> Result<FetchResult, To
         }
     })?;
     let status = response.status().as_u16();
-    let body = response
-        .text()
-        .await
-        .map_err(|_| ToolError::Denied("response was not readable text".into()))?;
-    let truncated = body.len() > policy.output_limit;
-    let bounded: String = body.chars().take(policy.output_limit).collect();
+    let mut body = response.bytes_stream();
+    let mut retained = Vec::with_capacity(policy.output_limit.min(64 * 1024));
+    let mut hasher = blake3::Hasher::new();
+    let mut observed = 0usize;
+    use futures_util::StreamExt as _;
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk.map_err(|error| {
+            if error.is_timeout() {
+                ToolError::Timeout
+            } else {
+                ToolError::Io(std::io::Error::other("fetch response body failed"))
+            }
+        })?;
+        observed = observed.saturating_add(chunk.len());
+        hasher.update(&chunk);
+        let remaining = policy.output_limit.saturating_sub(retained.len());
+        retained.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+    }
+    let truncated = observed > retained.len();
+    let bounded = String::from_utf8_lossy(&retained);
     let (content, redacted) = policy.redact(&bounded);
     Ok(FetchResult {
         url: parsed.to_string(),
         status,
-        artifact_hash: hash_bytes(body.as_bytes()),
+        artifact_hash: hasher.finalize().to_hex().to_string(),
         content,
         truncated,
         redacted,
@@ -833,39 +893,70 @@ pub fn read_file_window(
             "read target is not a regular file".into(),
         ));
     }
-    let bytes = std::fs::read(&path)?;
-    if bytes.iter().take(4096).any(|b| *b == 0) {
+    let first = first_line.unwrap_or(1).max(1);
+    let last = max_lines
+        .map(|count| first.saturating_add(count.saturating_sub(1)))
+        .unwrap_or(usize::MAX);
+    let mut file = std::fs::File::open(&path)?;
+    let mut chunk = [0u8; 8192];
+    let mut hasher = blake3::Hasher::new();
+    let mut retained = Vec::with_capacity(policy.output_limit.min(64 * 1024));
+    let mut selected_bytes = 0usize;
+    let mut line = 1usize;
+    let mut bytes_seen = 0usize;
+    let mut last_byte = None;
+    let mut binary = false;
+    loop {
+        let read = file.read(&mut chunk)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&chunk[..read]);
+        for byte in &chunk[..read] {
+            if bytes_seen < 4096 && *byte == 0 {
+                binary = true;
+            }
+            bytes_seen = bytes_seen.saturating_add(1);
+            if line >= first && line <= last {
+                selected_bytes = selected_bytes.saturating_add(1);
+                if retained.len() < policy.output_limit {
+                    retained.push(*byte);
+                }
+            }
+            if *byte == b'\n' {
+                line = line.saturating_add(1);
+            }
+            last_byte = Some(*byte);
+        }
+    }
+    if binary {
         return Err(ToolError::Denied("binary file reads are denied".into()));
     }
-    let whole = String::from_utf8_lossy(&bytes);
-    let lines: Vec<&str> = whole.lines().collect();
-    let total_lines = lines.len();
-    let first = first_line.unwrap_or(1).max(1);
+    let total_lines = if bytes_seen == 0 {
+        0
+    } else {
+        line.saturating_sub(usize::from(last_byte == Some(b'\n')))
+    };
     if total_lines > 0 && first > total_lines {
         return Err(ToolError::Denied(format!(
             "first_line {first} is past the end of a {total_lines}-line file"
         )));
     }
-    let window: Vec<&str> = lines
-        .iter()
-        .skip(first - 1)
-        .take(max_lines.unwrap_or(usize::MAX))
-        .copied()
-        .collect();
-    let selected = window.join("\n");
-    let bounded = selected.len() > policy.output_limit;
-    let content: String = if bounded {
-        selected.chars().take(policy.output_limit).collect()
-    } else {
-        selected
-    };
+    // `str::lines` does not include the selected window's terminal newline.
+    if retained.last() == Some(&b'\n') && selected_bytes <= policy.output_limit {
+        retained.pop();
+        selected_bytes = selected_bytes.saturating_sub(1);
+    }
+    let bounded = selected_bytes > retained.len();
+    let content = String::from_utf8_lossy(&retained).to_string();
     let (content, redacted) = policy.redact(&content);
+    let artifact_hash = hasher.finalize().to_hex().to_string();
     Ok(FileReadResult {
         path: relative.display().to_string(),
-        artifact_hash: hash_bytes(&bytes),
-        expected_hash: hash_bytes(&bytes),
+        artifact_hash: artifact_hash.clone(),
+        expected_hash: artifact_hash,
         content,
-        truncated: bounded || first > 1 || window.len() < total_lines,
+        truncated: bounded || first > 1 || last < total_lines,
         redacted,
         total_lines,
         first_line: first,
@@ -881,7 +972,17 @@ pub fn search(
         return Err(ToolError::Denied("empty search query".into()));
     }
     let mut output = Vec::new();
-    search_dir(policy, &policy.root, query, max_matches, &mut output)?;
+    let mut output_bytes = 0usize;
+    let deadline = std::time::Instant::now() + policy.timeout;
+    search_dir(
+        policy,
+        &policy.root,
+        query,
+        max_matches,
+        deadline,
+        &mut output_bytes,
+        &mut output,
+    )?;
     Ok(output)
 }
 fn search_dir(
@@ -889,10 +990,15 @@ fn search_dir(
     directory: &Path,
     query: &str,
     max: usize,
+    deadline: std::time::Instant,
+    output_bytes: &mut usize,
     output: &mut Vec<SearchMatch>,
 ) -> Result<(), ToolError> {
     for entry in std::fs::read_dir(directory)? {
-        if output.len() >= max {
+        if std::time::Instant::now() >= deadline {
+            return Err(ToolError::Timeout);
+        }
+        if output.len() >= max || *output_bytes >= policy.output_limit {
             break;
         }
         let entry = entry?;
@@ -909,22 +1015,36 @@ fn search_dir(
             continue;
         }
         if metadata.is_dir() {
-            search_dir(policy, &path, query, max, output)?;
+            search_dir(policy, &path, query, max, deadline, output_bytes, output)?;
         } else if path.is_file() {
+            if metadata.len() > 1_000_000 {
+                continue;
+            }
             let bytes = std::fs::read(&path)?;
-            if bytes.len() > 1_000_000 || bytes.iter().take(4096).any(|b| *b == 0) {
+            if bytes.iter().take(4096).any(|b| *b == 0) {
                 continue;
             }
             for (number, line) in String::from_utf8_lossy(&bytes).lines().enumerate() {
                 if line.contains(query) {
-                    let (excerpt, redacted) =
-                        policy.redact(&line.chars().take(policy.output_limit).collect::<String>());
+                    let relative = path
+                        .strip_prefix(&policy.root)
+                        .unwrap_or(&path)
+                        .display()
+                        .to_string();
+                    let remaining = policy
+                        .output_limit
+                        .saturating_sub(*output_bytes)
+                        .saturating_sub(relative.len());
+                    if remaining == 0 {
+                        break;
+                    }
+                    let raw: String = line.chars().take(remaining).collect();
+                    let (excerpt, redacted) = policy.redact(&raw);
+                    *output_bytes = output_bytes
+                        .saturating_add(relative.len())
+                        .saturating_add(excerpt.len());
                     output.push(SearchMatch {
-                        path: path
-                            .strip_prefix(&policy.root)
-                            .unwrap_or(&path)
-                            .display()
-                            .to_string(),
+                        path: relative,
                         line: number + 1,
                         excerpt,
                         redacted,
@@ -1044,49 +1164,138 @@ pub async fn run_command_with_stdin(
         // persists into the next one, and nothing in the real home
         // directory is read. npm reports the denial as a permissions bug
         // in its own cache, which is worth knowing when diagnosing one.
-        .env("HOME", &scratch);
-    let output = match stdin {
-        None => timeout(policy.timeout, command.output())
-            .await
-            .map_err(|_| ToolError::Timeout)??,
-        Some(text) => {
-            use tokio::io::AsyncWriteExt as _;
-            let mut child = command
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()?;
-            // Written and closed before the output is awaited: a program that
-            // reads to end of input never sees one if the pipe stays open, and
-            // the run would time out looking like a hang in the program.
-            if let Some(mut pipe) = child.stdin.take() {
-                let text = text.to_string();
-                tokio::spawn(async move {
-                    let _ = pipe.write_all(text.as_bytes()).await;
-                    let _ = pipe.shutdown().await;
-                });
-            }
-            timeout(policy.timeout, child.wait_with_output())
-                .await
-                .map_err(|_| ToolError::Timeout)??
+        .env("HOME", &scratch)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        // Dropping a cancelled poorAI future must not orphan the process.
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command.spawn()?;
+    let mut process_group = ProcessGroupGuard::new(child.id());
+    if let Some(mut pipe) = child.stdin.take() {
+        use tokio::io::AsyncWriteExt as _;
+        let input = stdin.unwrap_or_default().as_bytes().to_vec();
+        tokio::spawn(async move {
+            let _ = pipe.write_all(&input).await;
+            let _ = pipe.shutdown().await;
+        });
+    }
+    let stdout_task = tokio::spawn(read_bounded_pipe(
+        child
+            .stdout
+            .take()
+            .ok_or_else(|| ToolError::Io(std::io::Error::other("child stdout was not piped")))?,
+        policy.output_limit,
+    ));
+    let stderr_task = tokio::spawn(read_bounded_pipe(
+        child
+            .stderr
+            .take()
+            .ok_or_else(|| ToolError::Io(std::io::Error::other("child stderr was not piped")))?,
+        policy.output_limit,
+    ));
+    let status = match timeout(policy.timeout, child.wait()).await {
+        Ok(status) => status?,
+        Err(_) => {
+            process_group.terminate();
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Err(ToolError::Timeout);
         }
     };
-    let cap = |s: Vec<u8>| {
-        String::from_utf8_lossy(&s)
-            .chars()
-            .take(policy.output_limit)
-            .collect::<String>()
-    };
-    let (stdout, a) = policy.redact(&cap(output.stdout));
-    let (stderr, b) = policy.redact(&cap(output.stderr));
+    process_group.disarm();
+    let stdout_capture = stdout_task
+        .await
+        .map_err(|_| ToolError::Io(std::io::Error::other("stdout reader failed")))??;
+    let stderr_capture = stderr_task
+        .await
+        .map_err(|_| ToolError::Io(std::io::Error::other("stderr reader failed")))??;
+    let (stdout, a) = policy.redact(&String::from_utf8_lossy(&stdout_capture.retained));
+    let (stderr, b) = policy.redact(&String::from_utf8_lossy(&stderr_capture.retained));
+    let artifact_hash = hash_bytes(format!(
+        "{}:{}:{:?}",
+        stdout_capture.hash,
+        stderr_capture.hash,
+        status.code()
+    ));
     Ok(ToolResult {
-        exit_code: output.status.code(),
-        artifact_hash: hash_bytes(format!("{stdout}{stderr}")),
+        exit_code: status.code(),
+        artifact_hash,
         stdout,
         stderr,
+        stdout_truncated: stdout_capture.truncated,
+        stderr_truncated: stderr_capture.truncated,
         duration_ms: started.elapsed().as_millis(),
         redacted: a || b,
         sandboxed,
+    })
+}
+
+struct ProcessGroupGuard {
+    pid: Option<u32>,
+}
+
+impl ProcessGroupGuard {
+    fn new(pid: Option<u32>) -> Self {
+        Self { pid }
+    }
+
+    fn disarm(&mut self) {
+        self.pid = None;
+    }
+
+    fn terminate(&mut self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.pid.take() {
+            let _ = std::process::Command::new("/bin/kill")
+                .arg("-KILL")
+                .arg(format!("-{pid}"))
+                .status();
+        }
+        #[cfg(not(unix))]
+        {
+            self.pid = None;
+        }
+    }
+}
+
+impl Drop for ProcessGroupGuard {
+    fn drop(&mut self) {
+        self.terminate();
+    }
+}
+
+struct BoundedPipe {
+    retained: Vec<u8>,
+    truncated: bool,
+    hash: String,
+}
+
+async fn read_bounded_pipe(
+    mut pipe: impl tokio::io::AsyncRead + Unpin,
+    limit: usize,
+) -> Result<BoundedPipe, std::io::Error> {
+    use tokio::io::AsyncReadExt as _;
+    let mut retained = Vec::with_capacity(limit.min(64 * 1024));
+    let mut hasher = blake3::Hasher::new();
+    let mut buffer = [0u8; 8192];
+    let mut observed = 0usize;
+    loop {
+        let read = pipe.read(&mut buffer).await?;
+        if read == 0 {
+            break;
+        }
+        observed = observed.saturating_add(read);
+        hasher.update(&buffer[..read]);
+        let remaining = limit.saturating_sub(retained.len());
+        retained.extend_from_slice(&buffer[..read.min(remaining)]);
+    }
+    Ok(BoundedPipe {
+        truncated: observed > retained.len(),
+        retained,
+        hash: hasher.finalize().to_hex().to_string(),
     })
 }
 #[cfg(test)]
@@ -1183,7 +1392,7 @@ mod tests {
             root: root.path().to_path_buf(),
             allow_commands: vec![],
             output_limit: 100,
-            timeout: Duration::ZERO,
+            timeout: Duration::from_secs(1),
             sandbox: SandboxPolicy::Disabled,
             approvals: Vec::new(),
         };

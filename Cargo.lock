@@ -1033,6 +1033,8 @@ dependencies = [
 name = "poorai-tools"
 version = "0.1.0"
 dependencies = [
+ "blake3",
+ "futures-util",
  "poorai-domain",
  "regex",
  "reqwest",

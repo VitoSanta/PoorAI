@@ -18,6 +18,8 @@ pub enum ProviderError {
     Protocol { safe_context: String },
     #[error("provider operation timed out: {safe_context}")]
     Timeout { safe_context: String },
+    #[error("provider context limit exceeded: {safe_context}")]
+    ContextLimit { safe_context: String },
     #[error("provider operation cancelled")]
     Cancelled,
 }

@@ -48,14 +48,42 @@ pub fn index(root: impl AsRef<Path>) -> Result<RepositoryIndex, RepoError> {
 }
 /// Writes the index atomically as a durable workspace artifact.
 pub fn persist(index: &RepositoryIndex, state_dir: &Path) -> Result<std::path::PathBuf, RepoError> {
-    fs::create_dir_all(state_dir)?;
-    let final_path = state_dir.join("index.json");
-    let temporary = state_dir.join("index.json.tmp");
-    fs::write(
-        &temporary,
-        serde_json::to_vec_pretty(index).expect("index is serializable"),
-    )?;
-    fs::rename(&temporary, &final_path)?;
+    use std::io::Write as _;
+    let directory = state_dir.join("indexes");
+    fs::create_dir_all(&directory)?;
+    let bytes = serde_json::to_vec_pretty(index).expect("index is serializable");
+    let artifact_hash = hash_bytes(&bytes);
+    let final_path = directory.join(format!("{artifact_hash}.json"));
+    if final_path.exists() {
+        if fs::read(&final_path)? == bytes {
+            return Ok(final_path);
+        }
+        return Err(RepoError::Io(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "index artifact hash path contains different bytes",
+        )));
+    }
+    let temporary = directory.join(format!(".index-{}.tmp", poorai_domain::new_id()));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)?;
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    match fs::hard_link(&temporary, &final_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            if fs::read(&final_path)? != bytes {
+                let _ = fs::remove_file(&temporary);
+                return Err(RepoError::Io(error));
+            }
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&temporary);
+            return Err(RepoError::Io(error));
+        }
+    }
+    fs::remove_file(&temporary)?;
     Ok(final_path)
 }
 /// Recomputes the inventory hash; callers must refresh stale indexes before edits.
@@ -400,5 +428,20 @@ mod tests {
         assert!(!stale(&artifact).unwrap());
         fs::write(&file, "fn two() {}").unwrap();
         assert!(stale(&artifact).unwrap());
+    }
+
+    #[test]
+    fn persisted_indexes_are_content_addressed_and_never_overwritten() {
+        let root = tempfile::tempdir().unwrap();
+        let state = root.path().join(".poorai");
+        fs::write(root.path().join("code.rs"), "fn one() {}").unwrap();
+        let first = index(root.path()).unwrap();
+        let first_path = persist(&first, &state).unwrap();
+        let first_bytes = fs::read(&first_path).unwrap();
+        fs::write(root.path().join("code.rs"), "fn two() {}").unwrap();
+        let second = index(root.path()).unwrap();
+        let second_path = persist(&second, &state).unwrap();
+        assert_ne!(first_path, second_path);
+        assert_eq!(fs::read(first_path).unwrap(), first_bytes);
     }
 }

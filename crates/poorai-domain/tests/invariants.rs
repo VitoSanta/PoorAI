@@ -86,7 +86,11 @@ fn execution_for(
         context_tokens,
         reserve_tokens,
         concurrency: 1,
-        budgets: serde_json::json!({}),
+        budgets: serde_json::json!({
+            "max_actions": 8,
+            "edit_verify_cycles": 3,
+            "context_retries": 1,
+        }),
         rationale: "property test".into(),
         evidence,
         compatibility_key: calibration

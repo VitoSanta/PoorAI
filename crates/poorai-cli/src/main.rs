@@ -223,6 +223,151 @@ struct SafeError {
     category: &'static str,
     context: String,
 }
+
+fn write_immutable_artifact(path: &Path, bytes: &[u8]) -> Result<(), SafeError> {
+    use std::io::Write as _;
+    let parent = path.parent().ok_or_else(|| SafeError {
+        category: "internal",
+        context: "artifact path has no parent".into(),
+    })?;
+    std::fs::create_dir_all(parent).map_err(|error| SafeError {
+        category: "internal",
+        context: error.to_string(),
+    })?;
+    if path.exists() {
+        return if std::fs::read(path).is_ok_and(|existing| existing == bytes) {
+            Ok(())
+        } else {
+            Err(SafeError {
+                category: "conflict",
+                context: format!("refusing to overwrite artifact {}", path.display()),
+            })
+        };
+    }
+    let temporary = parent.join(format!(".artifact-{}.tmp", new_id()));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|error| SafeError {
+            category: "internal",
+            context: error.to_string(),
+        })?;
+    if let Err(error) = file.write_all(bytes).and_then(|_| file.sync_all()) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(SafeError {
+            category: "internal",
+            context: error.to_string(),
+        });
+    }
+    match std::fs::hard_link(&temporary, path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            if !std::fs::read(path).is_ok_and(|existing| existing == bytes) {
+                let _ = std::fs::remove_file(&temporary);
+                return Err(SafeError {
+                    category: "conflict",
+                    context: format!("refusing to overwrite artifact {}", path.display()),
+                });
+            }
+        }
+        Err(error) => {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(SafeError {
+                category: "internal",
+                context: error.to_string(),
+            });
+        }
+    }
+    std::fs::remove_file(&temporary).map_err(|error| SafeError {
+        category: "internal",
+        context: error.to_string(),
+    })?;
+    Ok(())
+}
+
+fn observed_capability(definition: &poorai_domain::ModelDefinition, name: &str) -> bool {
+    matches!(
+        definition.capabilities.get(name),
+        Some(Observation::Observed(_))
+    )
+}
+
+/// Loads probe evidence for this exact deployment and digest.
+///
+/// A live `/show` response may declare features, but only `models inspect
+/// --probe` executes them. Agent execution is therefore gated on the persisted
+/// active observations instead of treating a tag or backend declaration as a
+/// capability claim.
+fn load_agent_capability_evidence(
+    root: &Path,
+    deployment: &DeploymentDescriptor,
+    digest: &str,
+) -> Result<poorai_domain::ModelInspection, SafeError> {
+    const MAX_INSPECTION_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
+    let directory = root.join(".poorai/models");
+    let entries = std::fs::read_dir(&directory).map_err(|_| SafeError {
+        category: "missing_evidence",
+        context: format!(
+            "no active capability evidence; run `poorai models inspect {} --probe` first",
+            deployment.model_ref
+        ),
+    })?;
+    let mut compatible = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if !metadata.is_file() || metadata.len() > MAX_INSPECTION_ARTIFACT_BYTES {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let Ok(inspection) = serde_json::from_slice::<poorai_domain::ModelInspection>(&bytes)
+        else {
+            // Pre-gating artifacts persisted only ModelDefinition and cannot
+            // prove which deployment was probed.
+            continue;
+        };
+        if inspection.definition.digest == digest
+            && inspection.deployment.fingerprint() == deployment.fingerprint()
+        {
+            compatible.push(inspection);
+        }
+    }
+    compatible.sort_by_key(|inspection| inspection.definition.provenance.observed_at);
+    let inspection = compatible.pop().ok_or_else(|| SafeError {
+        category: "missing_evidence",
+        context: format!(
+            "no compatible active capability evidence for {}; run `poorai models inspect {} --probe`",
+            deployment.model_ref, deployment.model_ref
+        ),
+    })?;
+    let required = [
+        "chat",
+        "streaming",
+        "structured_tools",
+        "edit",
+        "cancellation",
+        "context_boundary",
+    ];
+    let missing: Vec<&str> = required
+        .into_iter()
+        .filter(|name| !observed_capability(&inspection.definition, name))
+        .collect();
+    if !missing.is_empty() {
+        return Err(SafeError {
+            category: "incompatible_model",
+            context: format!(
+                "deployment lacks observed agent capabilities: {}; inspect/probe it again or use another deployment",
+                missing.join(", ")
+            ),
+        });
+    }
+    Ok(inspection)
+}
 fn print<T: Serialize>(json: bool, result: Result<T, SafeError>) -> i32 {
     match result {
         Ok(value) => {
@@ -261,10 +406,8 @@ fn print<T: Serialize>(json: bool, result: Result<T, SafeError>) -> i32 {
         }
     }
 }
-#[tokio::main]
-async fn main() {
-    let cli = Cli::parse();
-    let code = match cli.command {
+async fn dispatch(cli: Cli) -> i32 {
+    match cli.command {
         Command::Doctor => print(cli.json, doctor(&cli.ollama_endpoint).await),
         Command::Models(m) => match m.command {
             ModelsCommand::Inspect {
@@ -372,6 +515,27 @@ async fn main() {
             ),
         },
         Command::Report { id, format } => print(cli.json, report(id, format)),
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let cli = Cli::parse();
+    let json = cli.json;
+    let operation = dispatch(cli);
+    tokio::pin!(operation);
+    let code = tokio::select! {
+        code = &mut operation => code,
+        signal = tokio::signal::ctrl_c() => {
+            if signal.is_ok() {
+                print::<serde_json::Value>(json, Err(SafeError {
+                    category: "cancelled",
+                    context: "operation cancelled by user".into(),
+                }))
+            } else {
+                operation.await
+            }
+        }
     };
     std::process::exit(code);
 }
@@ -816,6 +980,11 @@ async fn evaluate(
     turn_timeout_secs: u64,
     out_dir: PathBuf,
 ) -> Result<serde_json::Value, SafeError> {
+    let _runtime_lease = poorai_orchestrator::ModelRuntimeLease::acquire("evaluation", &model)
+        .map_err(|context| SafeError {
+            category: "resource_busy",
+            context,
+        })?;
     let suite = poorai_eval::Suite::load(&suite_path).map_err(|e| SafeError {
         category: "invalid_input",
         context: e.to_string(),
@@ -836,14 +1005,27 @@ async fn evaluate(
         .inspect(&deployment)
         .await
         .map_err(provider_error)?;
+    let evidence_root = std::env::current_dir().map_err(|error| SafeError {
+        category: "internal",
+        context: error.to_string(),
+    })?;
+    let capability_evidence =
+        load_agent_capability_evidence(&evidence_root, &deployment, &inspection.definition.digest)?;
     let hardware = probe_hardware().await;
-    let execution = poorai_orchestrator::select_compatible_profile(
+    let backend = provider.runtime_state().await.map_err(provider_error)?;
+    let pressure = poorai_orchestrator::HostProbe::memory_pressure(&MacosHostProbe {
+        free_percent_floor: 20,
+    })
+    .await;
+    let runtime = poorai_orchestrator::snapshot(&hardware, &deployment, None, pressure, &backend);
+    let execution = poorai_orchestrator::select_compatible_profile_with_runtime(
         new_id(),
         &calibration,
         &inspection.definition.digest,
         &deployment,
         &hardware,
         CALIBRATION_HARNESS_REV,
+        &runtime,
     )
     .map_err(|e| SafeError {
         category: "invalid_input",
@@ -859,6 +1041,12 @@ async fn evaluate(
     let resolved_sampling = resolved_sampling_for(profile);
     let mut sampling = profile.map(|p| p.sampling_options()).unwrap_or_default();
     sampling.extend(reasoning_options(profile));
+    let context_tiers: Vec<u32> = calibration
+        .stable_points
+        .iter()
+        .filter(|point| calibration.thresholds.admits(point))
+        .map(|point| point.context_tokens)
+        .collect();
     let mut outcomes = Vec::new();
     for task in &suite.tasks {
         outcomes.push(
@@ -866,6 +1054,7 @@ async fn evaluate(
                 &provider,
                 &deployment,
                 &execution,
+                &context_tiers,
                 task,
                 seed,
                 sampling.clone(),
@@ -892,30 +1081,50 @@ async fn evaluate(
         category: "internal",
         context: e.to_string(),
     })?;
+    let report_json = serde_json::to_vec_pretty(&report).expect("serializable");
+    let report_hash = hash_bytes(&report_json);
     let stem = format!(
-        "{}-{}-{seed}",
+        "{}-{}-{seed}-{}",
         suite.name,
-        &inspection.definition.digest[..12.min(inspection.definition.digest.len())]
+        &inspection.definition.digest[..12.min(inspection.definition.digest.len())],
+        &report_hash[..12],
     );
     let json_path = out_dir.join(format!("{stem}.json"));
     let markdown_path = out_dir.join(format!("{stem}.md"));
-    std::fs::write(
-        &json_path,
-        serde_json::to_vec_pretty(&report).expect("serializable"),
-    )
-    .map_err(|e| SafeError {
+    let markdown = report.markdown();
+    write_immutable_artifact(&json_path, &report_json)?;
+    write_immutable_artifact(&markdown_path, markdown.as_bytes())?;
+    let evaluation_run = poorai_domain::EvaluationRun {
+        schema_version: 1,
+        id: new_id(),
+        corpus_rev: report.corpus_rev.clone(),
+        task_set: report.suite.clone(),
+        execution_profile_id: execution.id,
+        model_digest: inspection.definition.digest.clone(),
+        deployment_fingerprint: deployment.fingerprint(),
+        hardware_compatibility_key: hardware.compatibility_key.clone(),
+        harness_rev: EVAL_HARNESS_REV.into(),
+        seeds: vec![seed],
+        outcome_hash: hash_bytes(serde_json::to_vec(&report.outcomes).expect("serializable")),
+        artifact_hashes: vec![report_hash, hash_bytes(markdown.as_bytes())],
+        created_at: now(),
+    };
+    evaluation_run.validate().map_err(|error| SafeError {
         category: "internal",
-        context: e.to_string(),
+        context: format!("invalid evaluation provenance: {error}"),
     })?;
-    std::fs::write(&markdown_path, report.markdown()).map_err(|e| SafeError {
-        category: "internal",
-        context: e.to_string(),
-    })?;
+    let run_path = out_dir.join(format!("evaluation-run-{}.json", evaluation_run.id));
+    write_immutable_artifact(
+        &run_path,
+        &serde_json::to_vec_pretty(&evaluation_run).expect("serializable"),
+    )?;
     Ok(serde_json::json!({
         "report_json": json_path,
         "report_markdown": markdown_path,
         "corpus_rev": report.corpus_rev,
         "metrics": report.metrics(),
+        "capability_evidence_id": capability_evidence.definition.id,
+        "evaluation_run": run_path,
     }))
 }
 
@@ -978,6 +1187,11 @@ fn reasoning_options(
     match profile.and_then(|p| p.reasoning.as_ref()) {
         Some(poorai_domain::ReasoningControl::BackendOption { name, value }) => {
             BTreeMap::from([(name.clone(), serde_json::json!(value))])
+        }
+        Some(poorai_domain::ReasoningControl::Think { enabled }) => {
+            // The provider adapter promotes this semantic request to Ollama's
+            // top-level `think` field rather than leaving it in `options`.
+            BTreeMap::from([("think".into(), serde_json::json!(enabled))])
         }
         _ => BTreeMap::new(),
     }
@@ -1116,6 +1330,7 @@ async fn evaluate_task(
     provider: &OllamaProvider,
     deployment: &DeploymentDescriptor,
     execution: &poorai_domain::ExecutionProfile,
+    measured_context_tiers: &[u32],
     task: &poorai_eval::Task,
     seed: u64,
     sampling: BTreeMap<String, serde_json::Value>,
@@ -1217,11 +1432,9 @@ async fn evaluate_task(
     let run_id = new_id();
     let request = poorai_domain::ModelRequest {
         deployment: deployment.clone(),
-        // The tag's own context policy where one is declared, clamped to what
-        // the tag can serve; the calibrated point only where none is.
-        context_tokens: profile
-            .map(|p| p.context_for(None))
-            .unwrap_or(execution.context_tokens),
+        // Capacity comes only from compatible empirical calibration and fresh
+        // runtime admission. A model tag may tune sampling, never override it.
+        context_tokens: execution.context_tokens,
         tools: Some(poorai_orchestrator::action_tool_schema()),
         seed: Some(seed),
         sampling: sampling.clone(),
@@ -1258,22 +1471,27 @@ async fn evaluate_task(
         ],
     };
     let started = std::time::Instant::now();
+    let budgets = match execution.execution_budgets() {
+        Ok(budgets) => budgets,
+        Err(error) => {
+            outcome.error = Some(format!("invalid execution budgets: {error}"));
+            return outcome;
+        }
+    };
     // The task's own budget where it declares one: building several files
     // needs more turns than editing a line, and that is a property of the task
     // rather than of the deployment.
     let max_actions = task
         .max_actions
         .or(strategy.and_then(|s| s.max_actions))
-        .unwrap_or_else(|| {
-            execution.budgets["max_actions"]
-                .as_u64()
-                .unwrap_or(8)
-                .try_into()
-                .unwrap_or(8u8)
-        });
+        .unwrap_or(budgets.max_actions);
+    let recovery_budget = poorai_verify::RecoveryBudget {
+        max_edit_verify_cycles: budgets.edit_verify_cycles,
+        max_context_retries: budgets.context_retries,
+    };
     let run = tokio::time::timeout(
         Duration::from_secs(task.time_budget_secs),
-        poorai_orchestrator::run_action_loop(
+        poorai_orchestrator::run_action_loop_with_prompt_budget_and_context_tiers(
             &store,
             provider,
             run_id,
@@ -1281,6 +1499,10 @@ async fn evaluate_task(
             &policy,
             &checks,
             max_actions,
+            &recovery_budget,
+            measured_context_tiers,
+            &poorai_orchestrator::DenyWithoutAsking,
+            false,
         ),
     )
     .await;
@@ -1311,6 +1533,8 @@ async fn evaluate_task(
             outcome.tool_attempts += 1;
             if event.payload["status"] == "denied" {
                 outcome.tool_denials += 1;
+            } else if event.payload["status"] == "failed" {
+                outcome.tool_failures += 1;
             }
         }
     }
@@ -1564,6 +1788,13 @@ async fn inspect(
     timeout: Duration,
     trials: u32,
 ) -> Result<serde_json::Value, SafeError> {
+    let _runtime_lease = probe
+        .then(|| poorai_orchestrator::ModelRuntimeLease::acquire("capability probes", &model))
+        .transpose()
+        .map_err(|context| SafeError {
+            category: "resource_busy",
+            context,
+        })?;
     let provider = OllamaProvider::new(endpoint, timeout).map_err(provider_error)?;
     let deployment = DeploymentDescriptor {
         schema_version: 1,
@@ -1699,15 +1930,11 @@ async fn inspect(
         category: "internal",
         context: e.to_string(),
     })?;
-    let artifact = dir.join(format!("{}.json", inspection.definition.digest));
-    std::fs::write(
+    let artifact = dir.join(format!("{}.json", inspection.definition.id));
+    write_immutable_artifact(
         &artifact,
-        serde_json::to_vec_pretty(&inspection.definition).expect("serializable"),
-    )
-    .map_err(|e| SafeError {
-        category: "internal",
-        context: e.to_string(),
-    })?;
+        &serde_json::to_vec_pretty(&inspection).expect("serializable"),
+    )?;
     Ok(serde_json::json!({"inspection":inspection,"artifact":artifact,"probed":probe}))
 }
 /// Bump when any measurement step changes; stored profiles invalidate on it.
@@ -1772,6 +1999,11 @@ async fn calibrate(
     min_success_rate: f64,
     max_median_first_token_ms: f64,
 ) -> Result<serde_json::Value, SafeError> {
+    let _runtime_lease = poorai_orchestrator::ModelRuntimeLease::acquire("calibration", &model)
+        .map_err(|context| SafeError {
+            category: "resource_busy",
+            context,
+        })?;
     let provider =
         OllamaProvider::new(endpoint, Duration::from_secs(600)).map_err(provider_error)?;
     let deployment = DeploymentDescriptor {
@@ -1838,19 +2070,10 @@ async fn calibrate(
         }
     };
     let artifact = dir.join(format!("{name}.json"));
-    let temporary = dir.join(format!("{name}.tmp"));
-    std::fs::write(
-        &temporary,
-        serde_json::to_vec_pretty(&record).expect("serializable"),
-    )
-    .map_err(|e| SafeError {
-        category: "internal",
-        context: e.to_string(),
-    })?;
-    std::fs::rename(&temporary, &artifact).map_err(|e| SafeError {
-        category: "internal",
-        context: e.to_string(),
-    })?;
+    write_immutable_artifact(
+        &artifact,
+        &serde_json::to_vec_pretty(&record).expect("serializable"),
+    )?;
     if let poorai_orchestrator::CalibrationOutcome::Refused { reason, .. } = &outcome {
         return Err(SafeError {
             category: "calibration",
@@ -1978,6 +2201,11 @@ async fn prepare_profiled_run(
         category: "invalid_input",
         context: "--model is required; routing is deferred".into(),
     })?;
+    let _runtime_lease = poorai_orchestrator::ModelRuntimeLease::acquire("agent run", &model)
+        .map_err(|context| SafeError {
+            category: "resource_busy",
+            context,
+        })?;
     let path = profile.ok_or_else(|| SafeError {
         category: "invalid_input",
         context: "--profile CALIBRATION_JSON is required".into(),
@@ -2010,22 +2238,23 @@ async fn prepare_profiled_run(
         .inspect(&deployment)
         .await
         .map_err(provider_error)?;
+    let capability_evidence =
+        load_agent_capability_evidence(&root, &deployment, &inspection.definition.digest)?;
     let hardware = probe_hardware().await;
     let backend = provider.runtime_state().await.map_err(provider_error)?;
-    let runtime = poorai_orchestrator::snapshot(
-        &hardware,
-        &deployment,
-        None,
-        probe_memory_pressure().await,
-        backend.state,
-    );
-    let execution = poorai_orchestrator::select_compatible_profile(
+    let pressure = poorai_orchestrator::HostProbe::memory_pressure(&MacosHostProbe {
+        free_percent_floor: 20,
+    })
+    .await;
+    let runtime = poorai_orchestrator::snapshot(&hardware, &deployment, None, pressure, &backend);
+    let execution = poorai_orchestrator::select_compatible_profile_with_runtime(
         new_id(),
         &calibration,
         &inspection.definition.digest,
         &deployment,
         &hardware,
         CALIBRATION_HARNESS_REV,
+        &runtime,
     )
     .map_err(|e| SafeError {
         category: "invalid_input",
@@ -2037,14 +2266,10 @@ async fn prepare_profiled_run(
         context: e.to_string(),
     })?;
     let artifact = dir.join(format!("{}.json", execution.id));
-    std::fs::write(
+    write_immutable_artifact(
         &artifact,
-        serde_json::to_vec_pretty(&execution).expect("serializable"),
-    )
-    .map_err(|e| SafeError {
-        category: "internal",
-        context: e.to_string(),
-    })?;
+        &serde_json::to_vec_pretty(&execution).expect("serializable"),
+    )?;
     let checks = poorai_verify::discover_checks(&root, "targeted").map_err(|e| SafeError {
         category: "invalid_input",
         context: e,
@@ -2083,6 +2308,53 @@ async fn prepare_profiled_run(
         context: e.to_string(),
     })?;
     let run_id = new_id();
+    let lifecycle = [
+        poorai_orchestrator::TaskCheckpoint {
+            id: new_id(),
+            state: poorai_orchestrator::TaskState::Discover,
+            at: now(),
+            detail: "workspace and explicit deployment resolved".into(),
+        },
+        poorai_orchestrator::transition(
+            poorai_orchestrator::TaskState::Discover,
+            poorai_orchestrator::TaskState::Profile,
+            "calibration, capability evidence, hardware, and runtime admitted",
+        )
+        .map_err(|context| SafeError {
+            category: "internal",
+            context,
+        })?,
+        poorai_orchestrator::transition(
+            poorai_orchestrator::TaskState::Profile,
+            poorai_orchestrator::TaskState::Index,
+            "repository inventory persisted",
+        )
+        .map_err(|context| SafeError {
+            category: "internal",
+            context,
+        })?,
+        poorai_orchestrator::transition(
+            poorai_orchestrator::TaskState::Index,
+            poorai_orchestrator::TaskState::Plan,
+            "controller ready to plan or record a strategy-approved skip",
+        )
+        .map_err(|context| SafeError {
+            category: "internal",
+            context,
+        })?,
+    ];
+    for checkpoint in lifecycle {
+        store
+            .append(
+                Some(run_id),
+                "task.transition",
+                serde_json::to_value(checkpoint).expect("checkpoint is serializable"),
+            )
+            .map_err(|error| SafeError {
+                category: "internal",
+                context: error.to_string(),
+            })?;
+    }
     // Earlier runs of this session are read before the new one is recorded, so
     // the ledger describes what came before rather than including this run.
     let carried = match &session {
@@ -2143,6 +2415,8 @@ async fn prepare_profiled_run(
                 "sandbox_policy": policy.sandbox,
                 "allow_commands": policy.allow_commands,
                 "network_enabled": policy.network_allowed(),
+                "capability_evidence_id": capability_evidence.definition.id,
+                "capability_evidence_observed_at": capability_evidence.definition.provenance.observed_at,
             }),
         )
         .map_err(|e| SafeError {
@@ -2151,9 +2425,7 @@ async fn prepare_profiled_run(
         })?;
     let request = poorai_domain::ModelRequest {
         deployment: deployment.clone(),
-        context_tokens: model_profile
-            .map(|p| p.context_for(None))
-            .unwrap_or(execution.context_tokens),
+        context_tokens: execution.context_tokens,
         tools: Some(poorai_orchestrator::action_tool_schema()),
         seed: None,
         sampling: {
@@ -2204,7 +2476,21 @@ async fn prepare_profiled_run(
         .flatten()
         .collect(),
     };
-    let result = poorai_orchestrator::run_action_loop_with_prompt(
+    let budgets = execution.execution_budgets().map_err(|error| SafeError {
+        category: "invalid_input",
+        context: format!("invalid execution budgets: {error}"),
+    })?;
+    let recovery_budget = poorai_verify::RecoveryBudget {
+        max_edit_verify_cycles: budgets.edit_verify_cycles,
+        max_context_retries: budgets.context_retries,
+    };
+    let context_tiers: Vec<u32> = calibration
+        .stable_points
+        .iter()
+        .filter(|point| calibration.thresholds.admits(point))
+        .map(|point| point.context_tokens)
+        .collect();
+    let result = poorai_orchestrator::run_action_loop_with_prompt_budget_and_context_tiers(
         &store,
         &provider,
         run_id,
@@ -2215,17 +2501,15 @@ async fn prepare_profiled_run(
             // Installing a toolchain is a different scale of work from editing
             // a file, so it gets its own number rather than the same one
             // stretched.
-            let budgeted = execution.budgets["max_actions"]
-                .as_u64()
-                .unwrap_or(1)
-                .try_into()
-                .unwrap_or(1);
+            let budgeted = budgets.max_actions;
             if provision {
                 budgeted.max(poorai_orchestrator::PROVISIONING_MAX_ACTIONS)
             } else {
                 budgeted
             }
         }),
+        &recovery_budget,
+        &context_tiers,
         &TerminalApproval,
         // The flag, or a strategy that declares it.
         plan || strategy.is_some_and(|s| s.plan_first),
@@ -2402,6 +2686,7 @@ fn provider_error(e: poorai_provider::ProviderError) -> SafeError {
     let category = match e {
         poorai_provider::ProviderError::Unavailable { .. }
         | poorai_provider::ProviderError::Timeout { .. } => "provider_unavailable",
+        poorai_provider::ProviderError::ContextLimit { .. } => "provider_context_limit",
         poorai_provider::ProviderError::Protocol { .. } => "provider_protocol",
         poorai_provider::ProviderError::Cancelled => "provider_cancelled",
     };
@@ -2896,6 +3181,10 @@ mod profile_tests {
         // sent as an option.
         assert!(reasoning_directive(muse).contains("Reasoning strength: high"));
         assert!(reasoning_options(muse).is_empty());
+
+        let qwen = poorai_domain::ModelProfile::select(&profiles, "qwen3.8:27b-mlx");
+        assert_eq!(reasoning_options(qwen)["think"], true);
+        assert!(reasoning_directive(qwen).is_empty());
     }
 
     /// Context is per tag: the same architecture under two tags declares two

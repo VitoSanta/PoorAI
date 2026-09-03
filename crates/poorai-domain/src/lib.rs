@@ -348,6 +348,17 @@ pub struct ExecutionProfile {
     pub compatibility_key: String,
 }
 
+/// Bounded controller budgets carried by an execution profile.
+///
+/// This typed view keeps persisted JSON forwards-compatible while preventing
+/// callers from silently substituting hard-coded recovery limits.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExecutionBudgets {
+    pub max_actions: u8,
+    pub edit_verify_cycles: u8,
+    pub context_retries: u8,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EvaluationRun {
     pub schema_version: u32,
@@ -514,6 +525,23 @@ impl Validate for CalibrationProfile {
     }
 }
 impl ExecutionProfile {
+    pub fn execution_budgets(&self) -> Result<ExecutionBudgets, DomainError> {
+        let budgets: ExecutionBudgets =
+            serde_json::from_value(self.budgets.clone()).map_err(|e| DomainError::Invalid {
+                field: "budgets",
+                reason: format!(
+                    "expected max_actions, edit_verify_cycles, and context_retries: {e}"
+                ),
+            })?;
+        if budgets.max_actions == 0 || budgets.edit_verify_cycles == 0 {
+            return Err(DomainError::Invalid {
+                field: "budgets",
+                reason: "max_actions and edit_verify_cycles must be greater than zero".into(),
+            });
+        }
+        Ok(budgets)
+    }
+
     pub fn validate_against(
         &self,
         calibration: Option<&CalibrationProfile>,
@@ -527,6 +555,7 @@ impl ExecutionProfile {
                 reason: "invalid context, reserve, or concurrency".into(),
             });
         }
+        self.execution_budgets()?;
         match (self.calibration_id, calibration, &self.evidence) {
             (Some(id), Some(profile), EvidenceLabel::Measured)
                 if id == profile.id

@@ -536,8 +536,23 @@ pub fn classify(result: &ToolResult) -> FailureClass {
         FailureClass::Compilation
     } else if result.stderr.contains("assert") || result.stdout.contains("FAILED") {
         FailureClass::Assertion
-    } else {
+    } else if result.exit_code.is_none()
+        || [
+            "not found",
+            "no such file",
+            "permission denied",
+            "network is unreachable",
+            "operation not permitted",
+        ]
+        .iter()
+        .any(|needle| result.stderr.to_ascii_lowercase().contains(needle))
+    {
         FailureClass::Environment
+    } else {
+        // A verifier that ran reproducibly and returned a non-zero status is a
+        // failed assertion even when it chose to print nothing (for example
+        // `test condition` in a shell script).
+        FailureClass::Assertion
     }
 }
 /// Decides recovery without granting any tool authority. Infrastructure failures never authorize edits.

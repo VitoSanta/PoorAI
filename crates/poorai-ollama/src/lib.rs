@@ -8,6 +8,7 @@ use poorai_domain::{
 };
 use poorai_provider::{ModelProvider, ModelStream, ProviderError};
 use reqwest::{Client, Url};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, time::Duration};
 
@@ -53,13 +54,69 @@ impl OllamaProvider {
             }
         })?;
         if !response.status().is_success() {
+            let status = response.status();
+            let mut stream = response.bytes_stream();
+            let mut body = Vec::new();
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(|_| ProviderError::Protocol {
+                    safe_context: format!("Ollama returned HTTP {status}"),
+                })?;
+                let remaining = 8192usize.saturating_sub(body.len());
+                body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+                if body.len() == 8192 {
+                    break;
+                }
+            }
+            let body = String::from_utf8_lossy(&body).to_ascii_lowercase();
+            if ["context length", "input length", "num_ctx", "too long"]
+                .iter()
+                .any(|needle| body.contains(needle))
+            {
+                return Err(ProviderError::ContextLimit {
+                    safe_context: "Ollama rejected the measured context tier".into(),
+                });
+            }
             return Err(ProviderError::Protocol {
-                safe_context: format!("Ollama returned HTTP {}", response.status()),
+                safe_context: format!("Ollama returned HTTP {status}"),
             });
         }
         Ok(response)
     }
+
+    async fn json_bounded<T: DeserializeOwned>(
+        &self,
+        response: reqwest::Response,
+        context: &'static str,
+    ) -> Result<T, ProviderError> {
+        let mut stream = response.bytes_stream();
+        let mut body = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|error| {
+                if error.is_timeout() {
+                    ProviderError::Timeout {
+                        safe_context: context.into(),
+                    }
+                } else {
+                    ProviderError::Protocol {
+                        safe_context: format!("unreadable {context}"),
+                    }
+                }
+            })?;
+            if body.len().saturating_add(chunk.len()) > MAX_JSON_BODY_BYTES {
+                return Err(ProviderError::Protocol {
+                    safe_context: format!("{context} exceeded the response size limit"),
+                });
+            }
+            body.extend_from_slice(&chunk);
+        }
+        serde_json::from_slice(&body).map_err(|_| ProviderError::Protocol {
+            safe_context: format!("malformed {context}"),
+        })
+    }
 }
+
+const MAX_JSON_BODY_BYTES: usize = 64 * 1024 * 1024;
+const MAX_STREAM_LINE_BYTES: usize = 1024 * 1024;
 
 #[derive(Serialize)]
 struct ShowRequest<'a> {
@@ -114,6 +171,8 @@ struct ChatRequest<'a> {
     options: BTreeMap<&'a str, serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<&'a serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    think: Option<bool>,
 }
 #[derive(Deserialize)]
 struct ChatResponse {
@@ -235,7 +294,7 @@ impl ModelProvider for OllamaProvider {
         &self,
         deployment: &DeploymentDescriptor,
     ) -> Result<ModelInspection, ProviderError> {
-        let response: ShowResponse = self
+        let response = self
             .response(
                 self.client
                     .post(self.url("api/show")?)
@@ -246,20 +305,14 @@ impl ModelProvider for OllamaProvider {
                     .send()
                     .await,
             )
-            .await?
-            .json()
-            .await
-            .map_err(|_| ProviderError::Protocol {
-                safe_context: "malformed Ollama show response".into(),
-            })?;
-        let tags: TagsResponse = self
+            .await?;
+        let response: ShowResponse = self.json_bounded(response, "Ollama show response").await?;
+        let tags_response = self
             .response(self.client.get(self.url("api/tags")?).send().await)
-            .await?
-            .json()
-            .await
-            .map_err(|_| ProviderError::Protocol {
-                safe_context: "malformed Ollama tags response".into(),
-            })?;
+            .await?;
+        let tags: TagsResponse = self
+            .json_bounded(tags_response, "Ollama tags response")
+            .await?;
         let tag = tags.models.iter().find(|m| m.name == deployment.model_ref);
         let digest = tag
             .map(|m| m.digest.clone())
@@ -302,14 +355,12 @@ impl ModelProvider for OllamaProvider {
         })
     }
     async fn runtime_state(&self) -> Result<BackendState, ProviderError> {
-        let tags: TagsResponse = self
+        let response = self
             .response(self.client.get(self.url("api/ps")?).send().await)
-            .await?
-            .json()
-            .await
-            .map_err(|_| ProviderError::Protocol {
-                safe_context: "malformed Ollama runtime response".into(),
-            })?;
+            .await?;
+        let tags: TagsResponse = self
+            .json_bounded(response, "Ollama runtime response")
+            .await?;
         // Residency is recorded rather than assumed: a deployment partly served
         // from the CPU is a different machine from one wholly on the
         // accelerator, and a calibration that cannot tell them apart is
@@ -349,8 +400,13 @@ impl ModelProvider for OllamaProvider {
         }
         // Sent verbatim, so what a report records and what the backend received
         // are the same thing.
+        let mut think = None;
         for (name, value) in &request.sampling {
-            options.insert(name.as_str(), value.clone());
+            if name == "think" {
+                think = value.as_bool();
+            } else {
+                options.insert(name.as_str(), value.clone());
+            }
         }
         let body = ChatRequest {
             model: &request.deployment.model_ref,
@@ -358,6 +414,7 @@ impl ModelProvider for OllamaProvider {
             stream: true,
             options,
             tools: request.tools.as_ref(),
+            think,
         };
         let response = self
             .response(
@@ -370,27 +427,43 @@ impl ModelProvider for OllamaProvider {
             .await?;
         let body = response.bytes_stream();
         let parsed = stream::unfold(
-            (body, String::new(), false),
+            (body, Vec::<u8>::new(), false),
             |(mut body, mut buffer, finished)| async move {
                 if finished {
                     return None;
                 }
                 loop {
-                    if let Some(index) = buffer.find('\n') {
-                        let line = buffer[..index].to_string();
-                        buffer = buffer[index + 1..].to_string();
-                        if line.trim().is_empty() {
+                    if let Some(index) = buffer.iter().position(|byte| *byte == b'\n') {
+                        let mut line: Vec<u8> = buffer.drain(..=index).collect();
+                        line.pop();
+                        if line.iter().all(u8::is_ascii_whitespace) {
                             continue;
                         }
-                        let item = parse_ndjson_chunks(&line).and_then(|mut items| {
-                            items.pop().ok_or(ProviderError::Protocol {
-                                safe_context: "empty Ollama streaming chunk".into(),
+                        let item = std::str::from_utf8(&line)
+                            .map_err(|_| ProviderError::Protocol {
+                                safe_context: "Ollama streaming chunk was not UTF-8".into(),
                             })
-                        });
+                            .and_then(parse_ndjson_chunks)
+                            .and_then(|mut items| {
+                                items.pop().ok_or(ProviderError::Protocol {
+                                    safe_context: "empty Ollama streaming chunk".into(),
+                                })
+                            });
                         return Some((item, (body, buffer, false)));
                     }
                     match body.next().await {
-                        Some(Ok(bytes)) => buffer.push_str(&String::from_utf8_lossy(&bytes)),
+                        Some(Ok(bytes)) => {
+                            if buffer.len().saturating_add(bytes.len()) > MAX_STREAM_LINE_BYTES {
+                                return Some((
+                                    Err(ProviderError::Protocol {
+                                        safe_context:
+                                            "Ollama streaming line exceeded the size limit".into(),
+                                    }),
+                                    (body, Vec::new(), true),
+                                ));
+                            }
+                            buffer.extend_from_slice(&bytes);
+                        }
                         Some(Err(error)) => {
                             // A client timeout surfaces as a broken body, not
                             // as a timeout error. Reporting it as a protocol
@@ -409,15 +482,20 @@ impl ModelProvider for OllamaProvider {
                             return Some((Err(failure), (body, buffer, true)));
                         }
                         None => {
-                            if buffer.trim().is_empty() {
+                            if buffer.iter().all(u8::is_ascii_whitespace) {
                                 return None;
                             }
-                            let item = parse_ndjson_chunks(&buffer).and_then(|mut items| {
-                                items.pop().ok_or(ProviderError::Protocol {
-                                    safe_context: "empty Ollama streaming response".into(),
+                            let item = std::str::from_utf8(&buffer)
+                                .map_err(|_| ProviderError::Protocol {
+                                    safe_context: "Ollama streaming response was not UTF-8".into(),
                                 })
-                            });
-                            return Some((item, (body, String::new(), true)));
+                                .and_then(parse_ndjson_chunks)
+                                .and_then(|mut items| {
+                                    items.pop().ok_or(ProviderError::Protocol {
+                                        safe_context: "empty Ollama streaming response".into(),
+                                    })
+                                });
+                            return Some((item, (body, Vec::new(), true)));
                         }
                     }
                 }
@@ -692,6 +770,49 @@ mod tests {
         assert!(matches!(
             provider.runtime_state().await,
             Err(ProviderError::Protocol { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn runtime_state_rejects_malformed_json() {
+        let endpoint = fixture_server(vec!["{not-json"]);
+        let provider = OllamaProvider::new(&endpoint, Duration::from_secs(1)).unwrap();
+        assert!(matches!(
+            provider.runtime_state().await,
+            Err(ProviderError::Protocol { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn chat_rejects_an_unbounded_ndjson_line() {
+        let endpoint = fixture_server_owned(vec!["x".repeat(MAX_STREAM_LINE_BYTES + 1)]);
+        let provider = OllamaProvider::new(&endpoint, Duration::from_secs(2)).unwrap();
+        let deployment = DeploymentDescriptor {
+            schema_version: 1,
+            id: poorai_domain::new_id(),
+            provider: "ollama".into(),
+            endpoint,
+            model_ref: "fixture".into(),
+            backend_options: Default::default(),
+            auth_ref: None,
+        };
+        let mut stream = provider
+            .chat(poorai_domain::ModelRequest {
+                deployment,
+                context_tokens: 32,
+                tools: None,
+                seed: None,
+                sampling: Default::default(),
+                messages: vec![poorai_domain::ChatMessage {
+                    role: "user".into(),
+                    content: "hello".into(),
+                }],
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            stream.next().await,
+            Some(Err(ProviderError::Protocol { .. }))
         ));
     }
     #[tokio::test]

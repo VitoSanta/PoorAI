@@ -74,7 +74,7 @@ fn run(bad: usize, max_actions: u8) -> (Store, poorai_domain::Id, String, Result
     std::fs::write(root.path().join("code.rs"), "one").unwrap();
     let policy = ToolPolicy {
         root: root.path().to_path_buf(),
-        allow_commands: vec![],
+        allow_commands: vec!["true".into()],
         output_limit: 4096,
         timeout: Duration::from_secs(5),
         sandbox: SandboxPolicy::Disabled,
@@ -114,7 +114,7 @@ fn run(bad: usize, max_actions: u8) -> (Store, poorai_domain::Id, String, Result
                 run_id,
                 request,
                 &policy,
-                &[],
+                &[("true".into(), Vec::new())],
                 max_actions,
             ));
     let after = std::fs::read_to_string(root.path().join("code.rs")).unwrap();
