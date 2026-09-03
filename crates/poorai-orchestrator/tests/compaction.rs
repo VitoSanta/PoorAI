@@ -213,6 +213,12 @@ fn a_tier_served_partly_from_the_cpu_is_not_a_stable_point() {
         },
         backend_state: None,
         fully_on_accelerator: on_gpu,
+        memory_pressure_after: poorai_domain::Observation::Unknown {
+            reason: "fixture".into(),
+        },
+        prompt_tokens_reported: None,
+        occupancy: None,
+        needle_recalled: None,
     };
     // The field carries three states, and the absent one is unknown rather
     // than a failure: a backend that does not report residency has not

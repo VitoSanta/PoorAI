@@ -2142,7 +2142,14 @@ async fn inspect(
 ///
 /// The evaluation revision is derived from the commit instead, because it
 /// describes what produced a report rather than how a measurement was taken.
-const CALIBRATION_HARNESS_REV: &str = "calibration-harness-v3";
+/// Bumped when the ladder measures something different.
+///
+/// v4 fills the context rather than sending a one-line prompt at every tier,
+/// and samples pressure after the reply as well as before. Every profile
+/// measured under v3 is therefore incompatible -- correctly, because it
+/// measured a tier that could be allocated rather than one that could be used,
+/// and the invalidation gate is what stops one being read as the other.
+const CALIBRATION_HARNESS_REV: &str = "calibration-harness-v4";
 
 /// Reads a calibration profile from a `poorai calibrate` artifact.
 ///

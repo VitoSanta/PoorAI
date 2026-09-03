@@ -14,20 +14,27 @@ Threshold values are set before M5 based on baseline measurements. No milestone 
 
 **The table above is the gate as it was declared, and its wording is historical.** Where it and the status table below disagree, the status table is the current reading: the audit of `cee5ebd` found several of these criteria met by components that the production path did not reach, and the M6 row in particular quotes a tool-failure count that was never measured. Read the two together, and *What remains* at the end of this document for what is not built at all.
 
-## Current implementation status — 2026-09-03
+## Current implementation status
 
-This table is the one place to read for state; the dated sections below are the record of how it got there and are not amended after the fact. Every row was reassessed against the audit of `cee5ebd` and the hardening pass that followed it. **Nothing in this table has been measured against a live deployment since that pass**: the running campaign was stopped to make the changes, and the numbers recorded in the sections below were produced by a harness that has since changed in ways that touch what they measured.
+This table is generated from `docs/milestones.json` by `scripts/milestones.py`. Milestone state was asserted in the gate table, in this table and in a dozen document tails, and they disagreed — the same milestone was declared complete and in progress in one file. One source, generated into one place, is the only shape where that cannot happen again. Edit the manifest; do not edit the table.
+
+The dated sections below are the record of how it got here and are not amended after the fact.
+
+<!-- generated:milestones -->
+<!-- Generated from docs/milestones.json by scripts/milestones.py. Edit the manifest, not this table. -->
 
 | Milestone | Status | Evidence recorded | What remains before advancement |
 |---|---|---|---|
-| M0 Foundation | **Completed** | Cargo workspace; versioned domain contracts; SQLite hash-chained event log; JSON CLI. Property tests cover serde round-trips, `Observation` variant integrity, deployment fingerprint sensitivity, UUIDv7 ordering, hash determinism, calibration sampling floors, execution-profile authorisation and typed execution budgets. `cargo fmt --all`, `cargo test --workspace` and `cargo clippy --workspace --all-targets -- -D warnings` all pass. | Compare persisted artifacts against `SCHEMA_VERSION` on load; enforce append-only in the store rather than only in its API, and chain per run under a global root. |
-| M1 Discovery | **Completed for the seven target deployments** | `poorai doctor --json` captures host and backend facts. `models inspect --probe` runs the full capability suite against all seven deployments with a content-addressed, non-overwritable artifact each. A run now *requires* a matching artifact rather than trusting a tag. | Cancellation is asserted by dropping a stream, which does not show the backend stopped — it needs a handle on the provider trait and a fixture over the closed connection. The trial count is still not calibrated against measured variance. |
-| M2 Calibration | **Completed as allocation, not as occupancy** | Seven deployments calibrated across a 2048–32768 ladder, three repetitions per tier, shuffled from a recorded seed, raw samples persisted, invalidation tested across all four keys. The calibrated context is now the context the request carries; nothing may substitute a static default for it. | The ladder qualifies a tier with a one-token reply and samples pressure before generation, so it measures what can be allocated, not what a full context costs. Linux and Windows host probes. |
-| M3 Safe execution | **Completed for writes and execution; reads are not confined** | Gitignore semantics via the ripgrep `ignore` walker in the index; every tool attempt audited allowed or denied inside the hash chain; macOS seatbelt confining writes and denying network; approval gates granted by nobody by default; bounded incremental I/O with process-group kill on timeout. | `Search` and `ListTree` walk `read_dir` and do not honour gitignore, so a file excluded from retrieval is still reachable through a tool. The sandbox denies writing outside the workspace but not reading; `ToolchainInstall` with `NetworkAccess` is an arbitrary executable with a network. Evaluation setup and external verifiers run outside the policy entirely. Linux and Windows adapters. |
-| M4 Agent task loop | **Completed as a single-model, single-action loop** | Baseline → typed action → policy-controlled tool → audit → verification → classified recovery → terminal, with every transition persisted as `task.transition`. Completion is refused where no deterministic verifier exists. Recovery reproduces the failing check before classifying it and draws its budget from the execution profile. | Non-progress is detected only as repeated refusals. A crash resumes from a summary, not from a checkpoint. A plan is a list of claims rather than a graph of independently verified subgoals. |
-| M5 Evaluation | **Completed as a runner; provenance only now emitted** | Frozen corpus as data, hidden verifiers, reproducible runner, JSON and Markdown reports, Wilson intervals, pinned external repositories, and a validated `EvaluationRun` written beside every report. | The recorded campaigns predate the tool-failure counter, the context fix and the verifier gate, so they have to be re-run before being quoted. One invocation still carries one seed and destroys its workspace. |
-| M6 Beta | **Not ready** | The thresholds were met by two deployments on a harness that has since changed under three of the metrics it reported. | Re-measure `m5-frozen-v1` and `external-v1` on the current tree; decide how many trials constitute a result; observability, service lifecycle and usability are untouched. See *What remains* at the end of this document. |
+| M0 Foundation | **complete** | Cargo workspace; versioned domain contracts; SQLite event log with a per-run hash chain and a verifier; typed run events; JSON, Markdown and JSONL reporting. Property tests cover serde round-trips, Observation variant integrity, deployment fingerprint sensitivity, UUIDv7 ordering, hash determinism, calibration sampling floors, execution-profile authorisation, typed execution budgets and event round-trips. | Real migrations beyond the two in place, and an artifact table. |
+| M1 Discovery | **complete for the seven target deployments** | doctor captures host and backend facts. models inspect --probe runs the full capability suite with a content-addressed, non-overwritable artifact each. A run requires a matching artifact, and the measured emission rate shapes how much malformed-call patience it gets. Cancellation closes the connection the backend writes into, asserted from the server's side. | The trial count is not calibrated against measured variance. |
+| M2 Calibration | **harness complete; no profile measured under it** | The ladder fills the context rather than sending a one-line prompt, samples memory pressure after the reply as well as before, and records the occupancy the backend reports along with whether a needle placed at the start came back. The calibrated context is what the request carries; nothing may substitute a static default. | Every existing profile was measured under the allocation ladder and is invalidated by the harness revision. Nothing is calibrated until the ladder is re-run. Linux and Windows host probes. |
+| M3 Safe execution | **complete on macOS** | Gitignore semantics through one walker shared by the index and the tools; reads denied outside the workspace with a measured allowlist; writes confined; network denied without a grant; bounded incremental I/O with process-group kill; every attempt audited allowed or denied, in five outcome classes; corpus preparation and external verifiers under their own bounded policy; services owned by a supervisor that kills them on drop. | Linux and Windows adapters. Under --provision an arbitrary executable with a network can still read the system and toolchain paths; that wants a separate process or VM. |
+| M4 Agent task loop | **complete** | Baseline, typed action, policy-controlled tool, audit, narrow verification, classified recovery, escalation at completion, terminal. Every transition persisted. Completion refused where nothing verifies, and judged against the baseline rather than a green suite. Non-progress detected by what changed rather than by what was proposed. A plan is a graph whose claims are checked where a check exists. Run state is replayable from the log. | The loop does not yet start from a replayed state; the state is recoverable and surfaced, and resuming into it is the step left. |
+| M5 Evaluation | **harness complete; no valid campaign** | Frozen corpus as data, hidden verifiers, reproducible runner, JSON and Markdown reports, Wilson intervals, pinned external repositories, a validated EvaluationRun beside every report, multi-seed campaigns under one lease, and per-run cost folded from the events. | Every recorded campaign is void: the tool-failure rate was never measured, the context sent was not the one calibrated, and a workspace with no checks scored as resolved. The corpus has to be re-run before any number is quoted. |
+| M6 Beta | **not ready** | The thresholds were met by two deployments on a harness that has since changed under three of the metrics it reported. | Re-calibrate, then re-measure m5-frozen-v1 and external-v1. Decide how many trials constitute a result. Usability beyond --json. |
 
+Campaign evidence: none since 2026-09-03; every earlier campaign is void.
+<!-- /generated:milestones -->
 
 ### Capability probe results — 2026-09-01
 
@@ -540,7 +547,6 @@ A run that ended is reported, not resumed: every exit writes a terminal event, a
 
 | Item | What is wrong now | What closing it looks like |
 |---|---|---|
-| Calibration measures allocation, not occupancy | A tier is qualified by a prompt of one token and pressure sampled before generation, so "262144 is nearly free" describes an allocation | A ladder that fills the context and samples peak resident memory during generation |
 
 ### Reorganising, seeing, and not being blocked by someone else's failure — 2026-09-03
 
@@ -648,11 +654,20 @@ Preparing a child process now happens in one place. A second way of starting one
 
 **Two abstractions are gone.** `ToolCapability` was an enum that no longer matched the typed actions it was written for — two vocabularies for one concept, one of them wrong. `run_single_action` was a second production-shaped path beside the action loop with its own verification and terminal handling, so every rule added to the loop had to be remembered here too; the refusal to complete without a verifier had to be written twice, which is how it was noticed.
 
+### The ladder measures occupancy, and status has one source — 2026-09-03
+
+**The ladder sent a one-line prompt at every `num_ctx`**, which establishes that a tier can be *allocated* and says nothing about what it costs to use. `calibration.md` has said so since the ladder was written. It now fills the tier — three quarters of it, because the reply needs somewhere to go and a prompt that fills the context measures a refusal rather than a cost — with varied filler, since a run of identical tokens compresses in ways a real prompt does not and would understate what is being measured.
+
+Pressure is sampled after the reply as well as before. Reading it before generating is the one moment it is guaranteed not to have been paid yet. And a needle at the start is asked for at the end: a tier where it comes back held the context; one where it does not was allocated and then not used, which on a deployment that truncates silently is every tier and is exactly what a short prompt cannot see. The occupancy the backend reports is recorded beside the tier requested, so what was achieved is a fact rather than an intention.
+
+**Every existing calibration is invalidated**, by the harness revision, which is the gate working: those profiles measured something else. Nothing is calibrated until the ladder is re-run.
+
+**Milestone status has one source.** It was asserted in the gate table, in the status table and in a dozen document tails, and they disagreed — the same milestone was declared complete and in progress in one file. `docs/milestones.json` is the manifest and `scripts/milestones.py` generates the table between markers; the script refuses to run if the markers are gone and touches nothing else.
+
 ### P3 — a measurable beta
 
 | Item | What is wrong now | What closing it looks like |
 |---|---|---|
-| Status is written by hand in three places | This roadmap has declared the same milestone complete and in progress; older documents describe as absent what exists | Milestone status generated from a versioned manifest, with historical notes kept as dated reports rather than as claims |
 
 ### Removals
 
@@ -660,8 +675,6 @@ Not new capability — code and configuration that exists, is not on the product
 
 | What | Why it should go |
 |---|---|
-| Duplicated status prose | Milestone state is asserted in the gate table, in the status table and in a dozen document tails. Generated from one manifest, or written once. |
-| Configuration with no consumer | Fields that serialise, validate and reach nothing — `ReasoningControl` and `RuntimeSnapshot.loaded_models` were two of these until 2026-09-03, and the pattern is what made the audit necessary. A field that nothing reads should not exist. |
 
 A guard against the class rather than the instances: a field that no production path reads is a defect, and the cheapest place to catch it is a test that fails when a declared value does not reach the request, the policy or the decision it names.
 

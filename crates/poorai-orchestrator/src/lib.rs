@@ -3205,6 +3205,27 @@ pub struct CalibrationSample {
     /// `None` where the backend did not say, which is unknown rather than an
     /// offload.
     pub fully_on_accelerator: Option<bool>,
+    /// Memory pressure sampled *after* the reply.
+    ///
+    /// The ladder read pressure before generating and a short prompt after,
+    /// which measures a tier that can be allocated rather than one that can be
+    /// used. The cost of a context is paid while it is full, and nothing
+    /// looked then.
+    pub memory_pressure_after: poorai_domain::Observation,
+    /// Prompt tokens the backend says it read, against the tier requested.
+    ///
+    /// The occupancy actually achieved, as a fact rather than an intention: a
+    /// deployment that silently truncates fills nothing however large a prompt
+    /// it was sent, and this is where that shows.
+    pub prompt_tokens_reported: Option<u64>,
+    pub occupancy: Option<f64>,
+    /// Whether the reply proved the prompt was read whole.
+    ///
+    /// A needle at the start of the filler, asked for at the end. A tier where
+    /// the needle came back is a tier that held the context; one where it did
+    /// not is a tier that was allocated and then not used, which is the
+    /// distinction this ladder existed to miss.
+    pub needle_recalled: Option<bool>,
 }
 
 /// Runs one sample: full stream, first-token latency and generation rate.
@@ -3223,7 +3244,7 @@ async fn calibration_sample<P: ModelProvider>(
         sampling: Default::default(),
         messages: vec![poorai_domain::ChatMessage {
             role: "user".into(),
-            content: CALIBRATION_PROMPT.into(),
+            content: occupancy_prompt(context_tokens),
             ..Default::default()
         }],
     };
@@ -3248,6 +3269,7 @@ async fn calibration_sample<P: ModelProvider>(
     let mut chunks = 0usize;
     let mut metrics = None;
     let mut error = None;
+    let mut answer = String::new();
     match provider.chat(request).await {
         Ok(mut stream) => {
             while let Some(next) = stream.next().await {
@@ -3257,6 +3279,7 @@ async fn calibration_sample<P: ModelProvider>(
                             first_token_ms = started.elapsed().as_secs_f64() * 1000.0;
                         }
                         chunks += 1;
+                        answer.push_str(&chunk.content);
                         if chunk.metrics.is_some() {
                             metrics = chunk.metrics;
                         }
@@ -3277,7 +3300,20 @@ async fn calibration_sample<P: ModelProvider>(
         Err(failure) => error = Some(failure.to_string()),
     }
     let total_ms = started.elapsed().as_secs_f64() * 1000.0;
+    // Asked after the reply, which is the only moment the context was
+    // actually full. The ladder read pressure before generating, which is the
+    // one time it is guaranteed not to have been paid yet.
+    let memory_pressure_after = host.memory_pressure().await;
     let ok = error.is_none();
+    let prompt_tokens_reported = metrics.as_ref().and_then(|m| m.prompt_tokens);
+    let occupancy = prompt_tokens_reported
+        .filter(|_| context_tokens > 0)
+        .map(|tokens| tokens as f64 / f64::from(context_tokens));
+    // Only a real reply says anything about the needle. A failed sample that
+    // produced no text is unknown, not a miss.
+    let needle_recalled = ok
+        .then(|| answer.contains(CALIBRATION_NEEDLE))
+        .filter(|_| !answer.trim().is_empty());
     CalibrationSample {
         context_tokens,
         repetition,
@@ -3302,6 +3338,10 @@ async fn calibration_sample<P: ModelProvider>(
             _ => "none",
         },
         metrics,
+        memory_pressure_after,
+        prompt_tokens_reported,
+        occupancy,
+        needle_recalled,
         memory_pressure,
         backend_state,
         fully_on_accelerator,
@@ -3317,7 +3357,51 @@ pub fn sample_ran_warm(sample: &CalibrationSample) -> Option<bool> {
 const WARM_LOAD_CEILING_NS: u64 = 500_000_000;
 
 /// Fixed prompt for every calibration sample; changing it changes the harness.
-const CALIBRATION_PROMPT: &str = "Reply with the single token: OK";
+/// The share of a tier a calibration prompt fills.
+///
+/// Not all of it: the reply needs somewhere to go, and a prompt that fills the
+/// context measures a refusal rather than a cost.
+const OCCUPANCY_SHARE: f64 = 0.75;
+
+/// The needle, placed at the start of the filler and asked for at the end.
+const CALIBRATION_NEEDLE: &str = "PLUM-7391";
+
+/// A prompt that actually occupies the tier being measured.
+///
+/// The ladder sent a one-line prompt at every `num_ctx`, which establishes
+/// that a tier can be *allocated* and says nothing about what it costs to use.
+/// This project's own documents have said so since the ladder was written:
+/// "a ladder of `num_ctx` values with a fixed short prompt measures
+/// allocation, not occupancy".
+///
+/// Filling it is most of the answer. The rest is the needle: a tier where the
+/// needle comes back held the context, and one where it does not was allocated
+/// and then not used -- which on a deployment that truncates silently is every
+/// tier, and is exactly what a ladder of short prompts cannot see.
+pub fn occupancy_prompt(context_tokens: u32) -> String {
+    let target_chars = (f64::from(context_tokens) * OCCUPANCY_SHARE * 4.0) as usize;
+    let head = format!("Remember this code: {CALIBRATION_NEEDLE}.\n");
+    let tail = "\nReply with only the code you were asked to remember at the start. If you cannot see it, reply NONE.";
+    let filler_chars = target_chars.saturating_sub(head.len() + tail.len());
+    // Varied rather than one repeated word: a run of identical tokens
+    // compresses in ways a real prompt does not, and would understate the cost
+    // this is trying to measure.
+    let mut filler = String::with_capacity(filler_chars + 32);
+    let mut n: u64 = 0;
+    while filler.len() < filler_chars {
+        filler.push_str(&format!(
+            "line {n}: the quick brown fox jumps over the lazy dog.\n"
+        ));
+        n += 1;
+    }
+    filler.truncate(
+        (0..=filler_chars.min(filler.len()))
+            .rev()
+            .find(|at| filler.is_char_boundary(*at))
+            .unwrap_or(0),
+    );
+    format!("{head}{filler}{tail}")
+}
 /// Repetitions per context tier. Calibration is a repeated measurement.
 const CALIBRATION_REPETITIONS: usize = 3;
 
@@ -3785,6 +3869,12 @@ mod tests {
             },
             backend_state: None,
             fully_on_accelerator: None,
+            memory_pressure_after: poorai_domain::Observation::Unknown {
+                reason: "fixture".into(),
+            },
+            prompt_tokens_reported: None,
+            occupancy: None,
+            needle_recalled: None,
         };
         // Measured on this machine: ~1.7s reloading, ~11ms warm.
         assert_eq!(

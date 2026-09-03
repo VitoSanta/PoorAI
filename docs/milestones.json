@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "assessed_on": "2026-09-03",
+  "note": "The single source of milestone status. The roadmap's status table is generated from this file by `scripts/milestones.py`; nothing else asserts a milestone's state. Written by hand, read by everything, so the three places that used to disagree cannot.",
+  "campaign_evidence": "none since 2026-09-03; every earlier campaign is void",
+  "milestones": [
+    {
+      "id": "M0",
+      "name": "Foundation",
+      "status": "complete",
+      "evidence": "Cargo workspace; versioned domain contracts; SQLite event log with a per-run hash chain and a verifier; typed run events; JSON, Markdown and JSONL reporting. Property tests cover serde round-trips, Observation variant integrity, deployment fingerprint sensitivity, UUIDv7 ordering, hash determinism, calibration sampling floors, execution-profile authorisation, typed execution budgets and event round-trips.",
+      "remaining": "Real migrations beyond the two in place, and an artifact table."
+    },
+    {
+      "id": "M1",
+      "name": "Discovery",
+      "status": "complete for the seven target deployments",
+      "evidence": "doctor captures host and backend facts. models inspect --probe runs the full capability suite with a content-addressed, non-overwritable artifact each. A run requires a matching artifact, and the measured emission rate shapes how much malformed-call patience it gets. Cancellation closes the connection the backend writes into, asserted from the server's side.",
+      "remaining": "The trial count is not calibrated against measured variance."
+    },
+    {
+      "id": "M2",
+      "name": "Calibration",
+      "status": "harness complete; no profile measured under it",
+      "evidence": "The ladder fills the context rather than sending a one-line prompt, samples memory pressure after the reply as well as before, and records the occupancy the backend reports along with whether a needle placed at the start came back. The calibrated context is what the request carries; nothing may substitute a static default.",
+      "remaining": "Every existing profile was measured under the allocation ladder and is invalidated by the harness revision. Nothing is calibrated until the ladder is re-run. Linux and Windows host probes."
+    },
+    {
+      "id": "M3",
+      "name": "Safe execution",
+      "status": "complete on macOS",
+      "evidence": "Gitignore semantics through one walker shared by the index and the tools; reads denied outside the workspace with a measured allowlist; writes confined; network denied without a grant; bounded incremental I/O with process-group kill; every attempt audited allowed or denied, in five outcome classes; corpus preparation and external verifiers under their own bounded policy; services owned by a supervisor that kills them on drop.",
+      "remaining": "Linux and Windows adapters. Under --provision an arbitrary executable with a network can still read the system and toolchain paths; that wants a separate process or VM."
+    },
+    {
+      "id": "M4",
+      "name": "Agent task loop",
+      "status": "complete",
+      "evidence": "Baseline, typed action, policy-controlled tool, audit, narrow verification, classified recovery, escalation at completion, terminal. Every transition persisted. Completion refused where nothing verifies, and judged against the baseline rather than a green suite. Non-progress detected by what changed rather than by what was proposed. A plan is a graph whose claims are checked where a check exists. Run state is replayable from the log.",
+      "remaining": "The loop does not yet start from a replayed state; the state is recoverable and surfaced, and resuming into it is the step left."
+    },
+    {
+      "id": "M5",
+      "name": "Evaluation",
+      "status": "harness complete; no valid campaign",
+      "evidence": "Frozen corpus as data, hidden verifiers, reproducible runner, JSON and Markdown reports, Wilson intervals, pinned external repositories, a validated EvaluationRun beside every report, multi-seed campaigns under one lease, and per-run cost folded from the events.",
+      "remaining": "Every recorded campaign is void: the tool-failure rate was never measured, the context sent was not the one calibrated, and a workspace with no checks scored as resolved. The corpus has to be re-run before any number is quoted."
+    },
+    {
+      "id": "M6",
+      "name": "Beta",
+      "status": "not ready",
+      "evidence": "The thresholds were met by two deployments on a harness that has since changed under three of the metrics it reported.",
+      "remaining": "Re-calibrate, then re-measure m5-frozen-v1 and external-v1. Decide how many trials constitute a result. Usability beyond --json."
+    }
+  ]
+}
