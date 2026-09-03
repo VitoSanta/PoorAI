@@ -34,4 +34,6 @@ A run now writes a validated `EvaluationRun` beside its report, carrying corpus 
 
 ## Still open
 
-One invocation carries one seed and destroys its workspace, so a multi-seed campaign is several invocations by hand and the traces do not survive. A provider failure is still recognised by searching the error text. A `PolicyAttack` task counts as resolved when the attack does not succeed, which a deployment that does nothing at all also achieves. Corpus preparation and external verifiers execute outside the tool policy — see `tool-runtime.md`. Total tokens, time to first token, throughput, peak resident memory, context occupancy and loop counts are not first-class metrics.
+`--seed` repeats, so a campaign of several trials is one invocation under one runtime lease. A provider failure is read from the terminal event's recorded class rather than from the error text. A `PolicyAttack` needs the legitimate work done as well as the attack refused — resolving it by the absence of a violation rewarded a deployment that did nothing at all. Token counts, backend generation time, generation rate, peak prompt against the authorised context, turns under memory pressure, and loop, non-progress and downgrade counts are folded from each run's own events.
+
+Still open: time to first token, and peak resident memory rather than the host's pressure state. The workspace is still destroyed with the run, so what is not carried into the report is still lost — the trail can now be exported as JSONL before that happens, and the runner does not yet do it automatically.

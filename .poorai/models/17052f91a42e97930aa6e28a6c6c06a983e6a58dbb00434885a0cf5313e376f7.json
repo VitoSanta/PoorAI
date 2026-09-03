@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "id": "01a05d49-013d-7a70-aef3-34976ee98d06",
+  "digest": "17052f91a42e97930aa6e28a6c6c06a983e6a58dbb00434885a0cf5313e376f7",
+  "family": "gptoss",
+  "quantization": "MXFP4",
+  "capabilities": {
+    "cancellation": {
+      "status": "observed",
+      "value": {
+        "abandoned_after_ms": 451,
+        "backend_responsive_after": true,
+        "chunks_before_cancel": 3
+      }
+    },
+    "chat": {
+      "status": "observed",
+      "value": {
+        "chunks": 15,
+        "produced_text": true
+      }
+    },
+    "completion": {
+      "status": "observed",
+      "value": true
+    },
+    "context_boundary": {
+      "status": "observed",
+      "value": {
+        "behaviour": "truncated_silently",
+        "bounded_prompt_tokens": 258,
+        "needle_recalled": false,
+        "reference_prompt_tokens": 4095,
+        "requested_context": 512
+      }
+    },
+    "edit": {
+      "status": "observed",
+      "value": {
+        "edits": 3,
+        "evidence": [
+          {
+            "hash_guard_satisfied": true,
+            "new_hash": "e32de047eb3b614e571a4fcc94a43c37aa6785449cc8396054ece5d8a80f7f50",
+            "path": "probe.rs",
+            "previous_hash": "236e7d9d0db41fd2ff372b3f592beff5aae31fdd5684405bfe9e0917332c87d5",
+            "replacement_bytes": 32,
+            "trial": 1
+          },
+          {
+            "hash_guard_satisfied": true,
+            "new_hash": "e32de047eb3b614e571a4fcc94a43c37aa6785449cc8396054ece5d8a80f7f50",
+            "path": "probe.rs",
+            "previous_hash": "236e7d9d0db41fd2ff372b3f592beff5aae31fdd5684405bfe9e0917332c87d5",
+            "replacement_bytes": 32,
+            "trial": 2
+          },
+          {
+            "hash_guard_satisfied": true,
+            "new_hash": "e32de047eb3b614e571a4fcc94a43c37aa6785449cc8396054ece5d8a80f7f50",
+            "path": "probe.rs",
+            "previous_hash": "236e7d9d0db41fd2ff372b3f592beff5aae31fdd5684405bfe9e0917332c87d5",
+            "replacement_bytes": 32,
+            "trial": 3
+          }
+        ],
+        "failures": [],
+        "reliable": true,
+        "trials": 3
+      }
+    },
+    "streaming": {
+      "status": "observed",
+      "value": {
+        "chunks": 15
+      }
+    },
+    "structured_tools": {
+      "status": "observed",
+      "value": {
+        "calls": 3,
+        "evidence": [
+          {
+            "arguments": {
+              "value": "ok"
+            },
+            "chunk_index": 8,
+            "chunks": 8,
+            "trial": 1
+          },
+          {
+            "arguments": {
+              "value": "ok"
+            },
+            "chunk_index": 18,
+            "chunks": 18,
+            "trial": 2
+          },
+          {
+            "arguments": {
+              "value": "ok"
+            },
+            "chunk_index": 65,
+            "chunks": 65,
+            "trial": 3
+          }
+        ],
+        "failures": [],
+        "reliable": true,
+        "tool": "probe_echo",
+        "trials": 3
+      }
+    },
+    "thinking": {
+      "status": "observed",
+      "value": true
+    },
+    "tools": {
+      "status": "observed",
+      "value": true
+    }
+  },
+  "metadata": {
+    "model_info": {
+      "general.architecture": "gptoss",
+      "general.file_type": 4,
+      "general.parameter_count": 20914757184,
+      "general.quantization_version": 2,
+      "gptoss.attention.head_count": 64,
+      "gptoss.attention.head_count_kv": 8,
+      "gptoss.attention.key_length": 64,
+      "gptoss.attention.layer_norm_rms_epsilon": 0.00001,
+      "gptoss.attention.sliding_window": 128,
+      "gptoss.attention.value_length": 64,
+      "gptoss.block_count": 24,
+      "gptoss.context_length": 131072,
+      "gptoss.embedding_length": 2880,
+      "gptoss.expert_count": 32,
+      "gptoss.expert_used_count": 4,
+      "gptoss.feed_forward_length": 2880,
+      "gptoss.rope.freq_base": 150000,
+      "gptoss.rope.scaling.factor": 32,
+      "gptoss.rope.scaling.original_context_length": 4096,
+      "tokenizer.ggml.add_bos_token": false,
+      "tokenizer.ggml.add_eos_token": false,
+      "tokenizer.ggml.add_padding_token": false,
+      "tokenizer.ggml.bos_token_id": 199998,
+      "tokenizer.ggml.eos_token_id": 199999,
+      "tokenizer.ggml.eos_token_ids": [
+        199999,
+        200002,
+        200012
+      ],
+      "tokenizer.ggml.merges": {
+        "content_hash": "a1696332d711f628f73ffa64de8268cb8c4ae8686180a23df41c21d94ef03128",
+        "length": 446189,
+        "pruned": "oversized_array"
+      },
+      "tokenizer.ggml.model": "gpt2",
+      "tokenizer.ggml.padding_token_id": 199999,
+      "tokenizer.ggml.pre": "default",
+      "tokenizer.ggml.scores": {
+        "content_hash": "b76d9e08c74662a3aa64366ddfd6591a227181438377a60afddf0098ec950d60",
+        "length": 201088,
+        "pruned": "oversized_array"
+      },
+      "tokenizer.ggml.token_type": {
+        "content_hash": "4e58c9430c158fe9d84fc5c27a32cc2f3e506ed36c40ca1f742a0859856732b4",
+        "length": 201088,
+        "pruned": "oversized_array"
+      },
+      "tokenizer.ggml.tokens": {
+        "content_hash": "8b550b19749aa9686815d2ea8a971d930c8ef839554c51965f6b3c13e28acab6",
+        "length": 201088,
+        "pruned": "oversized_array"
+      }
+    },
+    "parent_model": "",
+    "reported_modified_at": "2026-07-24T12:56:55.684760004+02:00",
+    "reported_size_bytes": 13793441244
+  },
+  "provenance": {
+    "source": "ollama:/api/show,/api/tags",
+    "observed_at": "2026-09-01T14:04:20.669957Z",
+    "content_hash": "9836c535d6e2ae6f36b2b936ea6094c854cfe53c4dec97f3ef27ce3279644c12"
+  }
+}

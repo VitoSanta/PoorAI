@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "id": "01a05d4c-4d69-7810-8674-545d29222915",
+  "digest": "ef32a55b4976faa955cbab0462d09bd081351ef5b87d73d8fcd299bf17c111d7",
+  "family": "muse_glimmer",
+  "quantization": "nvfp4",
+  "capabilities": {
+    "cancellation": {
+      "status": "observed",
+      "value": {
+        "abandoned_after_ms": 751,
+        "backend_responsive_after": true,
+        "chunks_before_cancel": 3
+      }
+    },
+    "chat": {
+      "status": "observed",
+      "value": {
+        "chunks": 79,
+        "produced_text": true
+      }
+    },
+    "completion": {
+      "status": "observed",
+      "value": true
+    },
+    "context_boundary": {
+      "status": "observed",
+      "value": {
+        "behaviour": "limit_not_enforced",
+        "bounded_prompt_tokens": 4084,
+        "needle_recalled": true,
+        "reference_prompt_tokens": 4084,
+        "requested_context": 512
+      }
+    },
+    "edit": {
+      "status": "unknown",
+      "value": {
+        "reason": "no usable edit in 3 trial(s): trial 1: model proposed [\"list_tree\"] instead of apply_replace; trial 2: model proposed [\"list_tree\"] instead of apply_replace; trial 3: model proposed [\"list_tree\"] instead of apply_replace"
+      }
+    },
+    "streaming": {
+      "status": "observed",
+      "value": {
+        "chunks": 79
+      }
+    },
+    "structured_tools": {
+      "status": "observed",
+      "value": {
+        "calls": 3,
+        "evidence": [
+          {
+            "arguments": {
+              "value": "ok"
+            },
+            "chunk_index": 84,
+            "chunks": 84,
+            "trial": 1
+          },
+          {
+            "arguments": {
+              "value": "ok"
+            },
+            "chunk_index": 95,
+            "chunks": 95,
+            "trial": 2
+          },
+          {
+            "arguments": {
+              "value": "ok"
+            },
+            "chunk_index": 156,
+            "chunks": 156,
+            "trial": 3
+          }
+        ],
+        "failures": [],
+        "reliable": true,
+        "tool": "probe_echo",
+        "trials": 3
+      }
+    },
+    "thinking": {
+      "status": "observed",
+      "value": true
+    },
+    "tools": {
+      "status": "observed",
+      "value": true
+    },
+    "vision": {
+      "status": "observed",
+      "value": true
+    }
+  },
+  "metadata": {
+    "model_info": {
+      "general.architecture": "muse_glimmer",
+      "general.parameter_count": 32331623232,
+      "muse_glimmer.attention.head_count": 32,
+      "muse_glimmer.attention.head_count_kv": 2,
+      "muse_glimmer.block_count": 52,
+      "muse_glimmer.context_length": 131072,
+      "muse_glimmer.embedding_length": 6656,
+      "muse_glimmer.feed_forward_length": 19968,
+      "muse_glimmer.vocab_size": 202048
+    },
+    "parent_model": "",
+    "reported_modified_at": "2026-08-12T15:21:46.995037107+02:00",
+    "reported_size_bytes": 21232871036
+  },
+  "provenance": {
+    "source": "ollama:/api/show,/api/tags",
+    "observed_at": "2026-09-01T14:07:56.777403Z",
+    "content_hash": "b410f17d8ddca6cb4e7389845a6ed8f3904c9792844a6f14ad3492c25dc9e22d"
+  }
+}

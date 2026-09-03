@@ -250,6 +250,51 @@ fn persist_failure(
     reason: &str,
     detail: serde_json::Value,
 ) -> Result<(), String> {
+    persist_failure_as(
+        store,
+        run_id,
+        state,
+        reason,
+        classify_terminal(reason),
+        detail,
+    )
+}
+
+/// What kind of ending a reason describes.
+///
+/// Read here, once, from the reasons this loop itself writes -- rather than by
+/// a caller searching the error text it happens to receive, which is a
+/// classification made of prose that changes whenever a message is reworded.
+fn classify_terminal(reason: &str) -> poorai_domain::TerminalClass {
+    use poorai_domain::TerminalClass as C;
+    let reason = reason.to_ascii_lowercase();
+    if reason.contains("interrupted") || reason.contains("cancel") {
+        C::Interrupted
+    } else if reason.contains("verifier") {
+        C::NoVerifier
+    } else if reason.contains("malformed") || reason.contains("usable calls") {
+        C::Protocol
+    } else if reason.contains("recovery") {
+        C::Recovery
+    } else if reason.contains("budget") || reason.contains("actions") {
+        C::Budget
+    } else if reason.contains("timed out") || reason.contains("timeout") {
+        C::Timeout
+    } else if reason.contains("provider") || reason.contains("backend") {
+        C::Provider
+    } else {
+        C::Unclassified
+    }
+}
+
+fn persist_failure_as(
+    store: &Store,
+    run_id: poorai_domain::Id,
+    state: &mut TaskState,
+    reason: &str,
+    class: poorai_domain::TerminalClass,
+    detail: serde_json::Value,
+) -> Result<(), String> {
     *state = persist_transition(store, run_id, state.clone(), TaskState::Failed, reason)?;
     store
         .append(
@@ -257,6 +302,7 @@ fn persist_failure(
             "task.failed",
             poorai_domain::RunEvent::TaskFailed {
                 reason: reason.into(),
+                class,
                 detail: Some(detail),
             }
             .payload(),
@@ -298,6 +344,7 @@ impl Drop for TerminalEventGuard<'_> {
             "task.failed",
             poorai_domain::RunEvent::TaskFailed {
                 reason: "run interrupted or cancelled".into(),
+                class: poorai_domain::TerminalClass::Interrupted,
                 detail: None,
             }
             .payload(),

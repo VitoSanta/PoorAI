@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "id": "01a05d48-4caf-7821-9330-05550ffca10c",
+  "digest": "8b1474be6e54dc19eb7aa08bebfb9bda147c4b9ef9796a726131ad29ad15645a",
+  "family": "nemotron_h",
+  "quantization": "nvfp4",
+  "capabilities": {
+    "cancellation": {
+      "status": "observed",
+      "value": {
+        "abandoned_after_ms": 311,
+        "backend_responsive_after": true,
+        "chunks_before_cancel": 3
+      }
+    },
+    "chat": {
+      "status": "observed",
+      "value": {
+        "chunks": 110,
+        "produced_text": true
+      }
+    },
+    "completion": {
+      "status": "observed",
+      "value": true
+    },
+    "context_boundary": {
+      "status": "observed",
+      "value": {
+        "behaviour": "limit_not_enforced",
+        "bounded_prompt_tokens": 4049,
+        "needle_recalled": true,
+        "reference_prompt_tokens": 4049,
+        "requested_context": 512
+      }
+    },
+    "edit": {
+      "status": "observed",
+      "value": {
+        "edits": 2,
+        "evidence": [
+          {
+            "hash_guard_satisfied": true,
+            "new_hash": "3b41af144e14c2190d10653563034a2d17afaf9859a943d9b5684b93dc3fc042",
+            "path": "probe.rs",
+            "previous_hash": "236e7d9d0db41fd2ff372b3f592beff5aae31fdd5684405bfe9e0917332c87d5",
+            "replacement_bytes": 31,
+            "trial": 1
+          },
+          {
+            "hash_guard_satisfied": true,
+            "new_hash": "3b41af144e14c2190d10653563034a2d17afaf9859a943d9b5684b93dc3fc042",
+            "path": "probe.rs",
+            "previous_hash": "236e7d9d0db41fd2ff372b3f592beff5aae31fdd5684405bfe9e0917332c87d5",
+            "replacement_bytes": 31,
+            "trial": 3
+          }
+        ],
+        "failures": [
+          "trial 2: model proposed [\"read_file\"] instead of apply_replace"
+        ],
+        "reliable": false,
+        "trials": 3
+      }
+    },
+    "streaming": {
+      "status": "observed",
+      "value": {
+        "chunks": 110
+      }
+    },
+    "structured_tools": {
+      "status": "observed",
+      "value": {
+        "calls": 2,
+        "evidence": [
+          {
+            "arguments": {
+              "value": "ok"
+            },
+            "chunk_index": 51,
+            "chunks": 52,
+            "trial": 1
+          },
+          {
+            "arguments": {
+              "value": "ok"
+            },
+            "chunk_index": 110,
+            "chunks": 111,
+            "trial": 3
+          }
+        ],
+        "failures": [
+          "trial 2: no native tool call"
+        ],
+        "reliable": false,
+        "tool": "probe_echo",
+        "trials": 3
+      }
+    },
+    "thinking": {
+      "status": "observed",
+      "value": true
+    },
+    "tools": {
+      "status": "observed",
+      "value": true
+    }
+  },
+  "metadata": {
+    "model_info": {
+      "general.architecture": "nemotron_h",
+      "general.parameter_count": 32913124928,
+      "nemotron_h.attention.head_count": 32,
+      "nemotron_h.attention.head_count_kv": 2,
+      "nemotron_h.block_count": 52,
+      "nemotron_h.context_length": 262144,
+      "nemotron_h.embedding_length": 2688,
+      "nemotron_h.feed_forward_length": 1856,
+      "nemotron_h.vocab_size": 131072
+    },
+    "parent_model": "",
+    "reported_modified_at": "2026-08-12T15:20:18.334989855+02:00",
+    "reported_size_bytes": 22666641559
+  },
+  "provenance": {
+    "source": "ollama:/api/show,/api/tags",
+    "observed_at": "2026-09-01T14:03:34.447259Z",
+    "content_hash": "9f4bc4852fa454ca898f345d4c4d8977850d8df3910f5d97c0291f04f8f0af09"
+  }
+}

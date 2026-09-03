@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "id": "01a05d4a-3610-7c13-9275-a212ef6464bc",
+  "digest": "637cc0ff15709212de4aa694be67e3af5e80533ca538c86ad69c53c511e40840",
+  "family": "gemma4",
+  "quantization": "nvfp4",
+  "capabilities": {
+    "cancellation": {
+      "status": "observed",
+      "value": {
+        "abandoned_after_ms": 785,
+        "backend_responsive_after": true,
+        "chunks_before_cancel": 3
+      }
+    },
+    "chat": {
+      "status": "observed",
+      "value": {
+        "chunks": 32,
+        "produced_text": true
+      }
+    },
+    "completion": {
+      "status": "observed",
+      "value": true
+    },
+    "context_boundary": {
+      "status": "observed",
+      "value": {
+        "behaviour": "limit_not_enforced",
+        "bounded_prompt_tokens": 4045,
+        "needle_recalled": true,
+        "reference_prompt_tokens": 4045,
+        "requested_context": 512
+      }
+    },
+    "edit": {
+      "status": "observed",
+      "value": {
+        "edits": 3,
+        "evidence": [
+          {
+            "hash_guard_satisfied": true,
+            "new_hash": "e32de047eb3b614e571a4fcc94a43c37aa6785449cc8396054ece5d8a80f7f50",
+            "path": "probe.rs",
+            "previous_hash": "236e7d9d0db41fd2ff372b3f592beff5aae31fdd5684405bfe9e0917332c87d5",
+            "replacement_bytes": 32,
+            "trial": 1
+          },
+          {
+            "hash_guard_satisfied": true,
+            "new_hash": "e32de047eb3b614e571a4fcc94a43c37aa6785449cc8396054ece5d8a80f7f50",
+            "path": "probe.rs",
+            "previous_hash": "236e7d9d0db41fd2ff372b3f592beff5aae31fdd5684405bfe9e0917332c87d5",
+            "replacement_bytes": 32,
+            "trial": 2
+          },
+          {
+            "hash_guard_satisfied": true,
+            "new_hash": "e32de047eb3b614e571a4fcc94a43c37aa6785449cc8396054ece5d8a80f7f50",
+            "path": "probe.rs",
+            "previous_hash": "236e7d9d0db41fd2ff372b3f592beff5aae31fdd5684405bfe9e0917332c87d5",
+            "replacement_bytes": 32,
+            "trial": 3
+          }
+        ],
+        "failures": [],
+        "reliable": true,
+        "trials": 3
+      }
+    },
+    "streaming": {
+      "status": "observed",
+      "value": {
+        "chunks": 32
+      }
+    },
+    "structured_tools": {
+      "status": "observed",
+      "value": {
+        "calls": 3,
+        "evidence": [
+          {
+            "arguments": {
+              "value": "ok"
+            },
+            "chunk_index": 29,
+            "chunks": 30,
+            "trial": 1
+          },
+          {
+            "arguments": {
+              "value": "ok"
+            },
+            "chunk_index": 38,
+            "chunks": 39,
+            "trial": 2
+          },
+          {
+            "arguments": {
+              "value": "ok"
+            },
+            "chunk_index": 37,
+            "chunks": 38,
+            "trial": 3
+          }
+        ],
+        "failures": [],
+        "reliable": true,
+        "tool": "probe_echo",
+        "trials": 3
+      }
+    },
+    "thinking": {
+      "status": "observed",
+      "value": true
+    },
+    "tools": {
+      "status": "observed",
+      "value": true
+    }
+  },
+  "metadata": {
+    "model_info": {
+      "gemma4.block_count": 60,
+      "gemma4.context_length": 262144,
+      "gemma4.embedding_length": 5376,
+      "general.architecture": "gemma4",
+      "general.parameter_count": 31742607472
+    },
+    "parent_model": "",
+    "reported_modified_at": "2026-07-29T09:26:05.291031407+02:00",
+    "reported_size_bytes": 18631091008
+  },
+  "provenance": {
+    "source": "ollama:/api/show,/api/tags",
+    "observed_at": "2026-09-01T14:05:39.728168Z",
+    "content_hash": "c980fb73bd7321ce4d2049f868ddd16f3f369e120e34be53642bfd1c647e494d"
+  }
+}

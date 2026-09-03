@@ -1,0 +1,153 @@
+{
+  "profile": {
+    "compatibility_key": "963e4edea2dba57741c8b3afbee91a357e14b83cb8e60ea26f457ede2a512fd8",
+    "created_at": "2026-09-01T12:48:35.203367Z",
+    "deployment_fingerprint": "2ddb83a14e867c65bc44219764068a4e63da344f85591f22bab5b3e5e462b029",
+    "harness_rev": "calibration-harness-v3",
+    "id": "01a05d03-a583-71d1-984d-6e0fc3ac10b9",
+    "model_digest": "ef32a55b4976faa955cbab0462d09bd081351ef5b87d73d8fcd299bf17c111d7",
+    "raw_artifact_hashes": [
+      "c87bebf8431e1b49798d513d264fa9c2df66fb63f58e236b5d266abee6c9bb36",
+      "ce84c1650b0d88e5757805277d2d499e3982478fbe6d26d14ef4a077b3b800b3",
+      "30ab0501729cbba4331baba78942895e9dadf3c67324aed93d9cb2498addb692",
+      "607426e7fe41f8bb3d7200a5316e0d1d30f55bff9b78d93617e7437e7120b4db"
+    ],
+    "schema_version": 1,
+    "stable_points": [
+      {
+        "context_tokens": 2048,
+        "generation_tokens_per_second": 16.229587841130737,
+        "median_first_token_ms": 195.162416,
+        "memory_pressure_observed": false,
+        "samples": 3,
+        "success_rate": 1.0,
+        "variance": 3164.7983964611594
+      }
+    ],
+    "thresholds": {
+      "allow_memory_pressure": false,
+      "max_median_first_token_ms": 120000.0,
+      "min_success_rate": 1.0
+    }
+  },
+  "samples": [
+    {
+      "backend_state": {
+        "loaded_models": [
+          "muse-glimmer:30b-mlx",
+          "gemma4:31b-mlx",
+          "gpt-oss:20b"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 60,
+      "context_tokens": 2048,
+      "error": null,
+      "first_token_ms": 195.162416,
+      "generation_tokens_per_second": 16.44056871651463,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 37,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 68,
+        "generation_duration_ns": 4136109959,
+        "load_duration_ns": 9812167,
+        "prompt_eval_duration_ns": 4125,
+        "prompt_tokens": 63,
+        "total_duration_ns": 4146606375
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 1,
+      "total_ms": 4147.538916
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "muse-glimmer:30b-mlx",
+          "gemma4:31b-mlx",
+          "gpt-oss:20b"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 60,
+      "context_tokens": 2048,
+      "error": null,
+      "first_token_ms": 192.364417,
+      "generation_tokens_per_second": 16.533189358170898,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 37,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 68,
+        "generation_duration_ns": 4112939042,
+        "load_duration_ns": 10575375,
+        "prompt_eval_duration_ns": 8334,
+        "prompt_tokens": 63,
+        "total_duration_ns": 4124223166
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 2,
+      "total_ms": 4125.025709
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "muse-glimmer:30b-mlx",
+          "gemma4:31b-mlx",
+          "gpt-oss:20b"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 69,
+      "context_tokens": 2048,
+      "error": null,
+      "first_token_ms": 313.076958,
+      "generation_tokens_per_second": 15.715005448706687,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 37,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 77,
+        "generation_duration_ns": 4899775584,
+        "load_duration_ns": 10402292,
+        "prompt_eval_duration_ns": 10917,
+        "prompt_tokens": 63,
+        "total_duration_ns": 4910923292
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 3,
+      "total_ms": 4911.956375
+    }
+  ],
+  "seed": 42
+}

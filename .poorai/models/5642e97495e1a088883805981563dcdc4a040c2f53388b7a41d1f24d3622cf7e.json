@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "id": "01a062e0-87f9-73b3-96bb-0e0d1642c929",
+  "digest": "5642e97495e1a088883805981563dcdc4a040c2f53388b7a41d1f24d3622cf7e",
+  "family": "qwen3_5",
+  "quantization": "nvfp4",
+  "capabilities": {
+    "completion": {
+      "status": "observed",
+      "value": true
+    },
+    "thinking": {
+      "status": "observed",
+      "value": true
+    },
+    "tools": {
+      "status": "observed",
+      "value": true
+    },
+    "vision": {
+      "status": "observed",
+      "value": true
+    }
+  },
+  "metadata": {
+    "model_info": {
+      "general.architecture": "qwen3_5",
+      "general.parameter_count": 27781081984,
+      "qwen3_5.block_count": 64,
+      "qwen3_5.context_length": 262144,
+      "qwen3_5.embedding_length": 5120
+    },
+    "parent_model": "",
+    "reported_modified_at": "2026-08-17T10:22:12.296458869+02:00",
+    "reported_size_bytes": 18174721847
+  },
+  "provenance": {
+    "source": "ollama:/api/show,/api/tags",
+    "observed_at": "2026-09-02T16:07:57.177541Z",
+    "content_hash": "8a50b1695d02fc3d73a98af7b85e6fbe8f1184ff61c8f20db453979ede12a438"
+  }
+}

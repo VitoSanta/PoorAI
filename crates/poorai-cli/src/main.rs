@@ -213,8 +213,14 @@ enum EvalCommand {
         profile: PathBuf,
         /// Recorded with the run; the corpus is deterministic, so this exists
         /// to distinguish repeated trials of the same suite.
-        #[arg(long, default_value_t = 1)]
-        seed: u64,
+        ///
+        /// Repeatable: `--seed 1 --seed 2 --seed 3` runs one campaign of three
+        /// trials under a single runtime lease. A campaign was several
+        /// invocations by hand, which meant nothing held the lease between
+        /// them, nothing tied the trials together, and the person running it
+        /// had to remember which seeds they had already used.
+        #[arg(long, default_values_t = [1u64])]
+        seed: Vec<u64>,
         /// Raised from 300 by measurement, for the same reason as `run`: a
         /// slow turn is worth recording, not worth reporting as a failure.
         #[arg(long, default_value_t = 900)]
@@ -1098,7 +1104,7 @@ async fn evaluate(
     suite_path: PathBuf,
     model: String,
     profile: PathBuf,
-    seed: u64,
+    seeds: Vec<u64>,
     turn_timeout_secs: u64,
     out_dir: PathBuf,
 ) -> Result<serde_json::Value, SafeError> {
@@ -1169,23 +1175,31 @@ async fn evaluate(
         .filter(|point| calibration.thresholds.admits(point))
         .map(|point| point.context_tokens)
         .collect();
+    // One campaign, several trials, one lease. A campaign was several
+    // invocations by hand: nothing held the lease between them, so a second
+    // model could load in the gap; nothing tied the trials together; and the
+    // person running it had to remember which seeds they had already spent.
     let mut outcomes = Vec::new();
-    for task in &suite.tasks {
-        outcomes.push(
-            evaluate_task(
-                &provider,
-                &deployment,
-                &execution,
-                &context_tiers,
-                task,
-                seed,
-                sampling.clone(),
-                strategy.as_ref(),
-                profile,
-                &capability_evidence.definition,
-            )
-            .await,
-        );
+    let seeds = if seeds.is_empty() { vec![1] } else { seeds };
+    for seed in &seeds {
+        let seed = *seed;
+        for task in &suite.tasks {
+            outcomes.push(
+                evaluate_task(
+                    &provider,
+                    &deployment,
+                    &execution,
+                    &context_tiers,
+                    task,
+                    seed,
+                    sampling.clone(),
+                    strategy.as_ref(),
+                    profile,
+                    &capability_evidence.definition,
+                )
+                .await,
+            );
+        }
     }
     let report = poorai_eval::SuiteReport {
         suite: suite.name.clone(),
@@ -1195,7 +1209,7 @@ async fn evaluate(
         deployment_fingerprint: deployment.fingerprint(),
         hardware_compatibility_key: hardware.compatibility_key.clone(),
         execution_profile_id: execution.id,
-        seeds: vec![seed],
+        seeds: seeds.clone(),
         sampling: resolved_sampling.clone(),
         outcomes,
         generated_at: now(),
@@ -1207,9 +1221,14 @@ async fn evaluate(
     let report_json = serde_json::to_vec_pretty(&report).expect("serializable");
     let report_hash = hash_bytes(&report_json);
     let stem = format!(
-        "{}-{}-{seed}-{}",
+        "{}-{}-{}-{}",
         suite.name,
         &inspection.definition.digest[..12.min(inspection.definition.digest.len())],
+        seeds
+            .iter()
+            .map(u64::to_string)
+            .collect::<Vec<_>>()
+            .join("-"),
         &report_hash[..12],
     );
     let json_path = out_dir.join(format!("{stem}.json"));
@@ -1227,7 +1246,7 @@ async fn evaluate(
         deployment_fingerprint: deployment.fingerprint(),
         hardware_compatibility_key: hardware.compatibility_key.clone(),
         harness_rev: EVAL_HARNESS_REV.into(),
-        seeds: vec![seed],
+        seeds: seeds.clone(),
         outcome_hash: hash_bytes(serde_json::to_vec(&report.outcomes).expect("serializable")),
         artifact_hashes: vec![report_hash, hash_bytes(markdown.as_bytes())],
         created_at: now(),
@@ -1480,6 +1499,7 @@ async fn evaluate_task(
         answer_matched: None,
         provider_failure: false,
         events: BTreeMap::new(),
+        ..Default::default()
     };
     let Ok(workspace) = tempfile::tempdir() else {
         outcome.error = Some("could not create a task workspace".into());
@@ -1649,7 +1669,14 @@ async fn evaluate_task(
             // have done the task. A timeout does: a deployment that cannot
             // answer within the bound has failed the task, and excluding that
             // would hide slowness behind an infrastructure label.
-            outcome.provider_failure = error.contains("provider ") && !error.contains("timed out");
+            // Read from the terminal event this run recorded rather than from
+            // the error text it happened to produce. A classification made of
+            // prose changes whenever a message is reworded, and this one
+            // decides whether a task counts against a deployment at all.
+            outcome.provider_failure = matches!(
+                terminal_class(&events_of(&store, run_id)),
+                Some(poorai_domain::TerminalClass::Provider)
+            );
             outcome.error = Some(error);
         }
     }
@@ -1663,6 +1690,12 @@ async fn evaluate_task(
     outcome.tool_attempts += tally.attempts;
     outcome.tool_denials += tally.denials;
     outcome.tool_failures += tally.failures;
+    // What the run cost, from the backend's own counters. A campaign could
+    // report how long a task took and nothing about why: two runs of the same
+    // length are not comparable when one spent its time reading a long prompt
+    // and the other generating a long answer.
+    measure_run(&mut outcome, &events_of(&store, run_id));
+    outcome.context_tokens = execution.context_tokens;
     if task.kind == poorai_eval::TaskKind::PolicyAttack {
         outcome.violation = attack_violation(&events);
     }
@@ -2742,6 +2775,63 @@ fn index_repository(path: PathBuf) -> Result<serde_json::Value, SafeError> {
         })?;
     Ok(serde_json::json!({"index":index,"artifact":artifact,"stale":false}))
 }
+/// The typed events of a run, or none if they cannot be read.
+fn events_of(
+    store: &poorai_store::Store,
+    run_id: poorai_domain::Id,
+) -> Vec<poorai_domain::RunEvent> {
+    store.typed_events_for_run(run_id).unwrap_or_default()
+}
+
+/// How a run ended, from the event it recorded.
+fn terminal_class(events: &[poorai_domain::RunEvent]) -> Option<poorai_domain::TerminalClass> {
+    events.iter().rev().find_map(|event| match event {
+        poorai_domain::RunEvent::TaskFailed { class, .. } => Some(*class),
+        _ => None,
+    })
+}
+
+/// What a run cost, folded from its own trail.
+///
+/// The same fold the replay report uses, so a campaign's numbers and a
+/// person's reading of one run cannot disagree about what happened.
+fn measure_run(outcome: &mut poorai_eval::TaskOutcome, events: &[poorai_domain::RunEvent]) {
+    let mut peak = 0u64;
+    for event in events {
+        match event {
+            poorai_domain::RunEvent::TurnGenerated { metrics, .. } => {
+                outcome.turns += 1;
+                if let Some(metrics) = metrics {
+                    outcome.prompt_tokens += metrics.prompt_tokens.unwrap_or(0);
+                    outcome.generated_tokens += metrics.generated_tokens.unwrap_or(0);
+                    outcome.generation_secs +=
+                        metrics.generation_duration_ns.unwrap_or(0) as f64 / 1e9;
+                    peak = peak.max(metrics.prompt_tokens.unwrap_or(0));
+                }
+            }
+            poorai_domain::RunEvent::ResourceSampled { pressure, .. } => {
+                if matches!(
+                    pressure,
+                    Observation::Observed(value)
+                        if value.get("under_pressure").and_then(serde_json::Value::as_bool)
+                            == Some(true)
+                ) {
+                    outcome.turns_under_pressure += 1;
+                }
+            }
+            poorai_domain::RunEvent::LoopDetected { .. } => outcome.loops_named += 1,
+            poorai_domain::RunEvent::NoProgressDetected { .. } => outcome.no_progress_named += 1,
+            poorai_domain::RunEvent::ContextTierChanged { .. } => outcome.context_downgrades += 1,
+            _ => {}
+        }
+    }
+    outcome.peak_prompt_tokens = peak;
+    // Only where the backend reported enough to compute one. A rate invented
+    // from wall clock would describe the harness, not the deployment.
+    outcome.tokens_per_second = (outcome.generation_secs > 0.0)
+        .then(|| outcome.generated_tokens as f64 / outcome.generation_secs);
+}
+
 /// The identity of the policy a run was executed under.
 ///
 /// A run recorded its calibration, its model digest and its hardware key, and

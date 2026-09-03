@@ -1,0 +1,643 @@
+{
+  "run": {
+    "outcome": "calibrated",
+    "profile": {
+      "compatibility_key": "963e4edea2dba57741c8b3afbee91a357e14b83cb8e60ea26f457ede2a512fd8",
+      "created_at": "2026-09-02T13:55:46.249471Z",
+      "deployment_fingerprint": "f7ddcc99e3ff3887ea28e09754ae52d48d7a1d2e0ef0fed289e99edf2c18b1ce",
+      "harness_rev": "calibration-harness-v3",
+      "id": "01a06267-83c9-7f22-9b32-a13b57ba8fca",
+      "model_digest": "8b1474be6e54dc19eb7aa08bebfb9bda147c4b9ef9796a726131ad29ad15645a",
+      "raw_artifact_hashes": [
+        "214f5a00d527f01263f898e2e2cc38ab669310330a97a1af8573c0aa4e385486",
+        "0caac6ad7ad8b15e926df5f25009275b4228bd3a20823d2143a7d9e85b235b3c",
+        "63acd316e2fdc810c0ac05bd5a41d9413eb48fac6911e282e3816f59e8c454ca",
+        "e2d9d06f5ff4941d51398d6ef876ff08be2d76c450f421ea112c178ba6a9bf43",
+        "ff5ce5372126ba93daa3cfff532d18f157492ab4e656a24f2b266df43f8a12ad",
+        "8bf734df243467cdaa46e439c59f2f5e31a263f8b21a94bc50466da8dec28db4",
+        "089e3ae56aa7fe99d32f0150b58e63d3e2ea29da56ca3a08b2ec9749d559a75a",
+        "321e75e553a780a0f91b1edd09557c0575f2202dfdc54f0a0d1b3dbba1cc0942",
+        "5dec0ba7613c85a17cfb5f62f3af3a79a83a6004ccaf8311cf5115ff42eb476a",
+        "bcfd308a2ab7bd02ff4d37b8dbcb1309461c3b28019578f5a33d14904cfeaeea",
+        "75e6942bd5076ae9065b92f2d11f555055ecdac40ed6ae69c8ba9068e7bff849",
+        "89ce868f71a6bebd06ec6588d2aa92582ba8c9fe77c55c54d3e7c9ed5402d903",
+        "044d774d38f3db196cc9723ae57df3ef28014c75895aea30ead72208bee73f01",
+        "bf626dbf8482b336b1972561d3e425be810f0791b8a623f88ef5ecedf77affec",
+        "86b6f38e30ff0708b0f3e0679f5c77d47e82fef77ab653120715b40fe5e742b2",
+        "0c22201d1bd85580170efb58668b2ee2b07aa8041a944f690834dadaf4e26e4d"
+      ],
+      "schema_version": 1,
+      "stable_points": [
+        {
+          "context_tokens": 32768,
+          "generation_tokens_per_second": 80.85909506442812,
+          "median_first_token_ms": 32.491042,
+          "memory_pressure_observed": false,
+          "samples": 3,
+          "success_rate": 1.0,
+          "variance": 419.255069759633
+        },
+        {
+          "context_tokens": 65536,
+          "generation_tokens_per_second": 71.26595389348024,
+          "median_first_token_ms": 37.863125,
+          "memory_pressure_observed": false,
+          "samples": 3,
+          "success_rate": 1.0,
+          "variance": 0.13832694148466682
+        },
+        {
+          "context_tokens": 131072,
+          "generation_tokens_per_second": 72.2645883061997,
+          "median_first_token_ms": 38.186417,
+          "memory_pressure_observed": false,
+          "samples": 3,
+          "success_rate": 1.0,
+          "variance": 1.4156360638828867
+        },
+        {
+          "context_tokens": 262144,
+          "generation_tokens_per_second": 72.41751908189629,
+          "median_first_token_ms": 38.651041,
+          "memory_pressure_observed": false,
+          "samples": 3,
+          "success_rate": 1.0,
+          "variance": 1.0138834164015587
+        }
+      ],
+      "thresholds": {
+        "allow_memory_pressure": false,
+        "max_median_first_token_ms": 120000.0,
+        "min_success_rate": 1.0
+      }
+    },
+    "rejected": [],
+    "samples": [
+      {
+        "backend_state": {
+          "loaded_models": [
+            "nemotron-3.5-lightning:30b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 32768,
+                "fully_on_accelerator": true,
+                "name": "nemotron-3.5-lightning:30b-mlx",
+                "size_bytes": 22755307556,
+                "vram_bytes": 22755307556
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 107,
+        "context_tokens": 32768,
+        "error": null,
+        "first_token_ms": 75.438084,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 88.08256348622331,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 59,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 112,
+          "generation_duration_ns": 1271534292,
+          "load_duration_ns": 11440708,
+          "prompt_eval_duration_ns": 41289500,
+          "prompt_tokens": 23,
+          "total_duration_ns": 1324839167
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 1,
+        "total_ms": 1325.4940419999998
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "nemotron-3.5-lightning:30b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 32768,
+                "fully_on_accelerator": true,
+                "name": "nemotron-3.5-lightning:30b-mlx",
+                "size_bytes": 22858457124,
+                "vram_bytes": 22858457124
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 114,
+        "context_tokens": 32768,
+        "error": null,
+        "first_token_ms": 31.529957999999997,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 87.5024765690777,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 58,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 123,
+          "generation_duration_ns": 1405674500,
+          "load_duration_ns": 9073542,
+          "prompt_eval_duration_ns": 12292,
+          "prompt_tokens": 23,
+          "total_duration_ns": 1415299375
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 2,
+        "total_ms": 1415.671666
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "nemotron-3.5-lightning:30b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 32768,
+                "fully_on_accelerator": true,
+                "name": "nemotron-3.5-lightning:30b-mlx",
+                "size_bytes": 22909780772,
+                "vram_bytes": 22909780772
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 100,
+        "context_tokens": 32768,
+        "error": null,
+        "first_token_ms": 32.491042,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 66.99224513798333,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 58,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 107,
+          "generation_duration_ns": 1597199792,
+          "load_duration_ns": 8214000,
+          "prompt_eval_duration_ns": 7250,
+          "prompt_tokens": 23,
+          "total_duration_ns": 1605882333
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 3,
+        "total_ms": 1606.4300839999999
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "nemotron-3.5-lightning:30b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 32768,
+                "fully_on_accelerator": true,
+                "name": "nemotron-3.5-lightning:30b-mlx",
+                "size_bytes": 23017359524,
+                "vram_bytes": 23017359524
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 131,
+        "context_tokens": 131072,
+        "error": null,
+        "first_token_ms": 40.244665999999995,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 70.4230715526804,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 57,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 136,
+          "generation_duration_ns": 1931185292,
+          "load_duration_ns": 12293250,
+          "prompt_eval_duration_ns": 6250,
+          "prompt_tokens": 23,
+          "total_duration_ns": 1944065666
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 1,
+        "total_ms": 1944.9795000000001
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "nemotron-3.5-lightning:30b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 32768,
+                "fully_on_accelerator": true,
+                "name": "nemotron-3.5-lightning:30b-mlx",
+                "size_bytes": 23064700836,
+                "vram_bytes": 23064700836
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 126,
+        "context_tokens": 131072,
+        "error": null,
+        "first_token_ms": 37.428625,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 73.14030522229174,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 57,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 136,
+          "generation_duration_ns": 1859439875,
+          "load_duration_ns": 10699708,
+          "prompt_eval_duration_ns": 9458,
+          "prompt_tokens": 23,
+          "total_duration_ns": 1870714333
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 2,
+        "total_ms": 1871.454125
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "nemotron-3.5-lightning:30b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 32768,
+                "fully_on_accelerator": true,
+                "name": "nemotron-3.5-lightning:30b-mlx",
+                "size_bytes": 23117971620,
+                "vram_bytes": 23117971620
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 81,
+        "context_tokens": 131072,
+        "error": null,
+        "first_token_ms": 38.186417,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 73.23038814362694,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 58,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 89,
+          "generation_duration_ns": 1215342459,
+          "load_duration_ns": 11617208,
+          "prompt_eval_duration_ns": 10083,
+          "prompt_tokens": 23,
+          "total_duration_ns": 1227970583
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 3,
+        "total_ms": 1228.733667
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "nemotron-3.5-lightning:30b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 32768,
+                "fully_on_accelerator": true,
+                "name": "nemotron-3.5-lightning:30b-mlx",
+                "size_bytes": 23217056676,
+                "vram_bytes": 23217056676
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 271,
+        "context_tokens": 65536,
+        "error": null,
+        "first_token_ms": 38.100709,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 72.45859606750105,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 57,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 284,
+          "generation_duration_ns": 3919479750,
+          "load_duration_ns": 11690041,
+          "prompt_eval_duration_ns": 7041,
+          "prompt_tokens": 23,
+          "total_duration_ns": 3931799125
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 1,
+        "total_ms": 3932.585125
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "nemotron-3.5-lightning:30b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 32768,
+                "fully_on_accelerator": true,
+                "name": "nemotron-3.5-lightning:30b-mlx",
+                "size_bytes": 23276517132,
+                "vram_bytes": 23276517132
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 88,
+        "context_tokens": 65536,
+        "error": null,
+        "first_token_ms": 37.863125,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 70.00116297995973,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 57,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 94,
+          "generation_duration_ns": 1342834833,
+          "load_duration_ns": 11237083,
+          "prompt_eval_duration_ns": 8042,
+          "prompt_tokens": 23,
+          "total_duration_ns": 1354685958
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 2,
+        "total_ms": 1355.122625
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "nemotron-3.5-lightning:30b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 32768,
+                "fully_on_accelerator": true,
+                "name": "nemotron-3.5-lightning:30b-mlx",
+                "size_bytes": 23330596780,
+                "vram_bytes": 23330596780
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 116,
+        "context_tokens": 65536,
+        "error": null,
+        "first_token_ms": 37.22025,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 71.33810263297994,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 57,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 124,
+          "generation_duration_ns": 1738201542,
+          "load_duration_ns": 9380583,
+          "prompt_eval_duration_ns": 11333,
+          "prompt_tokens": 23,
+          "total_duration_ns": 1748124208
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 3,
+        "total_ms": 1748.59175
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "nemotron-3.5-lightning:30b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 32768,
+                "fully_on_accelerator": true,
+                "name": "nemotron-3.5-lightning:30b-mlx",
+                "size_bytes": 23432529324,
+                "vram_bytes": 23432529324
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 89,
+        "context_tokens": 262144,
+        "error": null,
+        "first_token_ms": 36.987834,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 72.43761105764634,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 58,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 94,
+          "generation_duration_ns": 1297668416,
+          "load_duration_ns": 10539459,
+          "prompt_eval_duration_ns": 7125,
+          "prompt_tokens": 23,
+          "total_duration_ns": 1308828667
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 1,
+        "total_ms": 1309.5025
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "nemotron-3.5-lightning:30b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 32768,
+                "fully_on_accelerator": true,
+                "name": "nemotron-3.5-lightning:30b-mlx",
+                "size_bytes": 23484054956,
+                "vram_bytes": 23484054956
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 126,
+        "context_tokens": 262144,
+        "error": null,
+        "first_token_ms": 39.396708000000004,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 72.73793189827394,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 57,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 131,
+          "generation_duration_ns": 1800986041,
+          "load_duration_ns": 11738250,
+          "prompt_eval_duration_ns": 7625,
+          "prompt_tokens": 23,
+          "total_duration_ns": 1813356083
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 2,
+        "total_ms": 1814.040625
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "nemotron-3.5-lightning:30b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 32768,
+                "fully_on_accelerator": true,
+                "name": "nemotron-3.5-lightning:30b-mlx",
+                "size_bytes": 23534781356,
+                "vram_bytes": 23534781356
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 117,
+        "context_tokens": 262144,
+        "error": null,
+        "first_token_ms": 38.651041,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 72.07701428976861,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 59,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 126,
+          "generation_duration_ns": 1748130125,
+          "load_duration_ns": 11319042,
+          "prompt_eval_duration_ns": 6125,
+          "prompt_tokens": 23,
+          "total_duration_ns": 1760039167
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 3,
+        "total_ms": 1760.812875
+      }
+    ]
+  },
+  "seed": 42
+}

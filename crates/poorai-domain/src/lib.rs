@@ -814,9 +814,47 @@ pub enum RunEvent {
     },
     TaskFailed {
         reason: String,
+        /// What kind of failure it was.
+        ///
+        /// A caller had to search the error text -- `error.contains("provider
+        /// ")` -- to tell a backend fault from a deployment that could not do
+        /// the task. That is a classification made of prose, and it changes
+        /// whenever a message is reworded.
+        #[serde(default)]
+        class: TerminalClass,
         #[serde(default)]
         detail: Option<serde_json::Value>,
     },
+}
+
+/// Why a run ended without completing.
+///
+/// The distinction that matters for a measurement: a backend fault says
+/// nothing about whether the deployment could have done the task, while a
+/// timeout does -- a deployment that cannot answer within the bound has failed
+/// it, and excluding that would hide slowness behind an infrastructure label.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalClass {
+    /// The backend was unavailable, spoke badly, or refused the request.
+    Provider,
+    /// The deployment did not answer within the bound. Its failure, not the
+    /// backend's.
+    Timeout,
+    /// Actions or turns ran out.
+    Budget,
+    /// Nothing could verify the work, so completion was refused.
+    NoVerifier,
+    /// The deployment could not form a usable call.
+    Protocol,
+    /// Recovery ran out of ways forward.
+    Recovery,
+    /// The run was interrupted, killed, or cancelled.
+    Interrupted,
+    /// Anything not yet classified, including a build that predates this
+    /// field. Never silently one of the above.
+    #[default]
+    Unclassified,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

@@ -10,6 +10,7 @@ use poorai_store::Store;
 fn event(reason: &str) -> RunEvent {
     RunEvent::TaskFailed {
         reason: reason.into(),
+        class: poorai_domain::TerminalClass::Unclassified,
         detail: None,
     }
 }

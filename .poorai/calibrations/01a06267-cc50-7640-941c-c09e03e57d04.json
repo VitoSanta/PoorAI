@@ -1,0 +1,489 @@
+{
+  "run": {
+    "outcome": "calibrated",
+    "profile": {
+      "compatibility_key": "963e4edea2dba57741c8b3afbee91a357e14b83cb8e60ea26f457ede2a512fd8",
+      "created_at": "2026-09-02T13:56:04.816687Z",
+      "deployment_fingerprint": "6799ad5c4c8de9b2374311c9d4af3735e4c4af65ee723c9a0c55c18df207acb9",
+      "harness_rev": "calibration-harness-v3",
+      "id": "01a06267-cc50-7640-941c-c09e03e57d04",
+      "model_digest": "17052f91a42e97930aa6e28a6c6c06a983e6a58dbb00434885a0cf5313e376f7",
+      "raw_artifact_hashes": [
+        "53ac1c70a7e856b3152842004e23f82a2ccd73ae8ff1375549536181986bb2da",
+        "568d1dd0d2da1d67f5ff8e8412eb30228b26a4bc04829f754d5d3d561010cffd",
+        "40bb84caf5b80e30ffd5c674727e326a9d76a684d38da17f5aac07e94061ddb5",
+        "94c54d5e49a49995f8dae29ce20f0ee2a01091fa3d485fb75e3a0bbcaa19fc05",
+        "dca5b206ff187914bda417a6ab793a96681fc61b41a0b661506ccfd05d8a9951",
+        "4cdc4bd85b5a868b618f872ea316a01820f8bf562405710f1e9968a0a00c2f4c",
+        "54ae336c1f2d08c9c62c2677c8a7a517698ba9a53128a584811b8e6e2a3aba6a",
+        "90cd0ba1dafed491d045a2b0ced0eafe60c87d67d440aa75a250b629aa58550c",
+        "ffc00dabfd6b5960a3d457c2c9295744e4594c880d4bf34a67c3925872af575a",
+        "745df4739f87cf830a9285f36d9c489db52e57d119dc6d7e1b261ae7f919bb66",
+        "0049cfc14032c5f4ec6411336e5820922f2fb183290b9d261f543ce11b8b1177",
+        "2369e5f243dd7251ac62994d0d8e1f536e5ba5facda3cf38aee5fbc9ce606337"
+      ],
+      "schema_version": 1,
+      "stable_points": [
+        {
+          "context_tokens": 32768,
+          "generation_tokens_per_second": 75.56597792628342,
+          "median_first_token_ms": 98.370583,
+          "memory_pressure_observed": false,
+          "samples": 3,
+          "success_rate": 1.0,
+          "variance": 0.32899543684267424
+        },
+        {
+          "context_tokens": 65536,
+          "generation_tokens_per_second": 66.71446716527343,
+          "median_first_token_ms": 97.49291699999999,
+          "memory_pressure_observed": false,
+          "samples": 3,
+          "success_rate": 1.0,
+          "variance": 102.85012201394757
+        },
+        {
+          "context_tokens": 131072,
+          "generation_tokens_per_second": 75.77914363430739,
+          "median_first_token_ms": 96.52674999999999,
+          "memory_pressure_observed": false,
+          "samples": 3,
+          "success_rate": 1.0,
+          "variance": 0.0452996625495579
+        }
+      ],
+      "thresholds": {
+        "allow_memory_pressure": false,
+        "max_median_first_token_ms": 120000.0,
+        "min_success_rate": 1.0
+      }
+    },
+    "rejected": [],
+    "samples": [
+      {
+        "backend_state": {
+          "loaded_models": [
+            "gpt-oss:20b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 131072,
+                "fully_on_accelerator": true,
+                "name": "gpt-oss:20b",
+                "size_bytes": 13668177673,
+                "vram_bytes": 13668177673
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 19,
+        "context_tokens": 131072,
+        "error": null,
+        "first_token_ms": 96.814417,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 76.07868709922835,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 68,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 28,
+          "generation_duration_ns": 368040000,
+          "load_duration_ns": 10431375,
+          "prompt_eval_duration_ns": 41627000,
+          "prompt_tokens": 74,
+          "total_duration_ns": 422127208
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 1,
+        "total_ms": 422.815125
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "gpt-oss:20b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 131072,
+                "fully_on_accelerator": true,
+                "name": "gpt-oss:20b",
+                "size_bytes": 13668177673,
+                "vram_bytes": 13668177673
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 27,
+        "context_tokens": 131072,
+        "error": null,
+        "first_token_ms": 96.29404099999999,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 75.51412533666715,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 69,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 36,
+          "generation_duration_ns": 476732000,
+          "load_duration_ns": 10441834,
+          "prompt_eval_duration_ns": 41433000,
+          "prompt_tokens": 74,
+          "total_duration_ns": 530552625
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 2,
+        "total_ms": 531.1671249999999
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "gpt-oss:20b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 131072,
+                "fully_on_accelerator": true,
+                "name": "gpt-oss:20b",
+                "size_bytes": 13668177673,
+                "vram_bytes": 13668177673
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 22,
+        "context_tokens": 131072,
+        "error": null,
+        "first_token_ms": 96.52674999999999,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 75.74461846702665,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 68,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 31,
+          "generation_duration_ns": 409270000,
+          "load_duration_ns": 9922416,
+          "prompt_eval_duration_ns": 41716000,
+          "prompt_tokens": 74,
+          "total_duration_ns": 462923583
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 3,
+        "total_ms": 463.668417
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "gpt-oss:20b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 32768,
+                "fully_on_accelerator": true,
+                "name": "gpt-oss:20b",
+                "size_bytes": 12888267816,
+                "vram_bytes": 12888267816
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 33,
+        "context_tokens": 32768,
+        "error": null,
+        "first_token_ms": 98.370583,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 74.73256418103786,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 73,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 42,
+          "generation_duration_ns": 562004000,
+          "load_duration_ns": 10912416,
+          "prompt_eval_duration_ns": 41803000,
+          "prompt_tokens": 74,
+          "total_duration_ns": 616926875
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 1,
+        "total_ms": 617.567875
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "gpt-oss:20b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 32768,
+                "fully_on_accelerator": true,
+                "name": "gpt-oss:20b",
+                "size_bytes": 12888267816,
+                "vram_bytes": 12888267816
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 12,
+        "context_tokens": 32768,
+        "error": null,
+        "first_token_ms": 97.831167,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 76.39447195049638,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 73,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 21,
+          "generation_duration_ns": 274889000,
+          "load_duration_ns": 10667542,
+          "prompt_eval_duration_ns": 41890000,
+          "prompt_tokens": 74,
+          "total_duration_ns": 329823167
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 2,
+        "total_ms": 330.47575
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "gpt-oss:20b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 32768,
+                "fully_on_accelerator": true,
+                "name": "gpt-oss:20b",
+                "size_bytes": 12888267816,
+                "vram_bytes": 12888267816
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 19,
+        "context_tokens": 32768,
+        "error": null,
+        "first_token_ms": 99.22437500000001,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 75.57089764731602,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 73,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 28,
+          "generation_duration_ns": 370513000,
+          "load_duration_ns": 11602125,
+          "prompt_eval_duration_ns": 41712000,
+          "prompt_tokens": 74,
+          "total_duration_ns": 426465791
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 3,
+        "total_ms": 427.27925
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "gpt-oss:20b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 65536,
+                "fully_on_accelerator": true,
+                "name": "gpt-oss:20b",
+                "size_bytes": 13343391743,
+                "vram_bytes": 13343391743
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 25,
+        "context_tokens": 65536,
+        "error": null,
+        "first_token_ms": 97.49291699999999,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 75.64313349455703,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 71,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 34,
+          "generation_duration_ns": 449479000,
+          "load_duration_ns": 11187666,
+          "prompt_eval_duration_ns": 41714000,
+          "prompt_tokens": 74,
+          "total_duration_ns": 504492416
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 1,
+        "total_ms": 505.15129199999996
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "gpt-oss:20b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 65536,
+                "fully_on_accelerator": true,
+                "name": "gpt-oss:20b",
+                "size_bytes": 13343391743,
+                "vram_bytes": 13343391743
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 23,
+        "context_tokens": 65536,
+        "error": null,
+        "first_token_ms": 96.692417,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 72.30249556582352,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 71,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 32,
+          "generation_duration_ns": 442585000,
+          "load_duration_ns": 10320584,
+          "prompt_eval_duration_ns": 41616000,
+          "prompt_tokens": 74,
+          "total_duration_ns": 496725792
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 2,
+        "total_ms": 497.377042
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "gpt-oss:20b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 65536,
+                "fully_on_accelerator": true,
+                "name": "gpt-oss:20b",
+                "size_bytes": 13343391743,
+                "vram_bytes": 13343391743
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 44,
+        "context_tokens": 65536,
+        "error": null,
+        "first_token_ms": 118.594875,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 52.19777243543973,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 71,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 53,
+          "generation_duration_ns": 1015369000,
+          "load_duration_ns": 12866209,
+          "prompt_eval_duration_ns": 51670000,
+          "prompt_tokens": 74,
+          "total_duration_ns": 1082088709
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 3,
+        "total_ms": 1082.71725
+      }
+    ]
+  },
+  "seed": 42
+}

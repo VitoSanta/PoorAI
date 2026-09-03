@@ -581,16 +581,25 @@ More to the point, nothing ever checked either. The API only appended and SQLite
 
 **A turn can be cut short.** The transport bounded a turn by giving up on the answer; cutting it now cancels, which closes the connection the backend is generating into. `RunTuning` carries this, the malformed-call limit and the host probe together — a struct rather than three more parameters, since the action loop already took eleven and per-deployment policy is something this project intends to grow.
 
+### A campaign that measures itself — 2026-09-03
+
+**A run reports what it cost.** A campaign could say how long a task took and nothing about why: two runs of the same length are not comparable when one spent its time reading a long prompt and the other generating a long answer, and "resource footprint" was a primary metric with nothing behind it. Prompt and generated tokens, backend generation time separately from wall clock, generation rate where the backend reported enough to compute one, the peak prompt against the context authorised, turns under memory pressure, named loops, named non-progress and context downgrades are all folded from the run's own events — the same fold the replay report uses, so a campaign's numbers and a person's reading of one run cannot disagree.
+
+**A provider failure is a recorded class, not a substring.** `error.contains("provider ")` decided whether a task counted against a deployment at all, which is a classification made of prose that changes whenever a message is reworded. The terminal event carries a `TerminalClass`, read once where the loop writes it. `Unclassified` exists and is the default: a build that predates the field never becomes one of the meaningful classes by accident.
+
+**A policy attack needs the work done as well as the attack refused.** It was resolved by the absence of a violation, so a deployment that did nothing at all scored as resolved — it refuses by never acting, which is not the behaviour being measured. The fixture that asserted the older rule is the reason it lasted: a fixture encodes a mistake as firmly as it encodes a requirement, and this one is rewritten to say what it now means and why.
+
+**`--seed` repeats.** `--seed 1 --seed 2 --seed 3` is one campaign of three trials under a single runtime lease. It was several invocations by hand: nothing held the lease between them, so a second model could load in the gap; nothing tied the trials together; and the person running it had to remember which seeds they had spent.
+
+**Calibration profiles and capability evidence are tracked.** They are what a promotion decision cites and they lived only on the machine that produced them, so a number in the roadmap could not be checked against the artifact behind it by anyone without that machine. They are content-addressed and never overwritten, so tracking them adds rather than churns. **Evaluation reports stay untracked deliberately**: every campaign recorded before this date is void, and committing them would put artifacts in the repository that look like evidence and are not. That exception is lifted when the re-run produces reports worth citing.
+
 ### P3 — a measurable beta
 
 | Item | What is wrong now | What closing it looks like |
 |---|---|---|
 | Services and ports are unmanaged | `LocalService` exists and nothing uses it; there is no spawn/wait/terminate, port reservation or cleanup | A process supervisor owning service lifetime, and a corpus task that starts several services and exercises them together |
-| A campaign is a single seed by hand | One invocation carries one seed, the workspace is destroyed, and traces do not survive | An orchestrator that serialises multi-seed campaigns per deployment under the runtime lease and keeps their traces |
 | Status is written by hand in three places | This roadmap has declared the same milestone complete and in progress; older documents describe as absent what exists | Milestone status generated from a versioned manifest, with historical notes kept as dated reports rather than as claims |
 | The model is never unloaded on purpose | No keep-alive or unload policy, so residency between runs is whatever Ollama last decided | Residency is a decision the lease holder makes and records |
-| Evaluation metrics stop at counts | No total tokens, time to first token, throughput, peak resident memory, context occupancy, retry count or loop count as first-class metrics; a provider failure is recognised by searching the error text; a `PolicyAttack` counts as resolved when the deployment does nothing at all | Typed outcomes carrying those metrics, a typed provider-failure class, and an attack task that requires the legitimate work to have been done as well as the attack refused |
-| Results are not under version control | `.poorai` is gitignored, so the artifacts a campaign is judged on live only on the machine that ran it | A published results directory, or an artifact store with the reports committed |
 
 ### Removals
 

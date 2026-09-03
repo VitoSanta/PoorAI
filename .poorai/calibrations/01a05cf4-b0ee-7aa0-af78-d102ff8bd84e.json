@@ -1,0 +1,654 @@
+{
+  "profile": {
+    "compatibility_key": "963e4edea2dba57741c8b3afbee91a357e14b83cb8e60ea26f457ede2a512fd8",
+    "created_at": "2026-09-01T12:32:15.086445Z",
+    "deployment_fingerprint": "f7ddcc99e3ff3887ea28e09754ae52d48d7a1d2e0ef0fed289e99edf2c18b1ce",
+    "harness_rev": "calibration-harness-v2",
+    "id": "01a05cf4-b0ee-7aa0-af78-d102ff8bd84e",
+    "model_digest": "8b1474be6e54dc19eb7aa08bebfb9bda147c4b9ef9796a726131ad29ad15645a",
+    "raw_artifact_hashes": [
+      "e9548bcbad10cc40e879cac44bae6b26d49752ae6712a5e2222e41d62d5a1ec0",
+      "8b14d453003ff7b116c0ccd86b824412a115e5cce12b75ac8cd36e3cb4926384",
+      "2299633833d2eb9ef9c6488cf74687d08656bb330ab16c747b97fc2286ac1b82",
+      "59caca27152222364e19103a45f89a5e50e42d1bf895005b049864f303be7f84",
+      "859ab53994d17f987abc85658781297eca2753320cbc70f71af75fed90d21ec7",
+      "002034d9a892c8d0577dd3513b3b333f12513a6594af09f1b22c7d48e30c8c86",
+      "a0aaf7689b2c6fe6630b43341875b19fb4a6923d3a0eb6e5eb6c37f7f7ed8ca7",
+      "63526618186f6076e9e86f3abe728750359a13cc2dd7a8e8458aec547f5b016a",
+      "245c4fbd37c7276fdb74101aeab7d5cf3a361e7854ff3b225ae4f2e4ca437979",
+      "35ad0ba6030ba7b06fc7f550bf77666440e4c8d43001818fdc60a01513404e90",
+      "b55ebfbea39d8194414ba36206d82f78da75e735451cc23eb36279487b93ba9e",
+      "c85fb227dcd29b28bf902e4f9cb965fc2bf847adb571d5faafe0f6e8441ab01c",
+      "f1bfadf504fab17963e55387344d9509fe20fa8d7c561359757d0786ac96733a",
+      "9bd1f97be107d6011de08829cbf69284703f584d4f4c93a48c3194bbdc6fe26b",
+      "6d37ef849dc10b7d85da3fcc143d4c1f5ffc08fa1817b3b592bdeea5b2ebc613",
+      "a73e9634774a5b027d8b0b4b7bbdd919353938b6939cedce0d8938f572435129"
+    ],
+    "schema_version": 1,
+    "stable_points": [
+      {
+        "context_tokens": 2048,
+        "generation_tokens_per_second": 72.8495108132787,
+        "median_first_token_ms": 39.329667,
+        "memory_pressure_observed": false,
+        "samples": 3,
+        "success_rate": 1.0,
+        "variance": 1.3874948636482245
+      },
+      {
+        "context_tokens": 4096,
+        "generation_tokens_per_second": 74.95553775062866,
+        "median_first_token_ms": 41.220167000000004,
+        "memory_pressure_observed": false,
+        "samples": 3,
+        "success_rate": 1.0,
+        "variance": 24.36718294992598
+      },
+      {
+        "context_tokens": 8192,
+        "generation_tokens_per_second": 72.82603149414987,
+        "median_first_token_ms": 37.504208999999996,
+        "memory_pressure_observed": false,
+        "samples": 3,
+        "success_rate": 1.0,
+        "variance": 1.6092524783642232
+      },
+      {
+        "context_tokens": 16384,
+        "generation_tokens_per_second": 73.63041971212994,
+        "median_first_token_ms": 43.956333,
+        "memory_pressure_observed": false,
+        "samples": 3,
+        "success_rate": 1.0,
+        "variance": 10.837182149305557
+      },
+      {
+        "context_tokens": 32768,
+        "generation_tokens_per_second": 80.47059969580391,
+        "median_first_token_ms": 59.362625,
+        "memory_pressure_observed": false,
+        "samples": 3,
+        "success_rate": 1.0,
+        "variance": 829.300603723142
+      }
+    ],
+    "thresholds": {
+      "allow_memory_pressure": false,
+      "max_median_first_token_ms": 120000.0,
+      "min_success_rate": 1.0
+    }
+  },
+  "samples": [
+    {
+      "backend_state": {
+        "loaded_models": [
+          "nemotron-3.5-lightning:30b-mlx",
+          "granite4.2:30b-q6_K"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 117,
+      "context_tokens": 32768,
+      "error": null,
+      "first_token_ms": 110.507042,
+      "generation_tokens_per_second": 87.440564846798,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 23,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 125,
+        "generation_duration_ns": 1429542458,
+        "load_duration_ns": 22389792,
+        "prompt_eval_duration_ns": 64710959,
+        "prompt_tokens": 23,
+        "total_duration_ns": 1518065209
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 1,
+      "total_ms": 1518.7720840000002
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "nemotron-3.5-lightning:30b-mlx",
+          "granite4.2:30b-q6_K"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 102,
+      "context_tokens": 32768,
+      "error": null,
+      "first_token_ms": 42.863,
+      "generation_tokens_per_second": 79.26681322322176,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 24,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 110,
+        "generation_duration_ns": 1387718208,
+        "load_duration_ns": 18038709,
+        "prompt_eval_duration_ns": 8708,
+        "prompt_tokens": 23,
+        "total_duration_ns": 1406599584
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 2,
+      "total_ms": 1407.2962909999999
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "nemotron-3.5-lightning:30b-mlx",
+          "granite4.2:30b-q6_K"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 126,
+      "context_tokens": 32768,
+      "error": null,
+      "first_token_ms": 59.362625,
+      "generation_tokens_per_second": 74.70442101739198,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 22,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 134,
+        "generation_duration_ns": 1793735875,
+        "load_duration_ns": 31228917,
+        "prompt_eval_duration_ns": 11333,
+        "prompt_tokens": 23,
+        "total_duration_ns": 1826122417
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 3,
+      "total_ms": 1826.827375
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "nemotron-3.5-lightning:30b-mlx",
+          "granite4.2:30b-q6_K"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 129,
+      "context_tokens": 4096,
+      "error": null,
+      "first_token_ms": 51.68975,
+      "generation_tokens_per_second": 71.14523823967623,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 23,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 140,
+        "generation_duration_ns": 1967805625,
+        "load_duration_ns": 20361334,
+        "prompt_eval_duration_ns": 14875,
+        "prompt_tokens": 23,
+        "total_duration_ns": 1989075250
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 1,
+      "total_ms": 1989.898125
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "nemotron-3.5-lightning:30b-mlx",
+          "granite4.2:30b-q6_K"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 229,
+      "context_tokens": 4096,
+      "error": null,
+      "first_token_ms": 41.220167000000004,
+      "generation_tokens_per_second": 75.87052599503977,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 23,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 239,
+        "generation_duration_ns": 3150103375,
+        "load_duration_ns": 13439375,
+        "prompt_eval_duration_ns": 16584,
+        "prompt_tokens": 23,
+        "total_duration_ns": 3164116542
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 2,
+      "total_ms": 3165.236542
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "nemotron-3.5-lightning:30b-mlx",
+          "granite4.2:30b-q6_K"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 115,
+      "context_tokens": 4096,
+      "error": null,
+      "first_token_ms": 41.216333,
+      "generation_tokens_per_second": 77.85084901717,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 23,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 126,
+        "generation_duration_ns": 1618479459,
+        "load_duration_ns": 15029417,
+        "prompt_eval_duration_ns": 7667,
+        "prompt_tokens": 23,
+        "total_duration_ns": 1633999500
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 3,
+      "total_ms": 1636.5726249999998
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "nemotron-3.5-lightning:30b-mlx",
+          "granite4.2:30b-q6_K"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 135,
+      "context_tokens": 16384,
+      "error": null,
+      "first_token_ms": 43.956333,
+      "generation_tokens_per_second": 73.3910406666718,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 24,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 140,
+        "generation_duration_ns": 1907589792,
+        "load_duration_ns": 18369917,
+        "prompt_eval_duration_ns": 6625,
+        "prompt_tokens": 23,
+        "total_duration_ns": 1926460833
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 1,
+      "total_ms": 1927.096083
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "nemotron-3.5-lightning:30b-mlx",
+          "granite4.2:30b-q6_K"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 123,
+      "context_tokens": 16384,
+      "error": null,
+      "first_token_ms": 45.314708,
+      "generation_tokens_per_second": 74.4772376439669,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 21,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 129,
+        "generation_duration_ns": 1732072833,
+        "load_duration_ns": 19355083,
+        "prompt_eval_duration_ns": 9958,
+        "prompt_tokens": 23,
+        "total_duration_ns": 1751954083
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 2,
+      "total_ms": 1752.831917
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "nemotron-3.5-lightning:30b-mlx",
+          "granite4.2:30b-q6_K"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 112,
+      "context_tokens": 16384,
+      "error": null,
+      "first_token_ms": 37.751958,
+      "generation_tokens_per_second": 73.02298082575113,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 21,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 117,
+        "generation_duration_ns": 1602235333,
+        "load_duration_ns": 11174084,
+        "prompt_eval_duration_ns": 10333,
+        "prompt_tokens": 23,
+        "total_duration_ns": 1614116000
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 3,
+      "total_ms": 1614.942667
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "nemotron-3.5-lightning:30b-mlx",
+          "granite4.2:30b-q6_K"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 104,
+      "context_tokens": 8192,
+      "error": null,
+      "first_token_ms": 39.916542,
+      "generation_tokens_per_second": 73.72074843722395,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 21,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 109,
+        "generation_duration_ns": 1478552542,
+        "load_duration_ns": 13227625,
+        "prompt_eval_duration_ns": 8584,
+        "prompt_tokens": 23,
+        "total_duration_ns": 1492448417
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 1,
+      "total_ms": 1496.069084
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "nemotron-3.5-lightning:30b-mlx",
+          "granite4.2:30b-q6_K"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 122,
+      "context_tokens": 8192,
+      "error": null,
+      "first_token_ms": 37.014167,
+      "generation_tokens_per_second": 71.70714747137173,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 23,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 130,
+        "generation_duration_ns": 1812929458,
+        "load_duration_ns": 10521250,
+        "prompt_eval_duration_ns": 9208,
+        "prompt_tokens": 23,
+        "total_duration_ns": 1824045250
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 2,
+      "total_ms": 1824.7404170000002
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "nemotron-3.5-lightning:30b-mlx",
+          "granite4.2:30b-q6_K"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 129,
+      "context_tokens": 8192,
+      "error": null,
+      "first_token_ms": 37.504208999999996,
+      "generation_tokens_per_second": 73.05019857385395,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 21,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 134,
+        "generation_duration_ns": 1834355041,
+        "load_duration_ns": 11620375,
+        "prompt_eval_duration_ns": 11250,
+        "prompt_tokens": 23,
+        "total_duration_ns": 1846587834
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 3,
+      "total_ms": 1847.483625
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "nemotron-3.5-lightning:30b-mlx",
+          "granite4.2:30b-q6_K"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 94,
+      "context_tokens": 2048,
+      "error": null,
+      "first_token_ms": 36.970749999999995,
+      "generation_tokens_per_second": 72.46738055377655,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 23,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 98,
+        "generation_duration_ns": 1352332584,
+        "load_duration_ns": 9857875,
+        "prompt_eval_duration_ns": 14125,
+        "prompt_tokens": 23,
+        "total_duration_ns": 1362848333
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 1,
+      "total_ms": 1364.252833
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "nemotron-3.5-lightning:30b-mlx",
+          "granite4.2:30b-q6_K"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 90,
+      "context_tokens": 2048,
+      "error": null,
+      "first_token_ms": 39.329667,
+      "generation_tokens_per_second": 72.94704927266032,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 22,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 95,
+        "generation_duration_ns": 1302314500,
+        "load_duration_ns": 12647917,
+        "prompt_eval_duration_ns": 8084,
+        "prompt_tokens": 23,
+        "total_duration_ns": 1315620584
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 2,
+      "total_ms": 1316.43825
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "nemotron-3.5-lightning:30b-mlx",
+          "granite4.2:30b-q6_K"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 124,
+      "context_tokens": 2048,
+      "error": null,
+      "first_token_ms": 39.589082999999995,
+      "generation_tokens_per_second": 73.13410261339921,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 22,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 133,
+        "generation_duration_ns": 1818577042,
+        "load_duration_ns": 11901458,
+        "prompt_eval_duration_ns": 7250,
+        "prompt_tokens": 23,
+        "total_duration_ns": 1831082917
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 3,
+      "total_ms": 1832.286208
+    }
+  ],
+  "seed": 42
+}

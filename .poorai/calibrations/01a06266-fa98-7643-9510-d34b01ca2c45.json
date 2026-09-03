@@ -1,0 +1,643 @@
+{
+  "run": {
+    "outcome": "calibrated",
+    "profile": {
+      "compatibility_key": "963e4edea2dba57741c8b3afbee91a357e14b83cb8e60ea26f457ede2a512fd8",
+      "created_at": "2026-09-02T13:55:11.128839Z",
+      "deployment_fingerprint": "7b0b2028f6ae0bb82fc14a7d890cfa2e49593075ea9962822b81f467d73e9a6d",
+      "harness_rev": "calibration-harness-v3",
+      "id": "01a06266-fa98-7643-9510-d34b01ca2c45",
+      "model_digest": "9f3b89b2521908dd2e6f7a11fa368e62c8f89e1075f22604e4d1a76dd1240fcc",
+      "raw_artifact_hashes": [
+        "fc7dd02fe7a88656711bf26e4c3cddf9607a1f5c71abfefd5fef8766694a0dfa",
+        "935fcfaa4f82feeb00ebd1d1a1cd5261434b9738d65d03b93de913f3d992aced",
+        "c7a538abbcccc8e0ee73605b50867514c71e5aab3dfd22df1e7f8f147bb262b6",
+        "0db3d85788d67448e034fc2d3cd59b07b42a1ff4934fb417045b61ff50c08192",
+        "bae85fe960cd7127e5a8d552409e038d50c13bac8c11da02522bf00513a1da7f",
+        "4d26fbc3ecb0052d5e1db946f4414bd5abd834119324d03410b4876498ce4b04",
+        "07520a12ee2e5b2480fe471c840f4c485f161a48044f97127d8e2ea17daa3c48",
+        "9ffc1e1f4f6b2ccae271c82e32fb8ad87aa84472293c05573f7e245ba39c8433",
+        "af16c24f07e6cab00410e0631dad7e8e330892703768ab15909972c72db4e5f6",
+        "64e8f19cf021cf100f9c79a3831226676bb004e30d0d8f734b1b5103016ca8ae",
+        "f31117ee378dd2f218eb691ac91eef208c2dc2a1571e8fb28515a6a128051db5",
+        "2a346d4c4773673db97b3007ba9a30d79129ff27d31831220db4e67518fa3fd5",
+        "1f93168dafde985cc80e05028fdb223bc308e15f2d3c7a8d6979001274cbffe4",
+        "b88a3878080a18b0f8bacec94bbb631f9d5215a91d83524c59b65f6396617d0c",
+        "d2648e23a68ef32a277b6477d0811092b03244b5f0e677ed0383e305839c5d1f",
+        "50763467c1895c2c15cace5bf7a42c018c1058f4ae7b2c7a407fa233d3c17ccd"
+      ],
+      "schema_version": 1,
+      "stable_points": [
+        {
+          "context_tokens": 32768,
+          "generation_tokens_per_second": 70.6380261594018,
+          "median_first_token_ms": 63.343125,
+          "memory_pressure_observed": false,
+          "samples": 3,
+          "success_rate": 1.0,
+          "variance": 5.643935502864221
+        },
+        {
+          "context_tokens": 65536,
+          "generation_tokens_per_second": 70.70154136697587,
+          "median_first_token_ms": 61.258,
+          "memory_pressure_observed": false,
+          "samples": 3,
+          "success_rate": 1.0,
+          "variance": 0.1328453915926682
+        },
+        {
+          "context_tokens": 131072,
+          "generation_tokens_per_second": 70.61169772776805,
+          "median_first_token_ms": 61.802625,
+          "memory_pressure_observed": false,
+          "samples": 3,
+          "success_rate": 1.0,
+          "variance": 4.614696671641988
+        },
+        {
+          "context_tokens": 262144,
+          "generation_tokens_per_second": 71.54148805661156,
+          "median_first_token_ms": 63.319083,
+          "memory_pressure_observed": false,
+          "samples": 3,
+          "success_rate": 1.0,
+          "variance": 0.5390306535926664
+        }
+      ],
+      "thresholds": {
+        "allow_memory_pressure": false,
+        "max_median_first_token_ms": 120000.0,
+        "min_success_rate": 1.0
+      }
+    },
+    "rejected": [],
+    "samples": [
+      {
+        "backend_state": {
+          "loaded_models": [
+            "ornith-1.5:35b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 32768,
+                "fully_on_accelerator": true,
+                "name": "ornith-1.5:35b",
+                "size_bytes": 22392560678,
+                "vram_bytes": 22392560678
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 32,
+        "context_tokens": 32768,
+        "error": null,
+        "first_token_ms": 67.144542,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 70.55771725032426,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 59,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 34,
+          "generation_duration_ns": 481875000,
+          "load_duration_ns": 12422750,
+          "prompt_eval_duration_ns": 41256000,
+          "prompt_tokens": 17,
+          "total_duration_ns": 547868625
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 1,
+        "total_ms": 548.7835829999999
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "ornith-1.5:35b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 32768,
+                "fully_on_accelerator": true,
+                "name": "ornith-1.5:35b",
+                "size_bytes": 22392560678,
+                "vram_bytes": 22392560678
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 29,
+        "context_tokens": 32768,
+        "error": null,
+        "first_token_ms": 61.428125,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 70.65816945196612,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 59,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 31,
+          "generation_duration_ns": 438732000,
+          "load_duration_ns": 10371292,
+          "prompt_eval_duration_ns": 33110000,
+          "prompt_tokens": 17,
+          "total_duration_ns": 499099167
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 2,
+        "total_ms": 500.032209
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "ornith-1.5:35b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 32768,
+                "fully_on_accelerator": true,
+                "name": "ornith-1.5:35b",
+                "size_bytes": 22392560678,
+                "vram_bytes": 22392560678
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 28,
+        "context_tokens": 32768,
+        "error": null,
+        "first_token_ms": 63.343125,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 70.698191775915,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 59,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 30,
+          "generation_duration_ns": 424339000,
+          "load_duration_ns": 10351625,
+          "prompt_eval_duration_ns": 33854000,
+          "prompt_tokens": 17,
+          "total_duration_ns": 486552791
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 3,
+        "total_ms": 487.426959
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "ornith-1.5:35b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 131072,
+                "fully_on_accelerator": true,
+                "name": "ornith-1.5:35b",
+                "size_bytes": 24630211377,
+                "vram_bytes": 24630211377
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 37,
+        "context_tokens": 131072,
+        "error": null,
+        "first_token_ms": 61.802625,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 70.22358107852617,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 56,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 39,
+          "generation_duration_ns": 555369000,
+          "load_duration_ns": 10831417,
+          "prompt_eval_duration_ns": 36945000,
+          "prompt_tokens": 17,
+          "total_duration_ns": 616403583
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 1,
+        "total_ms": 616.98675
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "ornith-1.5:35b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 131072,
+                "fully_on_accelerator": true,
+                "name": "ornith-1.5:35b",
+                "size_bytes": 24630211377,
+                "vram_bytes": 24630211377
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 32,
+        "context_tokens": 131072,
+        "error": null,
+        "first_token_ms": 65.490708,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 70.91636457685874,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 56,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 34,
+          "generation_duration_ns": 479438000,
+          "load_duration_ns": 11611167,
+          "prompt_eval_duration_ns": 34094000,
+          "prompt_tokens": 17,
+          "total_duration_ns": 543521209
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 2,
+        "total_ms": 544.20475
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "ornith-1.5:35b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 131072,
+                "fully_on_accelerator": true,
+                "name": "ornith-1.5:35b",
+                "size_bytes": 24630211377,
+                "vram_bytes": 24630211377
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 31,
+        "context_tokens": 131072,
+        "error": null,
+        "first_token_ms": 60.396333000000006,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 70.69514752791923,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 56,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 33,
+          "generation_duration_ns": 466793000,
+          "load_duration_ns": 9766375,
+          "prompt_eval_duration_ns": 33213000,
+          "prompt_tokens": 17,
+          "total_duration_ns": 526363875
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 3,
+        "total_ms": 526.992958
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "ornith-1.5:35b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 65536,
+                "fully_on_accelerator": true,
+                "name": "ornith-1.5:35b",
+                "size_bytes": 23086644590,
+                "vram_bytes": 23086644590
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 35,
+        "context_tokens": 65536,
+        "error": null,
+        "first_token_ms": 60.705917,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 70.51487292076416,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 58,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 37,
+          "generation_duration_ns": 524712000,
+          "load_duration_ns": 10312875,
+          "prompt_eval_duration_ns": 37087000,
+          "prompt_tokens": 17,
+          "total_duration_ns": 584622459
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 1,
+        "total_ms": 585.233667
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "ornith-1.5:35b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 65536,
+                "fully_on_accelerator": true,
+                "name": "ornith-1.5:35b",
+                "size_bytes": 23086644590,
+                "vram_bytes": 23086644590
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 29,
+        "context_tokens": 65536,
+        "error": null,
+        "first_token_ms": 61.258,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 70.78142695356738,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 58,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 31,
+          "generation_duration_ns": 437968000,
+          "load_duration_ns": 10586667,
+          "prompt_eval_duration_ns": 33171999,
+          "prompt_tokens": 17,
+          "total_duration_ns": 498442625
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 2,
+        "total_ms": 499.016708
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "ornith-1.5:35b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 65536,
+                "fully_on_accelerator": true,
+                "name": "ornith-1.5:35b",
+                "size_bytes": 23086644590,
+                "vram_bytes": 23086644590
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 28,
+        "context_tokens": 65536,
+        "error": null,
+        "first_token_ms": 61.589583000000005,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 70.80832422659608,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 58,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 30,
+          "generation_duration_ns": 423679000,
+          "load_duration_ns": 9994542,
+          "prompt_eval_duration_ns": 33926000,
+          "prompt_tokens": 17,
+          "total_duration_ns": 484491584
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 3,
+        "total_ms": 485.11066600000004
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "ornith-1.5:35b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 262144,
+                "fully_on_accelerator": true,
+                "name": "ornith-1.5:35b",
+                "size_bytes": 27431282932,
+                "vram_bytes": 27431282932
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 31,
+        "context_tokens": 262144,
+        "error": null,
+        "first_token_ms": 63.319083,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 70.7630616818021,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 52,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 33,
+          "generation_duration_ns": 466345000,
+          "load_duration_ns": 10871708,
+          "prompt_eval_duration_ns": 37898000,
+          "prompt_tokens": 17,
+          "total_duration_ns": 528729292
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 1,
+        "total_ms": 529.2992909999999
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "ornith-1.5:35b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 262144,
+                "fully_on_accelerator": true,
+                "name": "ornith-1.5:35b",
+                "size_bytes": 27431282932,
+                "vram_bytes": 27431282932
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 17,
+        "context_tokens": 262144,
+        "error": null,
+        "first_token_ms": 63.50749999999999,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 73.03029604175795,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 52,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 19,
+          "generation_duration_ns": 260166000,
+          "load_duration_ns": 10322792,
+          "prompt_eval_duration_ns": 33971000,
+          "prompt_tokens": 17,
+          "total_duration_ns": 322925334
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 2,
+        "total_ms": 323.561334
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "ornith-1.5:35b"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 262144,
+                "fully_on_accelerator": true,
+                "name": "ornith-1.5:35b",
+                "size_bytes": 27431282932,
+                "vram_bytes": 27431282932
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 31,
+        "context_tokens": 262144,
+        "error": null,
+        "first_token_ms": 61.864416999999996,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 70.8311064462746,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 52,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 33,
+          "generation_duration_ns": 465897000,
+          "load_duration_ns": 9942833,
+          "prompt_eval_duration_ns": 33454000,
+          "prompt_tokens": 17,
+          "total_duration_ns": 526851625
+        },
+        "ok": true,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 3,
+        "total_ms": 527.612042
+      }
+    ]
+  },
+  "seed": 42
+}

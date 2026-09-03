@@ -151,6 +151,7 @@ fn only_a_run_with_no_terminal_event_is_resumable() {
         transition("Act"),
         RunEvent::TaskFailed {
             reason: "no verifier".into(),
+            class: poorai_domain::TerminalClass::NoVerifier,
             detail: None,
         },
     ]);

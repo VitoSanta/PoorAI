@@ -1,0 +1,643 @@
+{
+  "profile": {
+    "compatibility_key": "963e4edea2dba57741c8b3afbee91a357e14b83cb8e60ea26f457ede2a512fd8",
+    "created_at": "2026-09-01T12:36:59.159747Z",
+    "deployment_fingerprint": "7b0b2028f6ae0bb82fc14a7d890cfa2e49593075ea9962822b81f467d73e9a6d",
+    "harness_rev": "calibration-harness-v3",
+    "id": "01a05cf9-0697-7fb2-a7c6-22bc422365d1",
+    "model_digest": "9f3b89b2521908dd2e6f7a11fa368e62c8f89e1075f22604e4d1a76dd1240fcc",
+    "raw_artifact_hashes": [
+      "c119411b974195b0faa6d5d4f9a294311650db4f73efcf6b4a1877b5751d6cf2",
+      "0c3483419e1a639c72f3e0b7c55685caf47f43f842efd84b4a2965f5b898a275",
+      "c294fa7d46a42e932faaae2f35fb39ea5ec002d3a8e151e8984d3450c420ba4e",
+      "1e2bb9793210a2483d5a3de368eccc6f9725a007da81047511eb0cc176cd3d97",
+      "e2542b7d0c80b981e14af112a5cc35cf8b18acf5e0d31525764bbf4359ee803d",
+      "38b1618b33aab8ebd1fc0439ed7db159535e1f6a99d99c77114a85204d9430e1",
+      "760794a9f245fe21a84a5989f5a6e9f412cafa3dafa2187e32f16d2f40ed513a",
+      "e5dd8bf8172062813523e4d0a7ab8894e57b137b13a02c9bb1a808b226128dba",
+      "1892a903dc70c449ec28a6cf04eb2bee540fb8fcfccf5b5f677cf4e67c639e99",
+      "4f080fb7cc92fc1d9de5150e474df453ad733df239dccb2a58dd2f7561cd2ac3",
+      "40eb8ef88e4d7efb75161a65cdab19f7a6b7aefa7a25f5c90fa7fd21b018ffb3",
+      "f2f6535269b95095b8ed421c3ba36da4b3cad88b9234000c178ba05205348c9e",
+      "c632af7e0127ec2fc59d566e2bed26a5a26c7c34ad81e25664a7ce75fcc0866a",
+      "c9654918f9212cfb5d4b77e45ddbd48e647cfd0c31d3e5fb86f1dbda55c58311",
+      "6ed192c14908fdd55ec565ea02a70ae1957e38008bc06955cdb7c49a2b8a3fcc",
+      "87f2f537655b8590800567073b7e0b4d340bf6cc9906bfb23009b5ba35c5126a",
+      "c9750d408e1b7b6b2adf9f1722142a21804685c512bbe3da193137cce3c38f01",
+      "ab960698451dc659f21c06da159e8b7ea332d631c0304ccde83fd9ebb1f18b52",
+      "220f709f9d5dc172f33561bf453da49489dccd4a3fa9da9d1de8ecf218f21b0f",
+      "a65b44c898788e784d5ee83e26fb8b53708f005ee926698d55031516ef1c07be"
+    ],
+    "schema_version": 1,
+    "stable_points": [
+      {
+        "context_tokens": 2048,
+        "generation_tokens_per_second": 70.61550068248015,
+        "median_first_token_ms": 57.800459,
+        "memory_pressure_observed": false,
+        "samples": 3,
+        "success_rate": 1.0,
+        "variance": 0.2084880320926652
+      },
+      {
+        "context_tokens": 4096,
+        "generation_tokens_per_second": 71.15405237416496,
+        "median_first_token_ms": 61.989709,
+        "memory_pressure_observed": false,
+        "samples": 3,
+        "success_rate": 1.0,
+        "variance": 4.373051855083571
+      },
+      {
+        "context_tokens": 8192,
+        "generation_tokens_per_second": 71.6173440236638,
+        "median_first_token_ms": 61.705625,
+        "memory_pressure_observed": false,
+        "samples": 3,
+        "success_rate": 1.0,
+        "variance": 1.389115120197556
+      },
+      {
+        "context_tokens": 16384,
+        "generation_tokens_per_second": 70.47680101725496,
+        "median_first_token_ms": 63.546083,
+        "memory_pressure_observed": false,
+        "samples": 3,
+        "success_rate": 1.0,
+        "variance": 20.03452101661422
+      },
+      {
+        "context_tokens": 32768,
+        "generation_tokens_per_second": 70.5018913130778,
+        "median_first_token_ms": 61.165499999999994,
+        "memory_pressure_observed": false,
+        "samples": 3,
+        "success_rate": 1.0,
+        "variance": 29.772943206160658
+      }
+    ],
+    "thresholds": {
+      "allow_memory_pressure": false,
+      "max_median_first_token_ms": 120000.0,
+      "min_success_rate": 1.0
+    }
+  },
+  "samples": [
+    {
+      "backend_state": {
+        "loaded_models": [
+          "ornith-1.5:35b"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 31,
+      "context_tokens": 32768,
+      "error": null,
+      "first_token_ms": 61.165499999999994,
+      "generation_tokens_per_second": 69.89407870073262,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 60,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 33,
+        "generation_duration_ns": 472143000,
+        "load_duration_ns": 11074917,
+        "prompt_eval_duration_ns": 37092000,
+        "prompt_tokens": 17,
+        "total_duration_ns": 532364417
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 1,
+      "total_ms": 533.2320000000001
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "ornith-1.5:35b"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 30,
+      "context_tokens": 32768,
+      "error": null,
+      "first_token_ms": 60.775957999999996,
+      "generation_tokens_per_second": 70.81463384408387,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 60,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 32,
+        "generation_duration_ns": 451884000,
+        "load_duration_ns": 10405000,
+        "prompt_eval_duration_ns": 33237000,
+        "prompt_tokens": 17,
+        "total_duration_ns": 511786167
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 2,
+      "total_ms": 512.672417
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "ornith-1.5:35b"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 28,
+      "context_tokens": 32768,
+      "error": null,
+      "first_token_ms": 72.54070899999999,
+      "generation_tokens_per_second": 70.79696139441695,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 60,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 30,
+        "generation_duration_ns": 423747000,
+        "load_duration_ns": 11112875,
+        "prompt_eval_duration_ns": 41726000,
+        "prompt_tokens": 17,
+        "total_duration_ns": 495192833
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 3,
+      "total_ms": 495.902042
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "ornith-1.5:35b"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 27,
+      "context_tokens": 4096,
+      "error": null,
+      "first_token_ms": 61.989709,
+      "generation_tokens_per_second": 71.56005862989632,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 62,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 29,
+        "generation_duration_ns": 405254000,
+        "load_duration_ns": 10690333,
+        "prompt_eval_duration_ns": 37757000,
+        "prompt_tokens": 17,
+        "total_duration_ns": 466260042
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 1,
+      "total_ms": 467.129917
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "ornith-1.5:35b"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 31,
+      "context_tokens": 4096,
+      "error": null,
+      "first_token_ms": 60.672959,
+      "generation_tokens_per_second": 71.38052090475891,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 62,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 33,
+        "generation_duration_ns": 462311000,
+        "load_duration_ns": 10314042,
+        "prompt_eval_duration_ns": 33159000,
+        "prompt_tokens": 17,
+        "total_duration_ns": 522266000
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 2,
+      "total_ms": 522.995084
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "ornith-1.5:35b"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 33,
+      "context_tokens": 4096,
+      "error": null,
+      "first_token_ms": 65.618333,
+      "generation_tokens_per_second": 70.52157758783966,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 62,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 35,
+        "generation_duration_ns": 496302000,
+        "load_duration_ns": 10801083,
+        "prompt_eval_duration_ns": 34950000,
+        "prompt_tokens": 17,
+        "total_duration_ns": 560825292
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 3,
+      "total_ms": 561.537875
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "ornith-1.5:35b"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 27,
+      "context_tokens": 16384,
+      "error": null,
+      "first_token_ms": 71.400333,
+      "generation_tokens_per_second": 70.86964384338297,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 61,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 29,
+        "generation_duration_ns": 409202000,
+        "load_duration_ns": 11503125,
+        "prompt_eval_duration_ns": 45687000,
+        "prompt_tokens": 17,
+        "total_duration_ns": 479525875
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 1,
+      "total_ms": 480.192666
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "ornith-1.5:35b"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 31,
+      "context_tokens": 16384,
+      "error": null,
+      "first_token_ms": 60.848375000000004,
+      "generation_tokens_per_second": 70.39114010183252,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 61,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 33,
+        "generation_duration_ns": 468809000,
+        "load_duration_ns": 10447125,
+        "prompt_eval_duration_ns": 32933000,
+        "prompt_tokens": 17,
+        "total_duration_ns": 528834084
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 2,
+      "total_ms": 529.429084
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "ornith-1.5:35b"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 31,
+      "context_tokens": 16384,
+      "error": null,
+      "first_token_ms": 63.546083,
+      "generation_tokens_per_second": 70.16961910654938,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 61,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 33,
+        "generation_duration_ns": 470289000,
+        "load_duration_ns": 12092458,
+        "prompt_eval_duration_ns": 33146000,
+        "prompt_tokens": 17,
+        "total_duration_ns": 532947250
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 3,
+      "total_ms": 533.6131670000001
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "ornith-1.5:35b"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 28,
+      "context_tokens": 8192,
+      "error": null,
+      "first_token_ms": 63.439542,
+      "generation_tokens_per_second": 71.47366790951433,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 61,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 30,
+        "generation_duration_ns": 419735000,
+        "load_duration_ns": 11380709,
+        "prompt_eval_duration_ns": 37863000,
+        "prompt_tokens": 17,
+        "total_duration_ns": 482207125
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 1,
+      "total_ms": 482.99725
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "ornith-1.5:35b"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 33,
+      "context_tokens": 8192,
+      "error": null,
+      "first_token_ms": 60.573542,
+      "generation_tokens_per_second": 70.80304817237104,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 61,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 35,
+        "generation_duration_ns": 494329000,
+        "load_duration_ns": 9750208,
+        "prompt_eval_duration_ns": 33222000,
+        "prompt_tokens": 17,
+        "total_duration_ns": 553826708
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 2,
+      "total_ms": 554.6347499999999
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "ornith-1.5:35b"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 17,
+      "context_tokens": 8192,
+      "error": null,
+      "first_token_ms": 61.705625,
+      "generation_tokens_per_second": 72.57531598910606,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 61,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 19,
+        "generation_duration_ns": 261797000,
+        "load_duration_ns": 10908625,
+        "prompt_eval_duration_ns": 33256999,
+        "prompt_tokens": 17,
+        "total_duration_ns": 322445709
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 3,
+      "total_ms": 323.09833399999997
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "ornith-1.5:35b"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 31,
+      "context_tokens": 2048,
+      "error": null,
+      "first_token_ms": 57.800459,
+      "generation_tokens_per_second": 70.58989623285254,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 62,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 33,
+        "generation_duration_ns": 467489000,
+        "load_duration_ns": 9878875,
+        "prompt_eval_duration_ns": 35088000,
+        "prompt_tokens": 17,
+        "total_duration_ns": 524363167
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 1,
+      "total_ms": 524.947542
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "ornith-1.5:35b"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 31,
+      "context_tokens": 2048,
+      "error": null,
+      "first_token_ms": 58.473749999999995,
+      "generation_tokens_per_second": 70.72257035824197,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 61,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 33,
+        "generation_duration_ns": 466612000,
+        "load_duration_ns": 8900250,
+        "prompt_eval_duration_ns": 33262000,
+        "prompt_tokens": 17,
+        "total_duration_ns": 524251000
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 2,
+      "total_ms": 524.9208749999999
+    },
+    {
+      "backend_state": {
+        "loaded_models": [
+          "ornith-1.5:35b"
+        ],
+        "state": {
+          "source": "ollama:/api/ps",
+          "unknown_fields": "not inferred"
+        }
+      },
+      "chunks": 36,
+      "context_tokens": 2048,
+      "error": null,
+      "first_token_ms": 57.363667,
+      "generation_tokens_per_second": 70.53403545634593,
+      "memory_pressure": {
+        "status": "observed",
+        "value": {
+          "free_percent_floor": 20,
+          "source": "memory_pressure -Q",
+          "system_free_percent": 61,
+          "under_pressure": false
+        }
+      },
+      "metrics": {
+        "generated_tokens": 38,
+        "generation_duration_ns": 538747000,
+        "load_duration_ns": 8602500,
+        "prompt_eval_duration_ns": 31885000,
+        "prompt_tokens": 17,
+        "total_duration_ns": 595266500
+      },
+      "ok": true,
+      "rate_source": "backend_reported_tokens",
+      "repetition": 3,
+      "total_ms": 595.891458
+    }
+  ],
+  "seed": 42
+}

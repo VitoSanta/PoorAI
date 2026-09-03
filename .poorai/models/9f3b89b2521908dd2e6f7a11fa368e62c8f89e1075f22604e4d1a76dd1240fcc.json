@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "id": "01a05d43-2c51-78a3-9270-300a91a3e82c",
+  "digest": "9f3b89b2521908dd2e6f7a11fa368e62c8f89e1075f22604e4d1a76dd1240fcc",
+  "family": "qwen35moe",
+  "quantization": "Q4_K_M",
+  "capabilities": {
+    "cancellation": {
+      "status": "observed",
+      "value": {
+        "abandoned_after_ms": 187,
+        "backend_responsive_after": true,
+        "chunks_before_cancel": 3
+      }
+    },
+    "chat": {
+      "status": "observed",
+      "value": {
+        "chunks": 29,
+        "produced_text": true
+      }
+    },
+    "completion": {
+      "status": "observed",
+      "value": true
+    },
+    "context_boundary": {
+      "status": "observed",
+      "value": {
+        "behaviour": "rejected",
+        "detail": "provider protocol error: Ollama returned HTTP 400 Bad Request",
+        "reference_prompt_tokens": 4044,
+        "requested_context": 512
+      }
+    },
+    "edit": {
+      "status": "observed",
+      "value": {
+        "edits": 2,
+        "evidence": [
+          {
+            "hash_guard_satisfied": true,
+            "new_hash": "3b41af144e14c2190d10653563034a2d17afaf9859a943d9b5684b93dc3fc042",
+            "path": "probe.rs",
+            "previous_hash": "236e7d9d0db41fd2ff372b3f592beff5aae31fdd5684405bfe9e0917332c87d5",
+            "replacement_bytes": 31,
+            "trial": 1
+          },
+          {
+            "hash_guard_satisfied": true,
+            "new_hash": "3b41af144e14c2190d10653563034a2d17afaf9859a943d9b5684b93dc3fc042",
+            "path": "probe.rs",
+            "previous_hash": "236e7d9d0db41fd2ff372b3f592beff5aae31fdd5684405bfe9e0917332c87d5",
+            "replacement_bytes": 31,
+            "trial": 2
+          }
+        ],
+        "failures": [
+          "trial 3: model proposed [\"read_file\"] instead of apply_replace"
+        ],
+        "reliable": false,
+        "trials": 3
+      }
+    },
+    "streaming": {
+      "status": "observed",
+      "value": {
+        "chunks": 29
+      }
+    },
+    "structured_tools": {
+      "status": "observed",
+      "value": {
+        "calls": 3,
+        "evidence": [
+          {
+            "arguments": {
+              "value": "ok"
+            },
+            "chunk_index": 25,
+            "chunks": 25,
+            "trial": 1
+          },
+          {
+            "arguments": {
+              "value": "ok"
+            },
+            "chunk_index": 34,
+            "chunks": 34,
+            "trial": 2
+          },
+          {
+            "arguments": {
+              "value": "ok"
+            },
+            "chunk_index": 25,
+            "chunks": 25,
+            "trial": 3
+          }
+        ],
+        "failures": [],
+        "reliable": true,
+        "tool": "probe_echo",
+        "trials": 3
+      }
+    },
+    "thinking": {
+      "status": "observed",
+      "value": true
+    },
+    "tools": {
+      "status": "observed",
+      "value": true
+    },
+    "vision": {
+      "status": "observed",
+      "value": true
+    }
+  },
+  "metadata": {
+    "model_info": {
+      "general.architecture": "qwen35moe",
+      "general.file_type": 15,
+      "general.finetune": "35b",
+      "general.parameter_count": 35505251456,
+      "general.quantization_version": 2,
+      "general.sampling.temp": 1,
+      "general.sampling.top_k": 20,
+      "general.sampling.top_p": 0.95,
+      "general.size_label": "256x2.6B",
+      "general.type": "model",
+      "general.version": "4000",
+      "quantize.imatrix.chunks_count": 3636,
+      "quantize.imatrix.dataset": "/mgfs/shared/Group_GY/wenchao/gguf_work/calib/merged/shards-35b-4000/s_00",
+      "quantize.imatrix.entries_count": 510,
+      "quantize.imatrix.file": "/mgfs/shared/Group_GY/wenchao/gguf_work/out/35b-4000/Ornith-1.5-35B.imatrix.gguf",
+      "qwen35moe.attention.head_count": 16,
+      "qwen35moe.attention.head_count_kv": 2,
+      "qwen35moe.attention.key_length": 256,
+      "qwen35moe.attention.layer_norm_rms_epsilon": 1e-6,
+      "qwen35moe.attention.value_length": 256,
+      "qwen35moe.block_count": 41,
+      "qwen35moe.context_length": 262144,
+      "qwen35moe.embedding_length": 2048,
+      "qwen35moe.expert_count": 256,
+      "qwen35moe.expert_feed_forward_length": 512,
+      "qwen35moe.expert_shared_feed_forward_length": 512,
+      "qwen35moe.expert_used_count": 8,
+      "qwen35moe.full_attention_interval": 4,
+      "qwen35moe.nextn_predict_layers": 1,
+      "qwen35moe.rope.dimension_count": 64,
+      "qwen35moe.rope.dimension_sections": [
+        11,
+        11,
+        10,
+        0
+      ],
+      "qwen35moe.rope.freq_base": 10000000,
+      "qwen35moe.ssm.conv_kernel": 4,
+      "qwen35moe.ssm.group_count": 16,
+      "qwen35moe.ssm.inner_size": 4096,
+      "qwen35moe.ssm.state_size": 128,
+      "qwen35moe.ssm.time_step_rank": 32,
+      "tokenizer.ggml.add_bos_token": false,
+      "tokenizer.ggml.bos_token_id": 248044,
+      "tokenizer.ggml.eos_token_id": 248046,
+      "tokenizer.ggml.merges": {
+        "content_hash": "69d51fe78361ce40801d8991e3380cf3ac732be141af755c0699f29fbc0a1be4",
+        "length": 247587,
+        "pruned": "oversized_array"
+      },
+      "tokenizer.ggml.model": "gpt2",
+      "tokenizer.ggml.padding_token_id": 248044,
+      "tokenizer.ggml.pre": "qwen35",
+      "tokenizer.ggml.token_type": {
+        "content_hash": "0ecc5ed3ce1e71a84750b2e2669f773f7142bfe61692c3dfb5fbc9d3edb870f6",
+        "length": 248320,
+        "pruned": "oversized_array"
+      },
+      "tokenizer.ggml.tokens": {
+        "content_hash": "d49e69f8087e88904afddd0e04414664c24ced6d9ee83b08772d200126e2882f",
+        "length": 248320,
+        "pruned": "oversized_array"
+      }
+    },
+    "parent_model": "",
+    "reported_modified_at": "2026-09-01T10:45:17.288385578+02:00",
+    "reported_size_bytes": 22616285024
+  },
+  "provenance": {
+    "source": "ollama:/api/show,/api/tags",
+    "observed_at": "2026-09-01T13:57:58.481437Z",
+    "content_hash": "22adf14001585fd8dd0d5b7841339f957d131fa1ad9dca1f4675574568073ce3"
+  }
+}

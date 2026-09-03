@@ -1,2 +1,40 @@
 /target/
-/.poorai/
+
+# Runtime state: the event log, the workspace index, the lease. Machine-local,
+# rebuilt on demand, and never evidence of anything.
+/.poorai/*
+
+# Results are not runtime state.
+#
+# Evaluation reports, calibration profiles and capability evidence are what a
+# promotion decision cites, and they lived only on the machine that produced
+# them -- so a number in the roadmap could not be checked against the artifact
+# behind it by anyone without that machine. They are content-addressed and
+# never overwritten, so tracking them adds rather than churns.
+!/.poorai/calibrations/
+!/.poorai/models/
+
+# Evaluation reports stay untracked until the corpus is re-run.
+#
+# Every campaign recorded before 2026-09-03 is void: the tool-failure rate was
+# never measured, the context reaching the backend was not the one calibrated,
+# and a workspace with no checks scored as resolved. Committing them would put
+# artifacts in the repository that look like evidence and are not. The
+# exception is lifted, and this comment deleted, when the re-run produces
+# reports worth citing.
+/.poorai/evaluations/
+
+# The campaign directories from those same runs, for the same reason.
+#
+# Their tool-failure rate was never measured, the context reaching the backend
+# was not the one calibrated, and a workspace with no checks scored as
+# resolved. thresholds.md declares them void. Committing them would put
+# artifacts in the repository that look like evidence and are not; they stay on
+# the machine that made them until the corpus is re-run.
+/.poorai/evaluations-controls/
+/.poorai/evaluations-generation/
+/.poorai/evaluations-m6/
+/.poorai/evaluations-m6-final/
+/.poorai/evaluations-m6-post/
+/.poorai/evaluations-maxctx/
+/.poorai/evaluations-realistic/

@@ -1,0 +1,207 @@
+{
+  "schema_version": 1,
+  "id": "01a05d43-bbc2-7fd0-ae39-deed393b2490",
+  "digest": "201f8e27f3c220a0749198bdf274c13161c6d9facc7ee07f198426297f3bccdd",
+  "family": "granite",
+  "quantization": "Q6_K",
+  "capabilities": {
+    "cancellation": {
+      "status": "observed",
+      "value": {
+        "abandoned_after_ms": 650,
+        "backend_responsive_after": true,
+        "chunks_before_cancel": 3
+      }
+    },
+    "chat": {
+      "status": "observed",
+      "value": {
+        "chunks": 38,
+        "produced_text": true
+      }
+    },
+    "completion": {
+      "status": "observed",
+      "value": true
+    },
+    "context_boundary": {
+      "status": "observed",
+      "value": {
+        "behaviour": "rejected",
+        "detail": "provider protocol error: Ollama returned HTTP 400 Bad Request",
+        "reference_prompt_tokens": 4048,
+        "requested_context": 512
+      }
+    },
+    "edit": {
+      "status": "observed",
+      "value": {
+        "edits": 3,
+        "evidence": [
+          {
+            "hash_guard_satisfied": true,
+            "new_hash": "3b41af144e14c2190d10653563034a2d17afaf9859a943d9b5684b93dc3fc042",
+            "path": "probe.rs",
+            "previous_hash": "236e7d9d0db41fd2ff372b3f592beff5aae31fdd5684405bfe9e0917332c87d5",
+            "replacement_bytes": 31,
+            "trial": 1
+          },
+          {
+            "hash_guard_satisfied": true,
+            "new_hash": "3b41af144e14c2190d10653563034a2d17afaf9859a943d9b5684b93dc3fc042",
+            "path": "probe.rs",
+            "previous_hash": "236e7d9d0db41fd2ff372b3f592beff5aae31fdd5684405bfe9e0917332c87d5",
+            "replacement_bytes": 31,
+            "trial": 2
+          },
+          {
+            "hash_guard_satisfied": true,
+            "new_hash": "3b41af144e14c2190d10653563034a2d17afaf9859a943d9b5684b93dc3fc042",
+            "path": "probe.rs",
+            "previous_hash": "236e7d9d0db41fd2ff372b3f592beff5aae31fdd5684405bfe9e0917332c87d5",
+            "replacement_bytes": 31,
+            "trial": 3
+          }
+        ],
+        "failures": [],
+        "reliable": true,
+        "trials": 3
+      }
+    },
+    "streaming": {
+      "status": "observed",
+      "value": {
+        "chunks": 38
+      }
+    },
+    "structured_tools": {
+      "status": "observed",
+      "value": {
+        "calls": 3,
+        "evidence": [
+          {
+            "arguments": {
+              "value": "ok"
+            },
+            "chunk_index": 90,
+            "chunks": 90,
+            "trial": 1
+          },
+          {
+            "arguments": {
+              "value": "ok"
+            },
+            "chunk_index": 74,
+            "chunks": 74,
+            "trial": 2
+          },
+          {
+            "arguments": {
+              "value": "ok"
+            },
+            "chunk_index": 100,
+            "chunks": 100,
+            "trial": 3
+          }
+        ],
+        "failures": [],
+        "reliable": true,
+        "tool": "probe_echo",
+        "trials": 3
+      }
+    },
+    "thinking": {
+      "status": "observed",
+      "value": true
+    },
+    "tools": {
+      "status": "observed",
+      "value": true
+    }
+  },
+  "metadata": {
+    "model_info": {
+      "general.architecture": "granite",
+      "general.base_model.0.name": "Granite 4.1 30b Base",
+      "general.base_model.0.organization": "Ibm Granite",
+      "general.base_model.0.repo_url": "https://huggingface.co/ibm-granite/granite-4.1-30b-base",
+      "general.base_model.count": 1,
+      "general.basename": "granite-4.2",
+      "general.file_type": 18,
+      "general.languages": [
+        "en",
+        "de",
+        "es",
+        "fr",
+        "ja",
+        "pt",
+        "ar",
+        "cs",
+        "it",
+        "ko",
+        "nl",
+        "zh"
+      ],
+      "general.license": "apache-2.0",
+      "general.parameter_count": 29276770304,
+      "general.quantization_version": 2,
+      "general.sampling.temp": 1,
+      "general.sampling.top_p": 0.95,
+      "general.size_label": "30B",
+      "general.tags": [
+        "granite",
+        "granite-4.2",
+        "reasoning",
+        "thinking",
+        "tool-calling",
+        "ibm",
+        "text-generation"
+      ],
+      "general.type": "model",
+      "granite.attention.head_count": 32,
+      "granite.attention.head_count_kv": 8,
+      "granite.attention.layer_norm_rms_epsilon": 0.00001,
+      "granite.attention.scale": 0.0078125,
+      "granite.block_count": 64,
+      "granite.context_length": 131072,
+      "granite.embedding_length": 4096,
+      "granite.embedding_scale": 1,
+      "granite.feed_forward_length": 32768,
+      "granite.logit_scale": 1,
+      "granite.residual_scale": 1,
+      "granite.rope.dimension_count": 128,
+      "granite.rope.freq_base": 50000000,
+      "granite.vocab_size": 100352,
+      "tokenizer.ggml.add_space_prefix": false,
+      "tokenizer.ggml.bos_token_id": 100283,
+      "tokenizer.ggml.eos_token_id": 100257,
+      "tokenizer.ggml.merges": {
+        "content_hash": "e0883deccbf3a6972fe04daea01ea8d6e0fd555f3f3447142eec2ba1c796d318",
+        "length": 100000,
+        "pruned": "oversized_array"
+      },
+      "tokenizer.ggml.model": "gpt2",
+      "tokenizer.ggml.padding_token_id": 100257,
+      "tokenizer.ggml.pre": "granite-docling",
+      "tokenizer.ggml.token_type": {
+        "content_hash": "78751223ddfb07ad22abd6fc4c2686651bedc9268a7605fa542b83c96781ce21",
+        "length": 100352,
+        "pruned": "oversized_array"
+      },
+      "tokenizer.ggml.tokens": {
+        "content_hash": "017028ca8514eb33442b1718e717902191f8c7d3f1f80abfeb4cce6210e15054",
+        "length": 100352,
+        "pruned": "oversized_array"
+      },
+      "tokenizer.ggml.unknown_token_id": 100269
+    },
+    "parent_model": "/Users/runner/.ollama/models/blobs/sha256-3e80cc9aa7e5613f4b2225f8813704cefefd2afdecf90295f6149a8621c644dd",
+    "reported_modified_at": "2026-09-01T10:49:46.69674861+02:00",
+    "reported_size_bytes": 24021377276
+  },
+  "provenance": {
+    "source": "ollama:/api/show,/api/tags",
+    "observed_at": "2026-09-01T13:58:35.202089Z",
+    "content_hash": "6be3d41cda8eb4c9125bcdf4954d35669c2ee015884da32d5be1b55730ebd323"
+  }
+}

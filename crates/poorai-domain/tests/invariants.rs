@@ -677,6 +677,7 @@ fn every_run_event_round_trips_through_its_stored_shape() {
         },
         RunEvent::TaskFailed {
             reason: "no verifier".into(),
+            class: poorai_domain::TerminalClass::NoVerifier,
             detail: None,
         },
     ];
