@@ -18,6 +18,6 @@ What remains is handing that state to a new run as its starting point instead of
 
 Events are typed as of 2026-09-03. The log stored `(&str, Value)` with the type written as a literal at each call site, so nothing checked that two places recording the same event agreed on its shape. `RunEvent` derives both from one value; the stored column is unchanged and older artifacts still read.
 
-**The log is append-only by API, not by enforcement.** `Store` exposes only `append` and chains each event to the last, but SQLite permits `UPDATE` and `DELETE` and nothing walks the chain to verify it. The chain is also global rather than per run, so a run's events are hashed over whatever ran between them.
+**The chain is verifiable and per run as of 2026-09-03.** It was global, so a run's events were hashed over whatever ran between them and two runs in one database could not be verified independently; both chains are now kept. And nothing walked either: SQLite permits `UPDATE` and `DELETE` whatever the API exposes, so append-only was a property of the code and not of the data. `verify_run_chain` recomputes each event's hash from what is stored — an edited payload and a deleted row both break it — and `report` carries the verdict. Rows written before the run chain existed are counted as unlinked rather than treated as intact.
 
 Not implemented: TTL on retained content, encrypted blob references, artifact format versioning, and comparison of a loaded artifact's `schema_version` against the `SCHEMA_VERSION` in force.

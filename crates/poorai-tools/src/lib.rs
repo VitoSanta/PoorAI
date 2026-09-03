@@ -38,6 +38,12 @@ pub enum ActionProposal {
     Complete {
         rationale: String,
     },
+    /// Several replacements in one file, under one hash guard.
+    ApplyPatchHunks {
+        path: String,
+        expected_hash: String,
+        hunks: Vec<Hunk>,
+    },
     /// Creates a directory and its parents.
     MakeDirectory {
         path: String,
@@ -827,6 +833,99 @@ pub fn list_tree(policy: &ToolPolicy, max_entries: usize) -> Result<Vec<TreeEntr
         });
     }
     Ok(output)
+}
+
+/// One replacement within a file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Hunk {
+    pub find: String,
+    pub replace: String,
+}
+
+/// Applies several replacements to one file under a single hash guard.
+///
+/// A change touching three places in a file was three whole-file rewrites,
+/// each carrying the entire file and each invalidating the hash the next one
+/// was written against -- so the second and third arrived stale and the run
+/// spent its budget re-reading. This is the same guard, once.
+///
+/// Every hunk must match exactly once, and all of them are checked before any
+/// is applied: a patch that half-lands leaves a file in a state nobody
+/// described, which is worse than one that does not land at all.
+pub fn apply_patch(
+    policy: &ToolPolicy,
+    relative: &Path,
+    expected_hash: &str,
+    hunks: &[Hunk],
+) -> Result<ApplyResult, ToolError> {
+    if hunks.is_empty() {
+        return Err(ToolError::Denied("a patch needs at least one hunk".into()));
+    }
+    if let Some(approval) = edit_approval(relative) {
+        policy.require(approval)?;
+    }
+    let path = policy.resolve(relative)?;
+    let original = std::fs::read(&path)?;
+    if original.iter().take(4096).any(|byte| *byte == 0) {
+        return Err(ToolError::Denied("refusing to patch a binary file".into()));
+    }
+    let current = hash_bytes(&original);
+    if current != expected_hash {
+        return Err(ToolError::Denied(format!(
+            "stale file hash; the file now hashes to {current}. Reread it before patching."
+        )));
+    }
+    let mut content = String::from_utf8_lossy(&original).to_string();
+
+    // Checked first, applied second. A hunk that would match text an earlier
+    // hunk introduced is not the caller's intent, and finding that out halfway
+    // through is finding it out too late.
+    for (index, hunk) in hunks.iter().enumerate() {
+        if hunk.find.is_empty() {
+            return Err(ToolError::Denied(format!(
+                "hunk {} has nothing to find",
+                index + 1
+            )));
+        }
+        match content.matches(&hunk.find).count() {
+            1 => {}
+            0 if content.contains(&hunk.replace) => {
+                return Err(ToolError::Denied(format!(
+                    "hunk {} is already applied: its replacement is present and its find text is not",
+                    index + 1
+                )));
+            }
+            0 => {
+                return Err(ToolError::Denied(format!(
+                    "hunk {} does not appear in {}",
+                    index + 1,
+                    relative.display()
+                )));
+            }
+            found => {
+                return Err(ToolError::Denied(format!(
+                    "hunk {} matches {found} times; make it unique so the edit is not the wrong one",
+                    index + 1
+                )));
+            }
+        }
+    }
+    for hunk in hunks {
+        content = content.replacen(&hunk.find, &hunk.replace, 1);
+    }
+    if content.len() > policy.output_limit {
+        return Err(ToolError::Denied(
+            "patched content exceeds policy size limit".into(),
+        ));
+    }
+    std::fs::write(&path, content.as_bytes())?;
+    let new_hash = hash_bytes(content.as_bytes());
+    Ok(ApplyResult {
+        path: relative.display().to_string(),
+        previous_hash: expected_hash.to_string(),
+        expected_hash: new_hash.clone(),
+        new_hash,
+    })
 }
 
 /// What a filesystem change did, for the audit and the next call.

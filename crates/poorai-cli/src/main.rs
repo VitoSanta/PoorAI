@@ -2845,7 +2845,7 @@ fn report_markdown(run_id: uuid::Uuid, events: &[poorai_store::EventRecord]) -> 
     }
     let _ = writeln!(
         out,
-        "\nEvery line above is an entry in the hash chain, not a summary of one."
+        "\nEvery line above is an entry in the hash chain, not a summary of one. Whether that chain still holds is reported beside this document rather than asserted inside it."
     );
     out
 }
@@ -2886,14 +2886,27 @@ fn report(id: String, format: String) -> Result<serde_json::Value, SafeError> {
             context: "no events found for run".into(),
         });
     }
+    // A trail nobody checks is a trail that can be edited. The API only ever
+    // appended, and SQLite permits UPDATE and DELETE regardless.
+    let chain = store.verify_run_chain(run_id).map_err(|e| SafeError {
+        category: "internal",
+        context: e.to_string(),
+    })?;
     if format == "md" {
         return Ok(serde_json::json!({
             "run_id": run_id,
             "format": "md",
+            "chain": chain,
+            "chain_intact": chain.intact(),
             "markdown": report_markdown(run_id, &events),
         }));
     }
-    Ok(serde_json::json!({"run_id":run_id,"events":events}))
+    Ok(serde_json::json!({
+        "run_id": run_id,
+        "chain": chain,
+        "chain_intact": chain.intact(),
+        "events": events,
+    }))
 }
 async fn verify(run_id: Option<String>, scope: String) -> Result<serde_json::Value, SafeError> {
     let root = std::env::current_dir()

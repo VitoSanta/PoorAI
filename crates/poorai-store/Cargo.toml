@@ -14,5 +14,9 @@ serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+rusqlite.workspace = true
+
 [lints]
 workspace = true

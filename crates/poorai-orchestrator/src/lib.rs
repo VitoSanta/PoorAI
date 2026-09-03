@@ -594,6 +594,16 @@ async fn attempt_action(
         ActionProposal::Search { query, max_matches } => {
             serialize_tool_result(poorai_tools::search(policy, query, *max_matches))
         }
+        ActionProposal::ApplyPatchHunks {
+            path,
+            expected_hash,
+            hunks,
+        } => serialize_tool_result(poorai_tools::apply_patch(
+            policy,
+            std::path::Path::new(path),
+            expected_hash,
+            hunks,
+        )),
         ActionProposal::MakeDirectory { path } => serialize_tool_result(
             poorai_tools::make_directory(policy, std::path::Path::new(path)),
         ),
@@ -1119,6 +1129,29 @@ fn adopted_verifier(outcome: &serde_json::Value) -> Option<(String, Vec<String>)
     Some((executable, args))
 }
 
+/// A failing check, with its failures located rather than only described.
+///
+/// The output was carried as bounded text and the deployment had to find the
+/// file and line in it -- work it paid actions for, and mechanical work, which
+/// is the harness's to do. The prose stays: a located line is not the whole
+/// message, and a diagnostic the parser did not recognise must not disappear
+/// because of that.
+fn failing_check_report(check: &poorai_verify::CheckRecord) -> serde_json::Value {
+    let located =
+        poorai_verify::diagnostics(&format!("{}\n{}", check.result.stdout, check.result.stderr));
+    serde_json::json!({
+        "command": check.command,
+        "exit_code": check.result.exit_code,
+        "stdout": check.result.stdout,
+        "stderr": check.result.stderr,
+        "duration_ms": check.result.duration_ms,
+        "artifact_hash": check.result.artifact_hash,
+        "stdout_truncated": check.result.stdout_truncated,
+        "stderr_truncated": check.result.stderr_truncated,
+        "diagnostics": located,
+    })
+}
+
 /// What an action targets, for spotting repetition.
 ///
 /// Compared on the capability and its target rather than the whole proposal,
@@ -1133,6 +1166,9 @@ fn action_fingerprint(action: &ActionProposal) -> String {
             format!("read_file:{path}:{first_line:?}")
         }
         ActionProposal::Search { query, .. } => format!("search:{query}"),
+        ActionProposal::ApplyPatchHunks { path, hunks, .. } => {
+            format!("apply_patch:{path}:{}", hunks.len())
+        }
         ActionProposal::MakeDirectory { path } => format!("make_directory:{path}"),
         ActionProposal::DeletePath { path, .. } => format!("delete_path:{path}"),
         ActionProposal::MovePath { from, to } => format!("move_path:{from}:{to}"),
@@ -2122,18 +2158,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                 .checks
                 .iter()
                 .filter(|check| check.result.exit_code != Some(0))
-                .map(|check| {
-                    serde_json::json!({
-                        "command": check.command,
-                        "exit_code": check.result.exit_code,
-                        "stdout": check.result.stdout,
-                        "stderr": check.result.stderr,
-                        "duration_ms": check.result.duration_ms,
-                        "artifact_hash": check.result.artifact_hash,
-                        "stdout_truncated": check.result.stdout_truncated,
-                        "stderr_truncated": check.result.stderr_truncated,
-                    })
-                })
+                .map(failing_check_report)
                 .collect();
             let failure_class = if let Some((index, failed)) = after
                 .checks
@@ -2283,6 +2308,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                 | ActionProposal::ReplaceText { .. }
                 | ActionProposal::DeletePath { .. }
                 | ActionProposal::MovePath { .. }
+                | ActionProposal::ApplyPatchHunks { .. }
         );
         // Read before the action is consumed, and only accepted for a step the
         // plan actually has: a claim on step 9 of a six-step plan is a mistake,
@@ -2378,18 +2404,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                 .checks
                 .iter()
                 .filter(|check| check.result.exit_code != Some(0))
-                .map(|check| {
-                    serde_json::json!({
-                        "command": check.command,
-                        "exit_code": check.result.exit_code,
-                        "stdout": check.result.stdout,
-                        "stderr": check.result.stderr,
-                        "duration_ms": check.result.duration_ms,
-                        "artifact_hash": check.result.artifact_hash,
-                        "stdout_truncated": check.result.stdout_truncated,
-                        "stderr_truncated": check.result.stderr_truncated,
-                    })
-                })
+                .map(failing_check_report)
                 .collect();
             store
                 .append_event(
@@ -2735,6 +2750,26 @@ pub fn action_tool_schema() -> serde_json::Value {
                 "note": {"type": "string"},
             }),
             &["step"],
+        ),
+        function(
+            "apply_patch",
+            "Make several replacements in one file under a single hash guard. Each hunk's find text must match exactly once, and all are checked before any is applied. Prefer this to several replace_text calls: each of those invalidates the hash the next one was written against.",
+            serde_json::json!({
+                "path": {"type": "string"},
+                "expected_hash": {"type": "string"},
+                "hunks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "find": {"type": "string"},
+                            "replace": {"type": "string"},
+                        },
+                        "required": ["find", "replace"],
+                    },
+                },
+            }),
+            &["path", "expected_hash", "hunks"],
         ),
         function(
             "make_directory",

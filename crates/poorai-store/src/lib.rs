@@ -21,6 +21,26 @@ pub struct EventRecord {
     pub previous_hash: Option<String>,
     pub event_hash: String,
 }
+/// Whether a run's chain holds, and where it does not.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChainVerdict {
+    pub events: usize,
+    /// The one-based position of the first event whose hash or link does not
+    /// hold. `None` means every link checked out.
+    pub broken_at: Option<usize>,
+    /// Events written before the run chain existed, which carry no link to
+    /// verify. Counted rather than passed over, so "verified" never quietly
+    /// means "there was nothing to check".
+    pub unlinked: usize,
+}
+
+impl ChainVerdict {
+    /// Whether the chain holds *and* there was something to check.
+    pub fn intact(&self) -> bool {
+        self.broken_at.is_none() && self.events > 0 && self.unlinked < self.events
+    }
+}
+
 /// One named session, reconstructed from the events that opened it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSummary {
@@ -43,7 +63,95 @@ impl Store {
     }
     fn migrate(&self) -> Result<(), StoreError> {
         self.connection.execute_batch("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY); CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, run_id TEXT, event_type TEXT NOT NULL, payload TEXT NOT NULL, at TEXT NOT NULL, previous_hash TEXT, event_hash TEXT NOT NULL UNIQUE); INSERT OR IGNORE INTO schema_migrations(version) VALUES (1);")?;
+        // Migration 2: a chain per run, beside the global one.
+        //
+        // The global chain links every event to whatever was appended last,
+        // whichever run that belonged to. So a run's events depend on runs
+        // interleaved with them, two runs in one database cannot be verified
+        // independently, and a run's trail cannot be carried anywhere without
+        // carrying every run beside it. Both chains are kept: the global one
+        // still orders the database, and the per-run one is what makes a
+        // single run's evidence stand on its own.
+        //
+        // `ALTER TABLE` is guarded rather than versioned-out, because a
+        // database written before this column exists is the normal case and
+        // its rows are honestly unverifiable on the run chain rather than
+        // corrupt. The verifier says which.
+        let has_column: bool = self
+            .connection
+            .prepare("SELECT 1 FROM pragma_table_info('events') WHERE name='run_previous_hash'")?
+            .exists([])?;
+        if !has_column {
+            self.connection
+                .execute_batch("ALTER TABLE events ADD COLUMN run_previous_hash TEXT;")?;
+        }
+        self.connection
+            .execute_batch("INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);")?;
         Ok(())
+    }
+
+    /// Walks one run's chain and says whether it holds.
+    ///
+    /// The API only ever appended, and SQLite permits `UPDATE` and `DELETE`
+    /// regardless -- so "append-only" was a property of the code rather than
+    /// of the data, and nothing could tell the difference after the fact.
+    /// Recomputing each event's hash from what is stored is what turns the
+    /// chain from a decoration into evidence.
+    pub fn verify_run_chain(&self, run_id: Id) -> Result<ChainVerdict, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id,event_type,payload,at,previous_hash,run_previous_hash,event_hash FROM events WHERE run_id=?1 ORDER BY rowid",
+        )?;
+        let rows = statement.query_map(params![run_id.to_string()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, String>(6)?,
+            ))
+        })?;
+        let mut verdict = ChainVerdict::default();
+        let mut expected_previous: Option<String> = None;
+        for row in rows {
+            let (id, event_type, payload, at, previous_hash, run_previous_hash, event_hash) = row?;
+            verdict.events += 1;
+            let Some(id) = uuid::Uuid::parse_str(&id).ok() else {
+                verdict.broken_at.get_or_insert(verdict.events);
+                continue;
+            };
+            let payload: serde_json::Value = serde_json::from_str(&payload)?;
+            let Ok(at) = chrono::DateTime::parse_from_rfc3339(&at) else {
+                verdict.broken_at.get_or_insert(verdict.events);
+                continue;
+            };
+            let at = at.with_timezone(&chrono::Utc);
+            let canonical = serde_json::to_vec(&(
+                id,
+                Some(run_id),
+                event_type.as_str(),
+                &payload,
+                at,
+                &previous_hash,
+            ))?;
+            if hash_bytes(canonical) != event_hash {
+                verdict.broken_at.get_or_insert(verdict.events);
+                continue;
+            }
+            match &run_previous_hash {
+                // Written before the run chain existed. Not a break: an
+                // absence of evidence said plainly rather than reported as
+                // tampering.
+                None => verdict.unlinked += 1,
+                Some(_) if run_previous_hash != expected_previous => {
+                    verdict.broken_at.get_or_insert(verdict.events);
+                }
+                Some(_) => {}
+            }
+            expected_previous = Some(event_hash);
+        }
+        Ok(verdict)
     }
     /// Appends a typed event.
     ///
@@ -83,7 +191,7 @@ impl Store {
         event_type: &str,
         payload: serde_json::Value,
     ) -> Result<EventRecord, StoreError> {
-        let previous_hash = self
+        let previous_hash: Option<String> = self
             .connection
             .query_row(
                 "SELECT event_hash FROM events ORDER BY rowid DESC LIMIT 1",
@@ -91,12 +199,23 @@ impl Store {
                 |row| row.get(0),
             )
             .ok();
+        // The previous event *of this run*, so a run's evidence stands on its
+        // own rather than depending on whatever else the database held.
+        let run_previous_hash: Option<String> = run_id.and_then(|run_id| {
+            self.connection
+                .query_row(
+                    "SELECT event_hash FROM events WHERE run_id=?1 ORDER BY rowid DESC LIMIT 1",
+                    params![run_id.to_string()],
+                    |row| row.get(0),
+                )
+                .ok()
+        });
         let at = now();
         let id = poorai_domain::new_id();
         let canonical =
             serde_json::to_vec(&(id, run_id, event_type, &payload, at, &previous_hash))?;
         let event_hash = hash_bytes(canonical);
-        self.connection.execute("INSERT INTO events(id,run_id,event_type,payload,at,previous_hash,event_hash) VALUES(?1,?2,?3,?4,?5,?6,?7)", params![id.to_string(), run_id.map(|id| id.to_string()), event_type, serde_json::to_string(&payload)?, at.to_rfc3339(), previous_hash, event_hash])?;
+        self.connection.execute("INSERT INTO events(id,run_id,event_type,payload,at,previous_hash,run_previous_hash,event_hash) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)", params![id.to_string(), run_id.map(|id| id.to_string()), event_type, serde_json::to_string(&payload)?, at.to_rfc3339(), previous_hash, run_previous_hash, event_hash])?;
         Ok(EventRecord {
             id,
             run_id,

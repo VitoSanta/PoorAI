@@ -189,3 +189,146 @@ fn a_workspace_outside_version_control_reports_no_branch() {
         "a non-checkout claimed a branch"
     );
 }
+
+// ----------------------------------------------------------------- patches
+
+/// A change touching three places in a file was three whole-file rewrites,
+/// each carrying the entire file and each invalidating the hash the next one
+/// was written against -- so the second and third arrived stale.
+#[test]
+fn several_hunks_land_under_one_hash_guard() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(
+        root.path().join("code.rs"),
+        "fn alpha() {}\nfn beta() {}\nfn gamma() {}\n",
+    )
+    .unwrap();
+    let policy = policy(root.path());
+    let hash = read_file(&policy, Path::new("code.rs"))
+        .unwrap()
+        .artifact_hash;
+
+    let applied = apply_patch(
+        &policy,
+        Path::new("code.rs"),
+        &hash,
+        &[
+            Hunk {
+                find: "fn alpha() {}".into(),
+                replace: "fn alpha() { one() }".into(),
+            },
+            Hunk {
+                find: "fn gamma() {}".into(),
+                replace: "fn gamma() { three() }".into(),
+            },
+        ],
+    )
+    .unwrap();
+    let after = fs::read_to_string(root.path().join("code.rs")).unwrap();
+    assert!(after.contains("fn alpha() { one() }"), "{after}");
+    assert!(after.contains("fn beta() {}"), "{after}");
+    assert!(after.contains("fn gamma() { three() }"), "{after}");
+    // The hash of the result, under the name the next call must pass it as.
+    assert_eq!(applied.new_hash, applied.expected_hash);
+}
+
+/// A patch that half-lands leaves a file in a state nobody described, which is
+/// worse than one that does not land at all.
+#[test]
+fn no_hunk_is_applied_if_any_of_them_would_fail() {
+    let root = tempfile::tempdir().unwrap();
+    let original = "fn alpha() {}\nfn beta() {}\n";
+    fs::write(root.path().join("code.rs"), original).unwrap();
+    let policy = policy(root.path());
+    let hash = read_file(&policy, Path::new("code.rs"))
+        .unwrap()
+        .artifact_hash;
+
+    let error = apply_patch(
+        &policy,
+        Path::new("code.rs"),
+        &hash,
+        &[
+            Hunk {
+                find: "fn alpha() {}".into(),
+                replace: "fn alpha() { one() }".into(),
+            },
+            Hunk {
+                find: "fn absent() {}".into(),
+                replace: "never".into(),
+            },
+        ],
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("hunk 2"), "{error}");
+    assert_eq!(
+        fs::read_to_string(root.path().join("code.rs")).unwrap(),
+        original,
+        "the first hunk landed even though the patch failed"
+    );
+}
+
+#[test]
+fn an_ambiguous_or_stale_patch_is_refused() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("code.rs"), "x = 1\nx = 1\n").unwrap();
+    let policy = policy(root.path());
+    let hash = read_file(&policy, Path::new("code.rs"))
+        .unwrap()
+        .artifact_hash;
+
+    // Two occurrences: choosing between them is the silent wrong edit the
+    // hash guard exists to prevent.
+    let ambiguous = apply_patch(
+        &policy,
+        Path::new("code.rs"),
+        &hash,
+        &[Hunk {
+            find: "x = 1".into(),
+            replace: "x = 2".into(),
+        }],
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(ambiguous.contains("matches 2 times"), "{ambiguous}");
+
+    let stale = apply_patch(
+        &policy,
+        Path::new("code.rs"),
+        "not-the-hash",
+        &[Hunk {
+            find: "x = 1\nx = 1".into(),
+            replace: "x = 2".into(),
+        }],
+    )
+    .unwrap_err()
+    .to_string();
+    // The refusal names the hash the file now has, as every other stale
+    // refusal in this project does.
+    assert!(stale.contains("now hashes to"), "{stale}");
+}
+
+/// "Not found" is true and sends the caller round the loop again on work that
+/// is done.
+#[test]
+fn a_hunk_already_applied_says_so() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("code.rs"), "fn alpha() { one() }\n").unwrap();
+    let policy = policy(root.path());
+    let hash = read_file(&policy, Path::new("code.rs"))
+        .unwrap()
+        .artifact_hash;
+    let error = apply_patch(
+        &policy,
+        Path::new("code.rs"),
+        &hash,
+        &[Hunk {
+            find: "fn alpha() {}".into(),
+            replace: "fn alpha() { one() }".into(),
+        }],
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("already applied"), "{error}");
+}

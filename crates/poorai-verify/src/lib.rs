@@ -508,6 +508,120 @@ pub fn compare(
         new_failures,
     }
 }
+
+/// A failure located in the source, rather than described in prose.
+///
+/// Compiler and test output reached the deployment as bounded text, so
+/// recovery aimed at a paragraph: the harness knew a check had failed and
+/// nothing more, and finding the file and line was work the model paid actions
+/// for. Every toolchain writes the same three facts in a different order, and
+/// reading them is mechanical -- which is the definition of the harness's job.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Diagnostic {
+    pub path: String,
+    pub line: Option<u32>,
+    pub column: Option<u32>,
+    /// `error`, `warning`, `failure`, or whatever the toolchain called it.
+    pub severity: String,
+    pub message: String,
+}
+
+/// Extracts located failures from a check's output.
+///
+/// Deliberately shallow, and shallow in a way that is safe: a line that does
+/// not clearly carry a path and a position is not guessed at. A wrong location
+/// is worse than none -- it sends the agent to edit a file that is fine.
+///
+/// Recognises the shapes the common toolchains actually emit rather than
+/// parsing per vendor, for the same reason check discovery reads CI as text: a
+/// parser per toolchain is a closed list of languages one level down.
+pub fn diagnostics(output: &str) -> Vec<Diagnostic> {
+    let mut found: Vec<Diagnostic> = Vec::new();
+    for line in output.lines().take(MAX_DIAGNOSTIC_LINES) {
+        let line = line.trim();
+        if let Some(diagnostic) = rust_style(line)
+            .or_else(|| gcc_style(line))
+            .or_else(|| python_style(line))
+            && !found.contains(&diagnostic)
+        {
+            found.push(diagnostic);
+        }
+        if found.len() >= MAX_DIAGNOSTICS {
+            break;
+        }
+    }
+    found
+}
+
+const MAX_DIAGNOSTIC_LINES: usize = 4_000;
+const MAX_DIAGNOSTICS: usize = 32;
+
+/// `  --> src/lib.rs:12:5`, which rustc writes under its message.
+fn rust_style(line: &str) -> Option<Diagnostic> {
+    let rest = line.strip_prefix("--> ")?;
+    let (path, line_number, column) = split_position(rest)?;
+    Some(Diagnostic {
+        path,
+        line: line_number,
+        column,
+        severity: "error".into(),
+        message: String::new(),
+    })
+}
+
+/// `src/main.c:12:5: error: message`, which gcc, clang, tsc, eslint and go
+/// vet all approximate.
+fn gcc_style(line: &str) -> Option<Diagnostic> {
+    let (position, rest) = line.split_once(": ")?;
+    let (path, line_number, column) = split_position(position)?;
+    line_number?;
+    let (severity, message) = rest.split_once(": ").unwrap_or(("error", rest));
+    let severity = severity.trim().to_ascii_lowercase();
+    // Only words a toolchain actually uses for a severity, or every colon in
+    // a log line becomes a diagnostic.
+    if !["error", "warning", "note", "fatal error", "failure"].contains(&severity.as_str()) {
+        return None;
+    }
+    Some(Diagnostic {
+        path,
+        line: line_number,
+        column,
+        severity,
+        message: message.trim().to_string(),
+    })
+}
+
+/// `File "app/thing.py", line 12, in handler`, from a Python traceback.
+fn python_style(line: &str) -> Option<Diagnostic> {
+    let rest = line.strip_prefix("File \"")?;
+    let (path, rest) = rest.split_once("\", line ")?;
+    let number: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    Some(Diagnostic {
+        path: path.to_string(),
+        line: number.parse().ok(),
+        column: None,
+        severity: "error".into(),
+        message: String::new(),
+    })
+}
+
+/// `path:line:column` or `path:line`, with a path that may itself contain a
+/// drive letter or no colon at all.
+fn split_position(text: &str) -> Option<(String, Option<u32>, Option<u32>)> {
+    let parts: Vec<&str> = text.rsplitn(3, ':').collect();
+    match parts.as_slice() {
+        [column, line, path] => {
+            let line = line.parse().ok()?;
+            Some(((*path).to_string(), Some(line), column.parse().ok()))
+        }
+        [line, path] => {
+            let line = line.parse().ok()?;
+            Some(((*path).to_string(), Some(line), None))
+        }
+        _ => None,
+    }
+}
+
 /// Re-runs a failing check to tell a real failure from a flake.
 ///
 /// Without this, `NonDeterminism` is unreachable: a flaky test classifies as
