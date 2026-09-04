@@ -499,9 +499,13 @@ fn annotate(
     step: u8,
 ) {
     match action {
-        ActionProposal::RunCommand { .. }
-            if outcome.get("exit_code").and_then(serde_json::Value::as_i64) != Some(0) =>
-        {
+        ActionProposal::RunCommand { .. } => {
+            if outcome.get("exit_code").and_then(serde_json::Value::as_i64) == Some(0) {
+                return;
+            }
+            // A failing command's output, located. Reading a compiler is
+            // mechanical work, and the deployment was paying actions to do it
+            // by hand: sixteen reads and no writes after one failing build.
             let located = poorai_verify::diagnostics(&format!(
                 "{}\n{}",
                 outcome
@@ -513,13 +517,33 @@ fn annotate(
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or_default()
             ));
-            if !located.is_empty()
-                && let Some(object) = outcome.as_object_mut()
-            {
-                object.insert(
-                    "diagnostics".into(),
-                    serde_json::to_value(&located).unwrap_or_default(),
-                );
+            // A command that walked into poorAI's own state directory and was
+            // refused. The denial is deliberate -- the agent's workspace is the
+            // project, not the records kept about it -- but `find: ./.poorai:
+            // Operation not permitted` reads like a broken machine, and a
+            // measured run then spent three actions retrying `find` with
+            // invented flags.
+            let hit_state = outcome
+                .get("stderr")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|stderr| {
+                    stderr.contains(POLICY_STATE_DIRECTORY) && stderr.contains("not permitted")
+                });
+            if let Some(object) = outcome.as_object_mut() {
+                if !located.is_empty() {
+                    object.insert(
+                        "diagnostics".into(),
+                        serde_json::to_value(&located).unwrap_or_default(),
+                    );
+                }
+                if hit_state {
+                    object.insert(
+                        "note".into(),
+                        serde_json::json!(
+                            "`.poorai` is poorAI's own state directory and is deliberately unreadable. It is not part of the project and nothing in it needs looking at; exclude it and the command will succeed."
+                        ),
+                    );
+                }
             }
         }
         ActionProposal::ReadFile { path, .. } => {
@@ -3344,27 +3368,46 @@ pub fn action_tool_schema() -> serde_json::Value {
 /// A deployment sending `"args": "--version"` means one argument, and there is
 /// no other reading of it. Measured: five malformed calls in one run, three
 /// consecutive, ending it -- over a mistake the harness could see through.
+/// poorAI's own state directory, as it appears in a command's error output.
+const POLICY_STATE_DIRECTORY: &str = ".poorai";
+
 const STRING_LIST_FIELDS: [&str; 2] = ["args", "paths"];
 
-/// Accepts a lone string where a list of strings was declared.
+/// Accepts a lone string where a list of strings was declared, when there is
+/// only one thing it can mean.
 ///
-/// One element, never split on whitespace. Splitting would make `"args": "npm
-/// install"` into two arguments, which is interpreting a shell -- the thing
-/// this project refuses everywhere else, and the reason executable and
-/// arguments are separate in the first place. A single argument containing a
-/// space is a legitimate argument; a command line pretending to be one is not,
-/// and `run_command` already refuses that where it matters, in the executable.
-fn coerce_string_lists(arguments: &mut serde_json::Value) {
+/// `"args": "--version"` means one argument and cannot mean anything else, so
+/// refusing it costs an action to learn nothing.
+///
+/// `"args": "run build"` is a different case, and the first version of this
+/// function got it wrong: it made one argument with a space in it, npm
+/// answered `Unknown command: "run build"`, and the deployment spent the rest
+/// of the run unable to work out why its build would not run. Two readings are
+/// available -- one argument containing a space, which is legitimate and rare,
+/// or two arguments, which is what was almost certainly meant -- and choosing
+/// silently is guessing.
+///
+/// So it is refused, naming both readings. Splitting instead would be
+/// tokenising the caller's string, which is the shell semantics this project
+/// keeps out of `executable` for the same reason.
+fn coerce_string_lists(arguments: &mut serde_json::Value) -> Result<(), String> {
     let Some(object) = arguments.as_object_mut() else {
-        return;
+        return Ok(());
     };
     for field in STRING_LIST_FIELDS {
         if let Some(value) = object.get_mut(field)
             && let Some(text) = value.as_str()
         {
+            if text.split_whitespace().count() > 1 {
+                return Err(format!(
+                    "`{field}` was sent as the string \"{text}\", which could be one argument containing a space or several arguments. Send a list: [\"{}\"].",
+                    text.split_whitespace().collect::<Vec<_>>().join("\", \"")
+                ));
+            }
             *value = serde_json::Value::Array(vec![serde_json::Value::String(text.to_string())]);
         }
     }
+    Ok(())
 }
 
 /// Builds a typed action from a native tool call.
@@ -3380,7 +3423,8 @@ pub fn action_from_tool_call(call: &poorai_domain::ToolCall) -> Result<ActionPro
             call.name
         ));
     }
-    coerce_string_lists(&mut arguments);
+    coerce_string_lists(&mut arguments)
+        .map_err(|problem| format!("tool call {} could not be read: {problem}", call.name))?;
     arguments["capability"] = serde_json::Value::String(call.name.clone());
     let action: ActionProposal = serde_json::from_value(arguments).map_err(|e| {
         format!(
@@ -4992,6 +5036,55 @@ mod tests {
         assert!(!located.is_null(), "no locations: {}", command.payload);
         assert_eq!(located[0]["path"], "src/parser.rs");
         assert_eq!(located[0]["line"], 42);
+    }
+
+    /// The denial that hides the harness's records makes `find .` fail, and
+    /// `find: ./.poorai: Operation not permitted` reads like a broken machine.
+    /// A measured run then spent three actions retrying `find` with invented
+    /// flags. The refusal carries what it already knows.
+    #[tokio::test]
+    async fn a_command_refused_by_the_state_denial_is_told_why() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join(".poorai")).unwrap();
+        let policy = ToolPolicy {
+            root: root.path().to_path_buf(),
+            extra_readable: Vec::new(),
+            allow_commands: vec!["sh".into()],
+            output_limit: 8192,
+            timeout: Duration::from_secs(10),
+            sandbox: poorai_tools::SandboxPolicy::Disabled,
+            approvals: Vec::new(),
+        };
+        let provider = SequenceProvider(std::sync::Mutex::new(std::collections::VecDeque::from([
+            r#"{"capability":"run_command","executable":"sh","args":["-c","echo 'find: ./.poorai: Operation not permitted' >&2; exit 1"]}"#.into(),
+            r#"{"capability":"complete","rationale":"done"}"#.into(),
+        ])));
+        let store = Store::open(":memory:").unwrap();
+        let run_id = new_id();
+        let request = ModelRequest {
+            deployment: deployment(),
+            context_tokens: 4096,
+            tools: None,
+            seed: None,
+            sampling: Default::default(),
+            messages: vec![poorai_domain::ChatMessage::text("user", "do work")],
+        };
+        let _ = run_action_loop(&store, &provider, run_id, request, &policy, &[], 3).await;
+        let note = store
+            .events_for_run(run_id)
+            .unwrap()
+            .into_iter()
+            .find(|event| {
+                event.event_type == "tool.action"
+                    && event.payload["action"]["capability"] == "run_command"
+            })
+            .map(|event| event.payload["outcome"]["note"].clone())
+            .expect("the command ran");
+        assert!(
+            note.as_str()
+                .is_some_and(|note| note.contains("state directory")),
+            "no explanation: {note}"
+        );
     }
 
     /// A read of a file this run has already been shown, unchanged, says so --

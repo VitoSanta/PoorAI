@@ -476,27 +476,23 @@ fn a_lone_string_is_accepted_where_a_list_was_declared() {
     }
 }
 
-/// One element, never split. Splitting would make "npm install" into two
-/// arguments, which is interpreting a shell -- the thing this project refuses
-/// everywhere else, and the reason executable and arguments are separate.
+/// The first version of the coercion made `"run build"` one argument with a
+/// space in it. npm answered `Unknown command: "run build"` and the deployment
+/// spent the rest of the run unable to work out why its build would not run.
+///
+/// Two readings are available -- one argument containing a space, or two
+/// arguments -- and choosing silently is guessing. So it is refused, and the
+/// refusal carries the list that should have been sent, because a refusal that
+/// withholds what it already knows costs a turn to rediscover.
 #[test]
-fn a_string_of_several_words_becomes_one_argument_not_several() {
-    let action = poorai_orchestrator::action_from_tool_call(&poorai_domain::ToolCall {
+fn a_string_of_several_words_is_refused_rather_than_guessed_at() {
+    let problem = poorai_orchestrator::action_from_tool_call(&poorai_domain::ToolCall {
         name: "run_command".into(),
         arguments: serde_json::json!({"executable": "npm", "args": "run build"}),
         id: None,
     })
-    .unwrap();
-    match action {
-        poorai_tools::ActionProposal::RunCommand { args, .. } => {
-            assert_eq!(
-                args,
-                vec!["run build".to_string()],
-                "the shell was interpreted"
-            );
-        }
-        other => panic!("wrong action: {other:?}"),
-    }
+    .unwrap_err();
+    assert!(problem.contains(r#"["run", "build"]"#), "{problem}");
 }
 
 /// A proper list is untouched.
