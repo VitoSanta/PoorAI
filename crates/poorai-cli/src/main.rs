@@ -1706,6 +1706,9 @@ async fn evaluate_task(
     outcome.tool_attempts += tally.attempts;
     outcome.tool_denials += tally.denials;
     outcome.tool_failures += tally.failures;
+    for (class, count) in tally.by_class {
+        *outcome.tool_failures_by_class.entry(class).or_default() += count;
+    }
     // What the run cost, from the backend's own counters. A campaign could
     // report how long a task took and nothing about why: two runs of the same
     // length are not comparable when one spent its time reading a long prompt
@@ -2919,6 +2922,11 @@ struct ToolTally {
     attempts: usize,
     denials: usize,
     failures: usize,
+    /// Failures by their recorded class. A count of nine says a campaign hit
+    /// trouble; it does not say whether the trouble was a test the agent ran
+    /// on purpose exiting non-zero or a tool that broke, and the threshold
+    /// turns on exactly that.
+    by_class: BTreeMap<String, usize>,
 }
 
 fn tool_tally(events: &[poorai_store::EventRecord]) -> ToolTally {
@@ -2934,12 +2942,18 @@ fn tool_tally(events: &[poorai_store::EventRecord]) -> ToolTally {
         match event.payload["outcome_class"].as_str() {
             Some("policy_denial") => tally.denials += 1,
             Some("allowed_success") => {}
-            Some(_) => tally.failures += 1,
+            Some(class) => {
+                tally.failures += 1;
+                *tally.by_class.entry(class.to_string()).or_default() += 1;
+            }
             // An artifact from before the class existed. Fall back rather than
             // silently scoring it a success.
             None => match event.payload["status"].as_str() {
                 Some("denied") => tally.denials += 1,
-                Some("failed") => tally.failures += 1,
+                Some("failed") => {
+                    tally.failures += 1;
+                    *tally.by_class.entry("unclassified".into()).or_default() += 1;
+                }
                 _ => {}
             },
         }
@@ -3475,6 +3489,42 @@ mod tests {
     /// The metric this produces was zero for the life of the project because
     /// nothing incremented it. This fixture fails if that ever becomes true
     /// again: it contains a real failure and demands the count see it.
+    /// A count of nine says a campaign hit trouble. It does not say whether
+    /// the trouble was a test the agent ran on purpose exiting non-zero --
+    /// ordinary work -- or a tool that broke. The threshold turns on exactly
+    /// that, and the first campaign to measure a non-zero rate could not
+    /// answer it, because the classes were collapsed at the report boundary
+    /// and the workspaces do not survive a run.
+    #[test]
+    fn the_failures_are_reported_by_class_not_only_counted() {
+        let id = uuid::Uuid::now_v7();
+        let action = |class: &str| poorai_store::EventRecord {
+            id,
+            run_id: Some(id),
+            event_type: "tool.action".into(),
+            payload: serde_json::json!({"outcome_class": class, "status": "allowed"}),
+            at: now(),
+            previous_hash: None,
+            event_hash: "x".into(),
+        };
+        let tally = tool_tally(&[
+            action("allowed_failure"),
+            action("allowed_failure"),
+            action("timeout"),
+            action("protocol_failure"),
+            action("allowed_success"),
+            action("policy_denial"),
+        ]);
+        assert_eq!(tally.failures, 4);
+        assert_eq!(tally.by_class["allowed_failure"], 2);
+        assert_eq!(tally.by_class["timeout"], 1);
+        assert_eq!(tally.by_class["protocol_failure"], 1);
+        // A denial is the policy working and is never a failure, so it never
+        // appears among them.
+        assert!(!tally.by_class.contains_key("policy_denial"));
+        assert!(!tally.by_class.contains_key("allowed_success"));
+    }
+
     #[test]
     fn a_failing_tool_attempt_is_counted_as_one() {
         let id = uuid::Uuid::now_v7();

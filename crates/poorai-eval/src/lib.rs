@@ -665,6 +665,16 @@ pub struct TaskOutcome {
     pub tool_attempts: usize,
     pub tool_denials: usize,
     pub tool_failures: usize,
+    /// The failures by class, because the count alone cannot be acted on.
+    ///
+    /// Five classes are recorded in the audit -- `allowed_failure`, `timeout`,
+    /// `io_failure`, `protocol_failure` -- and the report collapsed them into
+    /// one number. The workspaces do not survive a run, so a campaign that
+    /// measured nine failures could not afterwards say whether they were
+    /// commands that ran and exited non-zero, which is ordinary work, or tools
+    /// that broke, which is not. The threshold turns on exactly that.
+    #[serde(default)]
+    pub tool_failures_by_class: BTreeMap<String, usize>,
     pub duration_secs: f64,
     pub timed_out: bool,
     pub error: Option<String>,
