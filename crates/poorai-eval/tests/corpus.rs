@@ -620,3 +620,29 @@ fn a_report_carries_what_the_run_actually_did() {
         assert!(encoded.contains(name), "{name} is absent from the report");
     }
 }
+
+/// The share of turns the deployment could not form a usable call in. It sat
+/// in the event counts and nobody looked: 24% of turns on one campaign and 19%
+/// on another, roughly one turn in five, against a capability probe that
+/// called `structured_tools` reliable on three trials of a trivial call.
+#[test]
+fn the_malformed_call_rate_is_a_first_class_metric() {
+    let mut one = outcome(TaskKind::Bugfix);
+    one.turns = 10;
+    one.events = BTreeMap::from([("action.malformed".to_string(), 2usize)]);
+    let mut two = outcome(TaskKind::Bugfix);
+    two.turns = 10;
+    two.events = BTreeMap::new();
+
+    let report = report_of(vec![one, two]);
+    let rate = report
+        .metrics()
+        .into_iter()
+        .find(|m| m.name == "malformed_call_rate")
+        .expect("not reported");
+    assert_eq!(rate.successes, 2);
+    assert_eq!(rate.total, 20);
+    // Counted over turns, not over actions: a malformed call performs nothing,
+    // so it never becomes an action and would be invisible in an action rate.
+    assert!((rate.rate - 0.1).abs() < 1e-9, "{rate:?}");
+}

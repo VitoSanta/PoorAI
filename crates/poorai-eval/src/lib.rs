@@ -966,6 +966,23 @@ impl SuiteReport {
                 measured.iter().map(|o| o.tool_failures).sum(),
                 measured.iter().map(|o| o.tool_attempts).sum(),
             ),
+            // The share of turns the deployment could not form a usable call
+            // in. It sat in the event counts and nobody looked: measured at 24%
+            // of turns on m5-frozen-v1 and 19% on external-v1, roughly one turn
+            // in five, against a capability probe that called `structured_tools`
+            // reliable on three trials of a trivial call.
+            //
+            // A first-class metric because it is the action channel's health
+            // with this deployment, it is what the malformed-call limit is
+            // spent on, and it is not visible in any of the outcome rates.
+            metric(
+                "malformed_call_rate",
+                measured
+                    .iter()
+                    .map(|o| o.events.get("action.malformed").copied().unwrap_or(0))
+                    .sum(),
+                measured.iter().map(|o| o.turns.max(1)).sum(),
+            ),
         ]
     }
 
