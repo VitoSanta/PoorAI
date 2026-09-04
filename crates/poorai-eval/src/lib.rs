@@ -675,6 +675,14 @@ pub struct TaskOutcome {
     /// that broke, which is not. The threshold turns on exactly that.
     #[serde(default)]
     pub tool_failures_by_class: BTreeMap<String, usize>,
+    /// Why the turns that produced no usable call produced none.
+    ///
+    /// `malformed_call_rate` says how often it happened -- a fifth of turns on
+    /// the recorded campaigns. This says which fault it was, because prose
+    /// where a call was expected, an invented capability and a real capability
+    /// filled in wrongly are three problems with three different fixes.
+    #[serde(default)]
+    pub malformed_calls_by_kind: BTreeMap<String, usize>,
     pub duration_secs: f64,
     pub timed_out: bool,
     pub error: Option<String>,

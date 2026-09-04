@@ -222,25 +222,3 @@ fn every_tuning_field_reaches_the_loop() {
         );
     }
 }
-
-/// Output the backend could not parse is the deployment writing badly, not the
-/// backend failing -- measured on a real run: Ollama's own template parser
-/// returning `XML syntax error on line 3: unexpected end element </function>`
-/// in a 200 body, which ended a sixty-action run at action twenty-six.
-#[test]
-fn unparsable_output_is_retried_like_a_malformed_call() {
-    let source = include_str!("../src/lib.rs");
-    assert!(
-        source.contains("ProviderError::ModelOutput"),
-        "the loop does not distinguish unparsable model output"
-    );
-    // Counted against the same bound rather than retried forever.
-    let arm = source
-        .split("ProviderError::ModelOutput { safe_context }")
-        .nth(1)
-        .expect("no handling arm");
-    let arm = &arm[..arm.len().min(1_600)];
-    assert!(arm.contains("malformed += 1"), "not counted");
-    assert!(arm.contains("malformed_limit"), "not bounded");
-    assert!(arm.contains("continue"), "does not continue the run");
-}

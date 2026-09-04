@@ -6,6 +6,10 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 use uuid::Uuid;
 
+fn unclassified_kind() -> String {
+    "unclassified".to_string()
+}
+
 pub const SCHEMA_VERSION: u32 = 1;
 
 /// Refuses an artifact written by a schema this build does not know.
@@ -752,6 +756,15 @@ pub enum RunEvent {
     ActionMalformed {
         step: u8,
         problem: String,
+        /// Which fault it was, decided where the fault was found.
+        ///
+        /// A count of malformed calls says a fifth of turns were wasted; it
+        /// does not say whether the deployment wrote prose, invented a tool,
+        /// or filled in a real one wrongly, and those have different fixes.
+        /// Defaulted so an artifact written before the kinds existed still
+        /// reads, as `unclassified`.
+        #[serde(default = "unclassified_kind")]
+        kind: String,
     },
     ApprovalDecision {
         step: u8,

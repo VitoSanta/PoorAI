@@ -492,7 +492,11 @@ fn a_string_of_several_words_is_refused_rather_than_guessed_at() {
         id: None,
     })
     .unwrap_err();
-    assert!(problem.contains(r#"["run", "build"]"#), "{problem}");
+    assert!(problem.problem.contains(r#"["run", "build"]"#), "{problem}");
+    // The kind is what a campaign aggregates; the message is what a person
+    // reads. Asserting on the kind is what stops a reworded message from
+    // silently changing a measurement.
+    assert_eq!(problem.kind, "argument_shape");
 }
 
 /// A proper list is untouched.
@@ -510,4 +514,51 @@ fn a_declared_list_still_arrives_as_a_list() {
         }
         other => panic!("wrong action: {other:?}"),
     }
+}
+
+/// Every way a turn can fail to produce an action names itself.
+///
+/// A fifth of turns on the recorded campaigns ended here, under one counter.
+/// Prose where a call was expected, a tool the deployment invented, and a real
+/// tool filled in wrongly are three faults with three different fixes, and a
+/// single number cannot choose between them.
+#[test]
+fn a_malformed_call_says_which_kind_of_malformed_it_was() {
+    use poorai_orchestrator::{action_from_tool_call, parse_action_proposal};
+
+    let kind_of = |name: &str, args: serde_json::Value| {
+        action_from_tool_call(&poorai_domain::ToolCall {
+            name: name.into(),
+            arguments: args,
+            id: None,
+        })
+        .unwrap_err()
+        .kind
+    };
+
+    // Prose, or anything that is not one action object, through the content
+    // channel. This is the deployment answering instead of acting.
+    assert_eq!(
+        parse_action_proposal("Sure! I'll start by reading the file.")
+            .unwrap_err()
+            .kind,
+        "no_tool_call"
+    );
+    // A name that was never offered: the deployment inventing a capability.
+    assert_eq!(
+        kind_of("write_everything", serde_json::json!({"path": "a"})),
+        "unknown_capability"
+    );
+    // An offered name, filled in wrongly. Distinguished from the above because
+    // a prompt fixes one and a schema fixes the other.
+    assert_eq!(
+        kind_of("read_file", serde_json::json!({"wrong": "a"})),
+        "schema_mismatch"
+    );
+    assert_eq!(kind_of("read_file", serde_json::json!([1])), "no_arguments");
+    // Decoded cleanly and still refused, by the action's own validation.
+    assert_eq!(
+        kind_of("read_file", serde_json::json!({"path": ""})),
+        "invalid_action"
+    );
 }

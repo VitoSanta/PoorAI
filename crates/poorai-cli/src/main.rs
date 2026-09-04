@@ -1709,6 +1709,9 @@ async fn evaluate_task(
     for (class, count) in tally.by_class {
         *outcome.tool_failures_by_class.entry(class).or_default() += count;
     }
+    for (kind, count) in malformed_kinds(&events) {
+        *outcome.malformed_calls_by_kind.entry(kind).or_default() += count;
+    }
     // What the run cost, from the backend's own counters. A campaign could
     // report how long a task took and nothing about why: two runs of the same
     // length are not comparable when one spent its time reading a long prompt
@@ -2929,6 +2932,27 @@ struct ToolTally {
     by_class: BTreeMap<String, usize>,
 }
 
+/// Why the turns that produced no usable call produced none.
+///
+/// The same reasoning as the failure classes, one layer earlier: a fifth of
+/// turns on the recorded campaigns ended here, and the count alone cannot say
+/// whether the deployment wrote prose, invented a capability, or filled in a
+/// real one wrongly. The kinds are in the events and the events die with the
+/// run, so they are carried out here or they are lost.
+fn malformed_kinds(events: &[poorai_store::EventRecord]) -> BTreeMap<String, usize> {
+    let mut kinds = BTreeMap::new();
+    for event in events {
+        if event.event_type != "action.malformed" {
+            continue;
+        }
+        // An artifact from before the kinds existed. Named rather than dropped,
+        // so a campaign cannot silently look better than it was.
+        let kind = event.payload["kind"].as_str().unwrap_or("unclassified");
+        *kinds.entry(kind.to_string()).or_default() += 1;
+    }
+    kinds
+}
+
 fn tool_tally(events: &[poorai_store::EventRecord]) -> ToolTally {
     let mut tally = ToolTally::default();
     for event in events {
@@ -3523,6 +3547,46 @@ mod tests {
         // appears among them.
         assert!(!tally.by_class.contains_key("policy_denial"));
         assert!(!tally.by_class.contains_key("allowed_success"));
+    }
+
+    /// A fifth of turns produced no usable call and one counter recorded all
+    /// of them. Prose where a call was expected and a real tool filled in
+    /// wrongly need different fixes, so the report carries which it was.
+    #[test]
+    fn the_malformed_calls_are_reported_by_kind() {
+        let id = uuid::Uuid::now_v7();
+        let malformed = |kind: Option<&str>| poorai_store::EventRecord {
+            id,
+            run_id: Some(id),
+            event_type: "action.malformed".into(),
+            payload: match kind {
+                Some(kind) => serde_json::json!({"step": 1, "kind": kind}),
+                None => serde_json::json!({"step": 1}),
+            },
+            at: now(),
+            previous_hash: None,
+            event_hash: "x".into(),
+        };
+        let kinds = malformed_kinds(&[
+            malformed(Some("no_tool_call")),
+            malformed(Some("no_tool_call")),
+            malformed(Some("schema_mismatch")),
+            // Recorded before the kinds existed: named, not dropped.
+            malformed(None),
+            poorai_store::EventRecord {
+                id,
+                run_id: Some(id),
+                event_type: "tool.action".into(),
+                payload: serde_json::json!({"outcome_class": "allowed_success"}),
+                at: now(),
+                previous_hash: None,
+                event_hash: "x".into(),
+            },
+        ]);
+        assert_eq!(kinds["no_tool_call"], 2);
+        assert_eq!(kinds["schema_mismatch"], 1);
+        assert_eq!(kinds["unclassified"], 1);
+        assert_eq!(kinds.values().sum::<usize>(), 4);
     }
 
     #[test]

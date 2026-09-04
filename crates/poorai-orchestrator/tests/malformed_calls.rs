@@ -154,3 +154,169 @@ fn repeated_malformed_calls_still_end_the_run() {
     // Told, then told again, then given up on -- not once, and not forever.
     assert_eq!(told, 4);
 }
+
+/// Output the backend could not parse is the deployment writing badly, not the
+/// backend failing.
+///
+/// Measured on a real run: Ollama's own template parser returned `XML syntax
+/// error on line 3: unexpected end element </function>` in a 200 body, and
+/// that ended a sixty-action run at action twenty-six. It belongs where a
+/// malformed call belongs -- counted against the same bound, and retried.
+///
+/// This replaces a fixture that asserted the same thing by searching the
+/// loop's source for `continue`. That test passed against code it never ran,
+/// and broke when a comment was added near it, which is the wrong reason for a
+/// test to have an opinion.
+struct UnparsableProvider {
+    turn: Arc<Mutex<usize>>,
+    bad: usize,
+    hash: String,
+}
+
+#[async_trait]
+impl ModelProvider for UnparsableProvider {
+    async fn inspect(&self, _: &DeploymentDescriptor) -> Result<ModelInspection, ProviderError> {
+        unreachable!()
+    }
+    async fn runtime_state(&self) -> Result<BackendState, ProviderError> {
+        unreachable!()
+    }
+    async fn chat(&self, _: ModelRequest) -> Result<ModelStream, ProviderError> {
+        let mut turn = self.turn.lock().unwrap();
+        *turn += 1;
+        if *turn <= self.bad {
+            // A 200 body the backend's own template parser could not read. The
+            // failure arrives on the stream, after the request succeeded.
+            return Ok(Box::pin(futures_util::stream::iter([Err(
+                ProviderError::ModelOutput {
+                    safe_context: "XML syntax error on line 3".into(),
+                },
+            )])));
+        }
+        let chunk = if *turn == self.bad + 1 {
+            ModelChunk {
+                tool_calls: vec![ToolCall {
+                    name: "replace_text".into(),
+                    arguments: serde_json::json!({
+                        "path": "code.rs",
+                        "expected_hash": self.hash,
+                        "find": "one",
+                        "replace": "two",
+                    }),
+                    id: None,
+                }],
+                done: true,
+                ..Default::default()
+            }
+        } else {
+            ModelChunk {
+                tool_calls: vec![ToolCall {
+                    name: "complete".into(),
+                    arguments: serde_json::json!({"rationale": "done"}),
+                    id: None,
+                }],
+                done: true,
+                ..Default::default()
+            }
+        };
+        Ok(Box::pin(futures_util::stream::iter([Ok(chunk)])))
+    }
+}
+
+fn run_unparsable(bad: usize, max_actions: u8) -> (Store, poorai_domain::Id, String, bool) {
+    let root = Box::leak(Box::new(tempfile::tempdir().unwrap()));
+    std::fs::write(root.path().join("code.rs"), "one").unwrap();
+    let policy = ToolPolicy {
+        root: root.path().to_path_buf(),
+        extra_readable: Vec::new(),
+        allow_commands: vec!["true".into()],
+        output_limit: 4096,
+        timeout: Duration::from_secs(5),
+        sandbox: SandboxPolicy::Disabled,
+        approvals: Vec::new(),
+    };
+    let store = Store::open(":memory:").unwrap();
+    let run_id = poorai_domain::new_id();
+    let request = ModelRequest {
+        deployment: DeploymentDescriptor {
+            schema_version: 1,
+            id: poorai_domain::new_id(),
+            provider: "fake".into(),
+            endpoint: "http://localhost/".into(),
+            model_ref: "fake".into(),
+            backend_options: Default::default(),
+            auth_ref: None,
+        },
+        messages: vec![ChatMessage {
+            role: "user".into(),
+            content: "fix it".into(),
+            ..Default::default()
+        }],
+        context_tokens: 8192,
+        tools: None,
+        seed: None,
+        sampling: Default::default(),
+    };
+    let outcome =
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(poorai_orchestrator::run_action_loop(
+                &store,
+                &UnparsableProvider {
+                    turn: Arc::new(Mutex::new(0)),
+                    bad,
+                    hash: poorai_domain::hash_bytes("one"),
+                },
+                run_id,
+                request,
+                &policy,
+                &[("true".into(), Vec::new())],
+                max_actions,
+            ));
+    let after = std::fs::read_to_string(root.path().join("code.rs")).unwrap();
+    (store, run_id, after, outcome.is_ok())
+}
+
+fn malformed(store: &Store, run_id: poorai_domain::Id) -> Vec<(String, String)> {
+    store
+        .events_for_run(run_id)
+        .unwrap()
+        .iter()
+        .filter(|e| e.event_type == "action.malformed")
+        .map(|e| {
+            (
+                e.payload["kind"].as_str().unwrap_or_default().to_string(),
+                e.payload["problem"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn unparsable_output_does_not_end_the_run() {
+    let (store, run_id, after, ok) = run_unparsable(2, 8);
+    assert!(ok, "the run ended on output the backend could not read");
+    assert_eq!(
+        after, "two",
+        "the edit after the bad generations never happened"
+    );
+    let told = malformed(&store, run_id);
+    assert_eq!(told.len(), 2);
+    // Named apart from a call the harness rejected: the fault is one layer
+    // earlier, and the fix for it is not the fix for a wrong argument.
+    assert!(
+        told.iter().all(|(kind, _)| kind == "unparsed_output"),
+        "{told:?}"
+    );
+}
+
+#[test]
+fn unparsable_output_is_bounded_like_a_malformed_call() {
+    let (store, run_id, after, ok) = run_unparsable(20, 30);
+    assert!(!ok, "retried forever");
+    assert_eq!(after, "one", "the run should not have reached the edit");
+    assert_eq!(malformed(&store, run_id).len(), 4);
+}

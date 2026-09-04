@@ -2204,6 +2204,10 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                         &poorai_domain::RunEvent::ActionMalformed {
                             step,
                             problem: safe_context.clone(),
+                            // Not a call the harness rejected: the backend
+                            // could not read the generation at all, which is a
+                            // fault one layer earlier than a wrong argument.
+                            kind: "unparsed_output".into(),
                         },
                     )
                     .map_err(|e| e.to_string())?;
@@ -2371,7 +2375,8 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                         Some(run_id),
                         &poorai_domain::RunEvent::ActionMalformed {
                             step,
-                            problem: problem.clone(),
+                            problem: problem.problem.clone(),
+                            kind: problem.kind.into(),
                         },
                     )
                     .map_err(|e| e.to_string())?;
@@ -2382,7 +2387,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                         run_id,
                         &mut task_state,
                         "repeatedly malformed tool calls",
-                        serde_json::json!({"problem": problem}),
+                        serde_json::json!({"problem": problem.problem, "kind": problem.kind}),
                     )?;
                     return Err(format!(
                         "{malformed_limit} malformed tool calls in a row: {problem}"
@@ -2391,7 +2396,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                 request.messages.push(poorai_domain::ChatMessage {
                     role: "tool".into(),
                     content: serde_json::json!({
-                        "rejected": problem,
+                        "rejected": problem.problem,
                         "hint": "Your tool call did not match the schema you were given.                                  Check the required arguments and their types, then call again.",
                     })
                     .to_string(),
@@ -3412,48 +3417,112 @@ fn coerce_string_lists(arguments: &mut serde_json::Value) -> Result<(), String> 
 
 /// Builds a typed action from a native tool call.
 ///
+/// Why a turn produced no usable action.
+///
+/// The rate at which this happens is a fifth of turns on the campaigns
+/// recorded, and a single counter could not say what to do about it: prose
+/// where a call was expected, a name that is not an offered capability, and
+/// arguments that miss their schema are three different faults with three
+/// different fixes. The kind is decided where the fault is found, not
+/// recovered later by matching on the message -- a message is written for a
+/// person to read, and classifying on it makes rewording it a silent change of
+/// measurement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MalformedCall {
+    pub kind: &'static str,
+    pub problem: String,
+}
+
+impl MalformedCall {
+    fn new(kind: &'static str, problem: impl Into<String>) -> Self {
+        Self {
+            kind,
+            problem: problem.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for MalformedCall {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.problem)
+    }
+}
+
 /// The call's name selects the capability and its arguments are decoded into
 /// the typed shape; a name that is not an offered capability is refused rather
 /// than guessed at.
-pub fn action_from_tool_call(call: &poorai_domain::ToolCall) -> Result<ActionProposal, String> {
+pub fn action_from_tool_call(
+    call: &poorai_domain::ToolCall,
+) -> Result<ActionProposal, MalformedCall> {
     let mut arguments = call.arguments.clone();
     if !arguments.is_object() {
-        return Err(format!(
-            "tool call {} carried no argument object",
-            call.name
+        return Err(MalformedCall::new(
+            "no_arguments",
+            format!("tool call {} carried no argument object", call.name),
         ));
     }
-    coerce_string_lists(&mut arguments)
-        .map_err(|problem| format!("tool call {} could not be read: {problem}", call.name))?;
-    arguments["capability"] = serde_json::Value::String(call.name.clone());
-    let action: ActionProposal = serde_json::from_value(arguments).map_err(|e| {
-        format!(
-            "tool call {} did not match its declared schema: {e}",
-            call.name
+    coerce_string_lists(&mut arguments).map_err(|problem| {
+        MalformedCall::new(
+            "argument_shape",
+            format!("tool call {} could not be read: {problem}", call.name),
         )
     })?;
-    action.validate().map_err(|e| e.to_string())?;
+    arguments["capability"] = serde_json::Value::String(call.name.clone());
+    let action: ActionProposal = serde_json::from_value(arguments).map_err(|e| {
+        // An unoffered name and a real argument mismatch arrive through the
+        // same decode, and telling them apart matters: the first is the
+        // deployment inventing a tool, which a prompt can address, and the
+        // second is it filling in a tool it was given, which a schema can.
+        let kind = if action_tool_schema().as_array().is_some_and(|tools| {
+            tools
+                .iter()
+                .any(|tool| tool["function"]["name"] == call.name.as_str())
+        }) {
+            "schema_mismatch"
+        } else {
+            "unknown_capability"
+        };
+        MalformedCall::new(
+            kind,
+            format!(
+                "tool call {} did not match its declared schema: {e}",
+                call.name
+            ),
+        )
+    })?;
+    action
+        .validate()
+        .map_err(|e| MalformedCall::new("invalid_action", e.to_string()))?;
     Ok(action)
 }
 
 /// Takes the action from a reply: the native tool channel where the deployment
 /// used it, and a bare JSON object otherwise.
-fn action_from_reply(reply: &poorai_provider::ModelReply) -> Result<ActionProposal, String> {
+fn action_from_reply(reply: &poorai_provider::ModelReply) -> Result<ActionProposal, MalformedCall> {
     match reply.tool_calls.as_slice() {
         [call] => action_from_tool_call(call),
         [] => parse_action_proposal(&reply.content),
-        calls => Err(format!(
-            "one turn must contain exactly one action, but the deployment emitted {} tool calls",
-            calls.len()
+        calls => Err(MalformedCall::new(
+            "multiple_calls",
+            format!(
+                "one turn must contain exactly one action, but the deployment emitted {} tool calls",
+                calls.len()
+            ),
         )),
     }
 }
 
 /// Parses exactly one JSON action proposal; prose and fenced output are rejected.
-pub fn parse_action_proposal(model_output: &str) -> Result<ActionProposal, String> {
-    let action: ActionProposal = serde_json::from_str(model_output.trim())
-        .map_err(|_| "model output must be one valid typed-action JSON object".to_string())?;
-    action.validate().map_err(|e| e.to_string())?;
+pub fn parse_action_proposal(model_output: &str) -> Result<ActionProposal, MalformedCall> {
+    let action: ActionProposal = serde_json::from_str(model_output.trim()).map_err(|_| {
+        MalformedCall::new(
+            "no_tool_call",
+            "model output must be one valid typed-action JSON object",
+        )
+    })?;
+    action
+        .validate()
+        .map_err(|e| MalformedCall::new("invalid_action", e.to_string()))?;
     Ok(action)
 }
 

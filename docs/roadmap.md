@@ -55,6 +55,15 @@ open now, and each says what would settle it rather than when it will happen.
 - **No code reads the thresholds.** Every verdict in `thresholds.md` was
   computed by hand from a report. That is the same shape as the counter that
   was initialised and never incremented: nothing fails loudly when it drifts.
+- **One turn in five produces no usable call, and nothing is known about why.**
+  24% of turns on `m5-frozen-v1` and 19% on `external-v1`. It is now reported
+  as `malformed_call_rate`, and each occurrence names its fault, but no
+  campaign has yet been run with the kinds recorded — so the distribution is
+  unmeasured and no fix can be chosen from it.
+- **The capability probe overstates the action channel.** It records
+  `structured_tools` as reliable from three trials of a trivial call. Three
+  trials cannot predict a fifth of real turns being unusable, and the probe's
+  own documentation says a unanimous three can report a coin flip as a fact.
 - **A campaign's classifications die with its workspace.** Reports now carry
   `tool_failures_by_class`, which is why the failures above could be read at
   all — but only for campaigns run after it existed. Anything measured before
