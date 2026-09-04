@@ -343,3 +343,28 @@ fn one_quiet_window_does_not_end_a_run() {
         .expect("no limit declared");
     assert!(limit >= 2, "a single window ends the run");
 }
+
+/// Measured on a real generation task: forty-two reads over twenty-four files,
+/// the whole project re-read twice, and only two compactions -- so it was not
+/// losing what it had read, it simply could not see that it was going in
+/// circles. The harness could: it has the hash it handed over last time.
+#[test]
+fn a_re_read_of_unchanged_content_is_said_plainly() {
+    let source = include_str!("../src/lib.rs");
+    assert!(
+        source.contains("already_read"),
+        "a re-read returns the same bytes with nothing said about it"
+    );
+    let arm = source
+        .split("Some((earlier, seen)) if seen == hash")
+        .nth(1)
+        .expect("re-reads are not compared by hash");
+    let arm = &arm[..arm.len().min(700)];
+    // The fact, not a refusal: the content still comes back, because a caller
+    // that genuinely wants it again should get it.
+    assert!(arm.contains("unchanged_since"), "{arm}");
+    assert!(
+        !arm.contains("ToolError") && !arm.contains("Denied"),
+        "a re-read was turned into a refusal"
+    );
+}

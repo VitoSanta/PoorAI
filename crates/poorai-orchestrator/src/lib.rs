@@ -1917,6 +1917,12 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
     let mut changed_files: std::collections::BTreeMap<String, String> =
         std::collections::BTreeMap::new();
     let mut check_state = String::from("unrun");
+    // What this run has already been shown, by path and content hash. A read of
+    // a file it has already read, unchanged, is a fact the harness has and the
+    // deployment does not -- and a measured run spent forty-two reads on
+    // twenty-four files, re-reading the whole project twice before it stopped.
+    let mut files_read: std::collections::BTreeMap<String, (u8, String)> =
+        std::collections::BTreeMap::new();
     let mut seen_fingerprints: std::collections::BTreeSet<String> =
         std::collections::BTreeSet::new();
     let mut progress_window: Vec<(String, EffectSignature, bool)> = Vec::new();
@@ -2596,7 +2602,10 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
         // discards work already done -- a stale-hash refusal literally says
         // "reread before editing", which the deployment can act on. The action
         // budget, not the first refusal, is what bounds the loop.
-        let outcome =
+        // Kept before the action is consumed, so a read can be recognised as
+        // one the run has already been shown.
+        let action_for_reads = action.clone();
+        let mut outcome =
             match execute_action_with_services(store, run_id, &policy, action, &mut services).await
             {
                 Ok(outcome) => outcome,
@@ -2664,6 +2673,32 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                             .unwrap_or("changed")
                     ),
                 );
+            }
+        }
+        // A re-read of unchanged content, said plainly. The deployment cannot
+        // see that it is going in circles; the harness can, and withholding it
+        // costs an action every time.
+        if let ActionProposal::ReadFile { path, .. } = &action_for_reads
+            && let Some(hash) = outcome
+                .get("artifact_hash")
+                .and_then(serde_json::Value::as_str)
+        {
+            match files_read.get(path) {
+                Some((earlier, seen)) if seen == hash => {
+                    if let Some(object) = outcome.as_object_mut() {
+                        object.insert(
+                            "already_read".into(),
+                            serde_json::json!({
+                                "at_step": earlier,
+                                "unchanged_since": true,
+                                "note": "You have already been shown this file, and it has not changed. Reading it again will return the same bytes.",
+                            }),
+                        );
+                    }
+                }
+                _ => {
+                    files_read.insert(path.clone(), (step, hash.to_string()));
+                }
             }
         }
         // "Make one hypothesis-linked correction, rerun the narrow check."

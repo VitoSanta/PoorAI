@@ -1,0 +1,583 @@
+{
+  "run": {
+    "outcome": "calibrated",
+    "profile": {
+      "compatibility_key": "963e4edea2dba57741c8b3afbee91a357e14b83cb8e60ea26f457ede2a512fd8",
+      "created_at": "2026-09-04T04:42:19.017471Z",
+      "deployment_fingerprint": "513dcc3a33890c77dddf4b3fe922ea036b809a6ff9054e71b2e2d04b81957afd",
+      "harness_rev": "calibration-harness-v4",
+      "id": "01a06ab9-8809-7762-8aaa-911da8a2cb23",
+      "model_digest": "5642e97495e1a088883805981563dcdc4a040c2f53388b7a41d1f24d3622cf7e",
+      "raw_artifact_hashes": [
+        "3320b750a40a4246f3452bf2b41c411ffc47beda37b8ffeaada2608e4dbeb9ed",
+        "dfadde2fd6cac2bf38692bddd845e3f2ffcb54c8efe769730de55cfad12fc513",
+        "70b67756ffdd5b5145fa9e0da3b4f8064b5dcc5321fb768e87487cd1d1bf9183",
+        "dc7597d6ed0b5e026f6b265ff8dfb8e1d39869b10c825d53fa9df5b1e94f1e93",
+        "a61277f3be602f470966de95a394d9b7984e0e9cee2a6452b86d4f012b2c3fce",
+        "f01fbc38c2b2f0d6d58d33fbb45f38e99a1b64990d5a577c97c7660defa3a0e9",
+        "6032751673c7d06a619fa62f1de64994ceac707c0f04d4b00e4f28994d5dba83",
+        "7da9da754e084c8dbfe954432fcf869c5b3a2eb7bffa300fdb7fd2cbc2182b2c",
+        "8b6654140cf5208ebb99b7d3c50fcf072c444da477b3e8cc4a628bc59d2ff724",
+        "eb607eda88c83fe6e78ab0989faf143dcdf1221bb1c6687a6bd99d1a04611829",
+        "3c89eb9663d6adce5f40facda6be9f352ddb84ce366ec51a4e26f88a1e24fe91",
+        "327c36f083faf2446da45fcda12acf2002686d1a3a0c8727e9a97b8da34668fb"
+      ],
+      "schema_version": 1,
+      "stable_points": [
+        {
+          "context_tokens": 32768,
+          "generation_tokens_per_second": 14.223032467052926,
+          "median_first_token_ms": 171.809833,
+          "memory_pressure_observed": false,
+          "samples": 3,
+          "success_rate": 1.0,
+          "variance": 14577.256511105406
+        },
+        {
+          "context_tokens": 65536,
+          "generation_tokens_per_second": 12.584713084521008,
+          "median_first_token_ms": 214.865,
+          "memory_pressure_observed": false,
+          "samples": 3,
+          "success_rate": 1.0,
+          "variance": 20151.90762879586
+        }
+      ],
+      "thresholds": {
+        "allow_memory_pressure": false,
+        "max_median_first_token_ms": 120000.0,
+        "min_success_rate": 1.0
+      }
+    },
+    "rejected": [
+      {
+        "context_tokens": 131072,
+        "measured": {
+          "context_tokens": 131072,
+          "generation_tokens_per_second": 0.0,
+          "median_first_token_ms": 0.0,
+          "memory_pressure_observed": false,
+          "samples": 3,
+          "success_rate": 0.0,
+          "variance": 0.0
+        },
+        "reasons": [
+          "success_rate"
+        ]
+      }
+    ],
+    "samples": [
+      {
+        "backend_state": {
+          "loaded_models": [
+            "qwen3.8:27b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 131072,
+                "fully_on_accelerator": true,
+                "name": "qwen3.8:27b-mlx",
+                "size_bytes": 20470683332,
+                "vram_bytes": 20470683332
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 0,
+        "context_tokens": 131072,
+        "error": "provider operation timed out: local Ollama request",
+        "first_token_ms": 0.0,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 0.0,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 56,
+            "under_pressure": false
+          }
+        },
+        "memory_pressure_after": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 50,
+            "under_pressure": false
+          }
+        },
+        "metrics": null,
+        "needle_recalled": null,
+        "occupancy": null,
+        "ok": false,
+        "prompt_tokens_reported": null,
+        "rate_source": "none",
+        "repetition": 1,
+        "total_ms": 600002.705333
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "qwen3.8:27b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 131072,
+                "fully_on_accelerator": true,
+                "name": "qwen3.8:27b-mlx",
+                "size_bytes": 24583302888,
+                "vram_bytes": 24583302888
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 0,
+        "context_tokens": 131072,
+        "error": "provider protocol error: Ollama returned HTTP 500 Internal Server Error: {\"error\":\"mlx runner failed: panic: mlx: [METAL] Command buffer execution failed: Impacting Interactivity (0000000e:kIOGPUCommandBufferCallbackErrorImpactingInteractivity). at /Users/runner/work/ollama/ollama/build/darwin-sources/_deps/mlx-c-src/mlx/c/transforms.cpp:73\"}",
+        "first_token_ms": 0.0,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 0.0,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 51,
+            "under_pressure": false
+          }
+        },
+        "memory_pressure_after": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 45,
+            "under_pressure": false
+          }
+        },
+        "metrics": null,
+        "needle_recalled": null,
+        "occupancy": null,
+        "ok": false,
+        "prompt_tokens_reported": null,
+        "rate_source": "none",
+        "repetition": 2,
+        "total_ms": 317623.143667
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "qwen3.8:27b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 131072,
+                "fully_on_accelerator": true,
+                "name": "qwen3.8:27b-mlx",
+                "size_bytes": 24583302888,
+                "vram_bytes": 24583302888
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 0,
+        "context_tokens": 131072,
+        "error": "provider operation timed out: local Ollama request",
+        "first_token_ms": 0.0,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 0.0,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 45,
+            "under_pressure": false
+          }
+        },
+        "memory_pressure_after": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 56,
+            "under_pressure": false
+          }
+        },
+        "metrics": null,
+        "needle_recalled": null,
+        "occupancy": null,
+        "ok": false,
+        "prompt_tokens_reported": null,
+        "rate_source": "none",
+        "repetition": 3,
+        "total_ms": 600003.248875
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "qwen3.8:27b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 131072,
+                "fully_on_accelerator": true,
+                "name": "qwen3.8:27b-mlx",
+                "size_bytes": 24222224104,
+                "vram_bytes": 24222224104
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 108,
+        "context_tokens": 65536,
+        "error": null,
+        "first_token_ms": 513.896667,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 13.515043971573258,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 55,
+            "under_pressure": false
+          }
+        },
+        "memory_pressure_after": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 55,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 112,
+          "generation_duration_ns": 8287061458,
+          "load_duration_ns": 13230584,
+          "prompt_eval_duration_ns": 228636583,
+          "prompt_tokens": 62451,
+          "total_duration_ns": 8555826875
+        },
+        "needle_recalled": true,
+        "occupancy": 0.9529266357421875,
+        "ok": true,
+        "prompt_tokens_reported": 62451,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 1,
+        "total_ms": 8556.467542
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "qwen3.8:27b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 131072,
+                "fully_on_accelerator": true,
+                "name": "qwen3.8:27b-mlx",
+                "size_bytes": 24539807460,
+                "vram_bytes": 24539807460
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 49,
+        "context_tokens": 65536,
+        "error": null,
+        "first_token_ms": 210.697292,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 13.79309552120947,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 56,
+            "under_pressure": false
+          }
+        },
+        "memory_pressure_after": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 54,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 51,
+          "generation_duration_ns": 3697502125,
+          "load_duration_ns": 11420667,
+          "prompt_eval_duration_ns": 21500,
+          "prompt_tokens": 62451,
+          "total_duration_ns": 3736120500
+        },
+        "needle_recalled": true,
+        "occupancy": 0.9529266357421875,
+        "ok": true,
+        "prompt_tokens_reported": 62451,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 2,
+        "total_ms": 3736.562334
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "qwen3.8:27b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 131072,
+                "fully_on_accelerator": true,
+                "name": "qwen3.8:27b-mlx",
+                "size_bytes": 24699383524,
+                "vram_bytes": 24699383524
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 51,
+        "context_tokens": 65536,
+        "error": null,
+        "first_token_ms": 214.865,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 10.445999760780298,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 54,
+            "under_pressure": false
+          }
+        },
+        "memory_pressure_after": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 53,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 53,
+          "generation_duration_ns": 5073712542,
+          "load_duration_ns": 11436500,
+          "prompt_eval_duration_ns": 12458,
+          "prompt_tokens": 62451,
+          "total_duration_ns": 5114515333
+        },
+        "needle_recalled": true,
+        "occupancy": 0.9529266357421875,
+        "ok": true,
+        "prompt_tokens_reported": 62451,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 3,
+        "total_ms": 5115.13925
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "qwen3.8:27b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 131072,
+                "fully_on_accelerator": true,
+                "name": "qwen3.8:27b-mlx",
+                "size_bytes": 26788398824,
+                "vram_bytes": 26788398824
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 59,
+        "context_tokens": 32768,
+        "error": null,
+        "first_token_ms": 426.46579099999997,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 14.293486022280867,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 54,
+            "under_pressure": false
+          }
+        },
+        "memory_pressure_after": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 53,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 61,
+          "generation_duration_ns": 4267678291,
+          "load_duration_ns": 9879042,
+          "prompt_eval_duration_ns": 177725709,
+          "prompt_tokens": 30848,
+          "total_duration_ns": 4469240583
+        },
+        "needle_recalled": true,
+        "occupancy": 0.94140625,
+        "ok": true,
+        "prompt_tokens_reported": 30848,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 1,
+        "total_ms": 4469.693458
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "qwen3.8:27b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 131072,
+                "fully_on_accelerator": true,
+                "name": "qwen3.8:27b-mlx",
+                "size_bytes": 27567699684,
+                "vram_bytes": 27567699684
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 59,
+        "context_tokens": 32768,
+        "error": null,
+        "first_token_ms": 168.90566700000002,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 14.754416218997623,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 54,
+            "under_pressure": false
+          }
+        },
+        "memory_pressure_after": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 54,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 61,
+          "generation_duration_ns": 4134355375,
+          "load_duration_ns": 9958959,
+          "prompt_eval_duration_ns": 10166,
+          "prompt_tokens": 30848,
+          "total_duration_ns": 4157981084
+        },
+        "needle_recalled": true,
+        "occupancy": 0.94140625,
+        "ok": true,
+        "prompt_tokens_reported": 30848,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 2,
+        "total_ms": 4158.556417
+      },
+      {
+        "backend_state": {
+          "loaded_models": [
+            "qwen3.8:27b-mlx"
+          ],
+          "state": {
+            "loaded": [
+              {
+                "context_length": 131072,
+                "fully_on_accelerator": true,
+                "name": "qwen3.8:27b-mlx",
+                "size_bytes": 28179093220,
+                "vram_bytes": 28179093220
+              }
+            ],
+            "source": "ollama:/api/ps",
+            "unknown_fields": "not inferred"
+          }
+        },
+        "chunks": 51,
+        "context_tokens": 32768,
+        "error": null,
+        "first_token_ms": 171.809833,
+        "fully_on_accelerator": true,
+        "generation_tokens_per_second": 13.621195159880287,
+        "memory_pressure": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 55,
+            "under_pressure": false
+          }
+        },
+        "memory_pressure_after": {
+          "status": "observed",
+          "value": {
+            "free_percent_floor": 20,
+            "source": "memory_pressure -Q",
+            "system_free_percent": 53,
+            "under_pressure": false
+          }
+        },
+        "metrics": {
+          "generated_tokens": 53,
+          "generation_duration_ns": 3890994834,
+          "load_duration_ns": 10149875,
+          "prompt_eval_duration_ns": 17792,
+          "prompt_tokens": 30848,
+          "total_duration_ns": 3914753833
+        },
+        "needle_recalled": true,
+        "occupancy": 0.94140625,
+        "ok": true,
+        "prompt_tokens_reported": 30848,
+        "rate_source": "backend_reported_tokens",
+        "repetition": 3,
+        "total_ms": 3915.252416
+      }
+    ]
+  },
+  "seed": 1
+}
