@@ -38,3 +38,6 @@
 /.poorai/evaluations-m6-post/
 /.poorai/evaluations-maxctx/
 /.poorai/evaluations-realistic/
+
+# macOS Finder metadata.
+.DS_Store

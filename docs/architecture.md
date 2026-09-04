@@ -21,13 +21,11 @@ Provider code maps native schemas into stable domain types; it must not leak Oll
 
 ## Where the layering actually stands
 
-Two departures from the description above are worth naming rather than leaving for a reader to discover.
+One departure from the description above is worth naming rather than leaving for a reader to discover.
 
-**`poorai-cli` is the larger orchestrator.** It carries hardware probing, capability-evidence loading, calibration persistence, execution-profile resolution, prompt construction, session handling, the evaluation runner and reporting. `poorai-orchestrator` owns the action loop and the task state machine, which is less than "the state machine" implies. The dependency direction is sound and the crate boundaries hold; the volume is in the wrong crate.
+**`poorai-cli` is the larger orchestrator.** It carries hardware probing, capability-evidence loading, calibration persistence, execution-profile resolution, prompt construction, session handling, the evaluation runner and reporting — past three and a half thousand lines, against the orchestrator's five thousand. `poorai-orchestrator` owns the action loop, the task state machine, the context compiler and the plan graph, which is more than it once did and still less than the layering above implies. The dependency direction is sound and the crate boundaries hold; the volume is in the wrong crate, and `roadmap.md` carries that as declared debt.
 
-**There are two production-shaped paths.** `run_single_action` sits beside the action loop with its own verification and terminal handling, so a rule added to the loop has to be remembered here — the refusal to complete without a verifier had to be written twice. One of them should go.
-
-**`poorai-observe` emits nothing.** It is seven lines and no crate depends on it. Telemetry in practice is the hash-chained event log in `poorai-store`. See `observability.md`.
+Two earlier entries here are closed. `run_single_action`, a second production-shaped path beside the action loop, is deleted — the refusal to complete without a verifier had to be written twice, which is how it was noticed. And `poorai-observe` is no longer seven lines that nothing calls: it exports a run's trail as JSONL and folds it back into a replay report, and `poorai report` uses it.
 
 ## Admission
 

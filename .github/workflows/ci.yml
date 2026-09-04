@@ -1,0 +1,55 @@
+name: CI
+
+# Hermetic only. Nothing here starts Ollama, loads a model, or depends on the
+# machine it runs on: those runs are done by hand and their results recorded in
+# docs/. A green build here means the code compiles, is formatted, passes
+# clippy, and passes every test that does not need a model.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    # macOS because the sandbox adapter is seatbelt, and its fixtures are the
+    # ones most worth running: on Linux they would be skipped, which is the
+    # shape of a suite that passes because it tested nothing.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain
+        run: rustup show && rustc --version && cargo --version
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        # The two network tests are #[ignore]d and stay that way: a CI run that
+        # reaches the internet is a CI run that fails for reasons unrelated to
+        # the change.
+        run: cargo test --workspace
+
+      - name: Milestone table matches its manifest
+        # The roadmap's status table is generated. If someone edits it by hand
+        # it stops matching, and the two disagree again -- which is the thing
+        # the manifest exists to prevent.
+        run: |
+          python3 scripts/milestones.py
+          git diff --exit-code docs/roadmap.md
