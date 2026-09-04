@@ -333,19 +333,44 @@ fn prune_bulk_arrays(value: serde_json::Value) -> serde_json::Value {
 /// field inside a 200 -- so the classification lives in one place rather than
 /// being right in whichever path was written first.
 fn classify_backend_error(message: &str, fallback: String) -> ProviderError {
-    let message = message.to_ascii_lowercase();
+    let lowered = message.to_ascii_lowercase();
     if ["context length", "input length", "num_ctx", "too long"]
         .iter()
-        .any(|needle| message.contains(needle))
+        .any(|needle| lowered.contains(needle))
     {
         return ProviderError::ContextLimit {
-            safe_context: "Ollama rejected the measured context tier".into(),
+            safe_context: format!(
+                "Ollama rejected the measured context tier: {}",
+                elide(message)
+            ),
         };
     }
+    // The backend's own words, carried rather than discarded. Classifying an
+    // error and then throwing away what it said leaves a run that failed for a
+    // knowable reason reported as "a protocol error" -- which is the shape of
+    // failure this project spent a day removing everywhere else. What is
+    // redacted here is prompts and file contents, not diagnostics.
     ProviderError::Protocol {
-        safe_context: fallback,
+        safe_context: format!("{fallback}: {}", elide(message)),
     }
 }
+
+/// Bounds a backend message without hiding what it says.
+fn elide(message: &str) -> String {
+    let message = message.trim().replace('\n', " ");
+    if message.chars().count() <= MAX_BACKEND_MESSAGE_CHARS {
+        return message;
+    }
+    format!(
+        "{}…",
+        message
+            .chars()
+            .take(MAX_BACKEND_MESSAGE_CHARS - 1)
+            .collect::<String>()
+    )
+}
+
+const MAX_BACKEND_MESSAGE_CHARS: usize = 400;
 
 pub fn parse_ndjson_chunks(body: &str) -> Result<Vec<ModelChunk>, ProviderError> {
     body.lines()
@@ -686,6 +711,30 @@ mod tests {
     fn an_error_field_in_a_200_body_is_a_failure_not_an_empty_reply() {
         let failed = parse_ndjson_chunks(r#"{"error":"model requires more system memory"}"#);
         assert!(matches!(failed, Err(ProviderError::Protocol { .. })));
+    }
+
+    /// Classifying an error and discarding what it said leaves a run that
+    /// failed for a knowable reason reported as "a protocol error". Found by a
+    /// real run ending on one, with nothing to diagnose it by.
+    #[test]
+    fn a_backend_error_carries_what_the_backend_said() {
+        let failed = parse_ndjson_chunks(
+            r#"{"error":"model requires more system memory (32.0 GiB) than is available"}"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(failed.contains("more system memory"), "{failed}");
+
+        // Bounded, and a newline does not break the line it is reported on.
+        let long = "x".repeat(5_000);
+        let failed = parse_ndjson_chunks(&format!(
+            r#"{{"error":"a
+b {long}"}}"#
+        ))
+        .unwrap_err()
+        .to_string();
+        assert!(failed.len() < 600, "unbounded: {} chars", failed.len());
+        assert!(!failed.contains('\n'));
     }
 
     #[test]

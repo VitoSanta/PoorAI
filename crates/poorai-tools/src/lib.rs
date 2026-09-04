@@ -1788,10 +1788,14 @@ impl ProcessGroupGuard {
     fn terminate(&mut self) {
         #[cfg(unix)]
         if let Some(pid) = self.pid.take() {
+            // `output()` rather than `status()`: a kill of a process group
+            // that has already exited prints to stderr, and the run's stderr
+            // is where `--json` output goes. Internal cleanup must not corrupt
+            // the caller's document.
             let _ = std::process::Command::new("/bin/kill")
                 .arg("-KILL")
                 .arg(format!("-{pid}"))
-                .status();
+                .output();
         }
         #[cfg(not(unix))]
         {

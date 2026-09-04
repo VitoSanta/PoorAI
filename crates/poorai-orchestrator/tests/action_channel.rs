@@ -452,3 +452,66 @@ async fn a_tool_result_names_the_call_it_answers() {
     let wire = serde_json::to_value(&answer).unwrap();
     assert_eq!(wire["tool_call_id"], "call-1");
 }
+
+/// Found by running a real generation task. A deployment sent
+/// `"args": "--version"` where the schema declares a list, and five malformed
+/// calls -- three consecutive -- ended the run over a mistake the harness
+/// could see through.
+#[test]
+fn a_lone_string_is_accepted_where_a_list_was_declared() {
+    let action = poorai_orchestrator::action_from_tool_call(&poorai_domain::ToolCall {
+        name: "run_command".into(),
+        arguments: serde_json::json!({"executable": "node", "args": "--version"}),
+        id: None,
+    })
+    .expect("a single argument sent as a string");
+    match action {
+        poorai_tools::ActionProposal::RunCommand {
+            executable, args, ..
+        } => {
+            assert_eq!(executable, "node");
+            assert_eq!(args, vec!["--version".to_string()]);
+        }
+        other => panic!("wrong action: {other:?}"),
+    }
+}
+
+/// One element, never split. Splitting would make "npm install" into two
+/// arguments, which is interpreting a shell -- the thing this project refuses
+/// everywhere else, and the reason executable and arguments are separate.
+#[test]
+fn a_string_of_several_words_becomes_one_argument_not_several() {
+    let action = poorai_orchestrator::action_from_tool_call(&poorai_domain::ToolCall {
+        name: "run_command".into(),
+        arguments: serde_json::json!({"executable": "npm", "args": "run build"}),
+        id: None,
+    })
+    .unwrap();
+    match action {
+        poorai_tools::ActionProposal::RunCommand { args, .. } => {
+            assert_eq!(
+                args,
+                vec!["run build".to_string()],
+                "the shell was interpreted"
+            );
+        }
+        other => panic!("wrong action: {other:?}"),
+    }
+}
+
+/// A proper list is untouched.
+#[test]
+fn a_declared_list_still_arrives_as_a_list() {
+    let action = poorai_orchestrator::action_from_tool_call(&poorai_domain::ToolCall {
+        name: "run_command".into(),
+        arguments: serde_json::json!({"executable": "npm", "args": ["run", "build"]}),
+        id: None,
+    })
+    .unwrap();
+    match action {
+        poorai_tools::ActionProposal::RunCommand { args, .. } => {
+            assert_eq!(args, vec!["run".to_string(), "build".to_string()]);
+        }
+        other => panic!("wrong action: {other:?}"),
+    }
+}

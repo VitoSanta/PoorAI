@@ -511,3 +511,52 @@ mod subgoal_checks {
         assert_eq!(plan.done_count(), 0);
     }
 }
+
+/// Found by running a real generation task, not by reading the code.
+///
+/// A deployment planned `"verify": ["ls -la"]` -- a whole command line where a
+/// program name belongs. `propose_verifier` validates against that shape and a
+/// plan's `verify` went through neither validation nor the tool's, so the
+/// malformed command reached the policy, was correctly refused, and the
+/// refusal propagated out of the loop and ended the run. The terminal was then
+/// recorded as an interruption, losing the one fact that explained it.
+mod a_plan_that_declares_a_bad_check {
+    use poorai_orchestrator::plan::parse_steps;
+
+    #[test]
+    fn a_command_line_where_a_program_name_belongs_is_dropped() {
+        let steps = parse_steps(
+            &serde_json::json!([
+                {"step": "look around", "verify": ["ls -la"]},
+                {"step": "build it", "verify": ["npm", "run", "build"]},
+            ]),
+            8,
+        );
+        assert_eq!(steps.len(), 2, "the step itself is still a step");
+        assert!(
+            steps[0].verify.is_none(),
+            "an unusable check was kept: {:?}",
+            steps[0].verify
+        );
+        // A well-formed one is untouched.
+        assert_eq!(
+            steps[1].verify.as_deref(),
+            Some(["npm".to_string(), "run".to_string(), "build".to_string()].as_slice())
+        );
+    }
+
+    /// Dropped rather than repaired: splitting the string would be guessing at
+    /// what was meant, and a plan with one unusable check is still a plan.
+    #[test]
+    fn an_empty_or_blank_check_is_dropped_too() {
+        let steps = parse_steps(
+            &serde_json::json!([
+                {"step": "a", "verify": []},
+                {"step": "b", "verify": ["   "]},
+            ]),
+            8,
+        );
+        assert!(steps[0].verify.is_none());
+        assert!(steps[1].verify.is_none());
+    }
+}

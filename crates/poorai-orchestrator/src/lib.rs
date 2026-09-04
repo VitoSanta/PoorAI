@@ -96,11 +96,14 @@ impl ModelRuntimeLease {
 }
 
 fn process_is_alive(pid: u64) -> bool {
+    // `output()` rather than `status()`: probing a pid that is gone prints to
+    // stderr, and the run's stderr is where `--json` output goes. A liveness
+    // check must not corrupt the caller's document to answer a question.
     std::process::Command::new("kill")
         .arg("-0")
         .arg(pid.to_string())
-        .status()
-        .is_ok_and(|status| status.success())
+        .output()
+        .is_ok_and(|output| output.status.success())
 }
 
 impl Drop for ModelRuntimeLease {
@@ -2680,14 +2683,21 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
             // The command runs under the run's own policy, so a step cannot
             // authorise something the run could not otherwise execute.
             if let Some((executable, args)) = plan.verifier(claimed) {
+                // A check that cannot run is a check that did not pass, not a
+                // run that ends. Propagating here took a whole run down over a
+                // verifier the plan had got wrong, and recorded the ending as
+                // an interruption -- losing the one fact that explained it.
                 let checked =
                     poorai_verify::baseline(&policy, std::slice::from_ref(&(executable, args)))
-                        .await
-                        .map_err(|e| e.to_string())?;
-                let passed = checked
-                    .checks
-                    .iter()
-                    .all(|check| check.result.exit_code == Some(0));
+                        .await;
+                let passed = match &checked {
+                    Ok(checked) => checked
+                        .checks
+                        .iter()
+                        .all(|check| check.result.exit_code == Some(0)),
+                    Err(_) => false,
+                };
+                let checked = checked.ok();
                 plan.record_verification(claimed, passed);
                 store
                     .append_event(
@@ -2696,8 +2706,8 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                             step: claimed,
                             passed,
                             command: checked
-                                .checks
-                                .first()
+                                .as_ref()
+                                .and_then(|checked| checked.checks.first())
                                 .map(|check| check.command.clone())
                                 .unwrap_or_default(),
                         },
@@ -3101,6 +3111,34 @@ pub fn action_tool_schema() -> serde_json::Value {
     ])
 }
 
+/// Fields the schema declares as lists of strings.
+///
+/// A deployment sending `"args": "--version"` means one argument, and there is
+/// no other reading of it. Measured: five malformed calls in one run, three
+/// consecutive, ending it -- over a mistake the harness could see through.
+const STRING_LIST_FIELDS: [&str; 2] = ["args", "paths"];
+
+/// Accepts a lone string where a list of strings was declared.
+///
+/// One element, never split on whitespace. Splitting would make `"args": "npm
+/// install"` into two arguments, which is interpreting a shell -- the thing
+/// this project refuses everywhere else, and the reason executable and
+/// arguments are separate in the first place. A single argument containing a
+/// space is a legitimate argument; a command line pretending to be one is not,
+/// and `run_command` already refuses that where it matters, in the executable.
+fn coerce_string_lists(arguments: &mut serde_json::Value) {
+    let Some(object) = arguments.as_object_mut() else {
+        return;
+    };
+    for field in STRING_LIST_FIELDS {
+        if let Some(value) = object.get_mut(field)
+            && let Some(text) = value.as_str()
+        {
+            *value = serde_json::Value::Array(vec![serde_json::Value::String(text.to_string())]);
+        }
+    }
+}
+
 /// Builds a typed action from a native tool call.
 ///
 /// The call's name selects the capability and its arguments are decoded into
@@ -3114,6 +3152,7 @@ pub fn action_from_tool_call(call: &poorai_domain::ToolCall) -> Result<ActionPro
             call.name
         ));
     }
+    coerce_string_lists(&mut arguments);
     arguments["capability"] = serde_json::Value::String(call.name.clone());
     let action: ActionProposal = serde_json::from_value(arguments).map_err(|e| {
         format!(

@@ -144,6 +144,25 @@ impl Plan {
     }
 }
 
+/// Whether a plan's declared check is a command the runtime could execute.
+///
+/// A deployment planning `"verify": ["ls -la"]` has put a whole command line
+/// where a program name belongs -- the same mistake `run_command` refuses,
+/// and the same one `propose_verifier` validates against. A plan's `verify`
+/// went through neither, so a malformed one reached the tool policy, was
+/// correctly refused, and took the run down with it.
+///
+/// Dropped rather than repaired: splitting the string here would be guessing
+/// at what was meant, and a plan with one unusable check is still a plan.
+fn usable_verifier(command: &[String]) -> bool {
+    match command.split_first() {
+        Some((executable, _)) => {
+            !executable.trim().is_empty() && executable.split_whitespace().count() == 1
+        }
+        None => false,
+    }
+}
+
 /// Reads a plan from what a deployment answered.
 ///
 /// Two shapes are accepted, because a plan is worth having in either. A list
@@ -191,7 +210,7 @@ pub fn parse_steps(value: &serde_json::Value, limit: usize) -> Vec<Subgoal> {
                                 .filter_map(|value| value.as_str().map(str::to_string))
                                 .collect::<Vec<_>>()
                         })
-                        .filter(|command| !command.is_empty()),
+                        .filter(|command| usable_verifier(command)),
                 })
             }
             _ => None,

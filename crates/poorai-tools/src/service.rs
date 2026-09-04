@@ -231,10 +231,13 @@ impl Drop for ServiceSupervisor {
 fn kill_group(pid: Option<u32>) {
     #[cfg(unix)]
     if let Some(pid) = pid {
+        // `output()` rather than `status()`: killing a group that has already
+        // exited prints to stderr, and the run's stderr is where `--json`
+        // output goes.
         let _ = std::process::Command::new("/bin/kill")
             .arg("-KILL")
             .arg(format!("-{pid}"))
-            .status();
+            .output();
     }
     #[cfg(not(unix))]
     let _ = pid;
