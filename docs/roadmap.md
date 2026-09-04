@@ -679,6 +679,32 @@ Every calibration was `harness-v3` against a harness at v4, so all seven were in
 
 **Neither corpus exercises a large context.** The peak prompt was 4,878 tokens on `m5-frozen-v1` and 12,080 on `external-v1`, against 32,768 authorised. Nothing measured here tests what the calibration measured, and a 16% generation cost at full occupancy is a fact about the deployment that no task in either corpus would have found.
 
+### A generation task as a diagnostic — 2026-09-04
+
+A whole PWA from an empty directory, run against `qwen3.8:27b-mlx`. It found more than either corpus campaign did, and the reason is worth naming: `m5-frozen-v1` peaks at 4,878 prompt tokens and `external-v1` at 12,080, so neither exercises a long task, a workspace with no checks, or a fifteen-file build. This does all three.
+
+**Twelve defects, and three of them were introduced by fixing the first ones.**
+
+A plan's `verify` went through no validation, so `"verify": ["ls -la"]` reached the tool policy and its refusal propagated out of the loop and ended the run. A subgoal check that cannot run is a check that did not pass, not a run that ends. A lone string where a list was declared ended a run over a mistake the harness could read. Internal cleanup wrote to stderr and corrupted `--json` output. A backend error was classified and discarded, so a run ended on "provider protocol error" with nothing to diagnose it by. And the agent spent a fifth of its budget reading poorAI's own state directory, because `list_tree` excludes it through the shared walker and a command does not go through that walker.
+
+Then: the argument coercion made `"run build"` one argument with a space, so npm answered `Unknown command` and the deployment could not work out why its build would not run. Hiding `.poorai` made `find .` fail with a message that reads like a broken machine. And `RunTuning::turn_timeout` and `host` were declared and unread for several commits, because a bulk edit adding `..Default::default()` to every `ChatMessage` literal rewrote braces across the loop and silently removed their wiring — the defect this whole audit is about, reintroduced by the person fixing it.
+
+**Two fixtures asserted the source rather than the behaviour**, grepping for the code they wanted. They passed against code that did not run. Rewritten behaviourally, both failed immediately: one because the enrichment happened *after* the audit recorded the outcome, so the log said the deployment saw less than it did; the other because two match arms overlapped and the first always won.
+
+**The harness improved measurably at every step, and it was not enough.**
+
+| | 32K context | 64K | 64K, with the facts attached |
+|---|---:|---:|---:|
+| reads | 110 | 42 | 33 |
+| writes | 0 | 6 | 9 |
+| compactions | 20 | 2 | — |
+| actions to `npm install` | 57 | — | 4 |
+| outcome | budget of 200 exhausted | bounded at 64 | bounded at 52 |
+
+Writes went from none to nine; reads fell by two thirds. The build went from not running at all to producing real TypeScript errors. And the run still does not finish: fifteen re-reads were flagged — the result saying plainly that the file had not changed since it was last shown — and the deployment re-read anyway.
+
+**That is where the harness's part of this ends and a different question begins.** The honest reading is not "poorAI cannot do this": it is that this deployment reads compulsively and acts rarely on a fifteen-file task, and separating the two requires running the same task on another of the seven. Until that is done, the finding is about one deployment and says nothing about the rest.
+
 ### P3 — a measurable beta
 
 | Item | What is wrong now | What closing it looks like |
