@@ -306,3 +306,40 @@ mod no_progress {
         assert!(detections > 0, "a run changing nothing went unnamed");
     }
 }
+
+/// Naming non-progress and continuing was the original choice. A real
+/// generation task showed what it costs: two hundred actions, a hundred and
+/// ten reads, `npm run build` seventeen times, and not one write. The loop
+/// said so eleven times and the deployment read on.
+#[test]
+fn repeated_windows_of_nothing_end_the_run() {
+    let source = include_str!("../src/lib.rs");
+    assert!(
+        source.contains("NO_PROGRESS_LIMIT"),
+        "non-progress is named and never bounded"
+    );
+    let arm = source
+        .split("if no_progress_windows >= NO_PROGRESS_LIMIT")
+        .nth(1)
+        .expect("the bound does not end the run");
+    let arm = &arm[..arm.len().min(900)];
+    assert!(
+        arm.contains("persist_failure"),
+        "the ending is not recorded"
+    );
+    assert!(arm.contains("return Err"), "the run continues anyway");
+}
+
+/// The bound has to be looser than the window, or a single quiet stretch --
+/// six reads while working out what to change -- ends a run that was fine.
+#[test]
+fn one_quiet_window_does_not_end_a_run() {
+    let source = include_str!("../src/lib.rs");
+    let limit: usize = source
+        .split("const NO_PROGRESS_LIMIT: usize = ")
+        .nth(1)
+        .and_then(|rest| rest.split(';').next())
+        .and_then(|value| value.trim().parse().ok())
+        .expect("no limit declared");
+    assert!(limit >= 2, "a single window ends the run");
+}

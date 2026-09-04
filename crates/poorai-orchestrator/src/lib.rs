@@ -282,7 +282,10 @@ fn classify_terminal(reason: &str) -> poorai_domain::TerminalClass {
         C::Protocol
     } else if reason.contains("recovery") {
         C::Recovery
-    } else if reason.contains("budget") || reason.contains("actions") {
+    } else if reason.contains("no progress")
+        || reason.contains("budget")
+        || reason.contains("actions")
+    {
         C::Budget
     } else if reason.contains("timed out") || reason.contains("timeout") {
         C::Timeout
@@ -1158,6 +1161,25 @@ const REPEATED_REFUSAL_LIMIT: usize = 3;
 /// shape of a budget being spent on a repository that is already where it was.
 const NO_PROGRESS_WINDOW: usize = 6;
 
+/// Windows of nothing before the run gives up.
+///
+/// Naming non-progress and continuing was the original choice, on the ground
+/// that deciding what to do about it would be the harness taking over the
+/// task. A real run showed what that costs: two hundred actions, a hundred and
+/// ten reads, sixty-six commands, `npm run build` seventeen times, and not one
+/// write. The loop said so eleven times and the deployment read on.
+///
+/// The precedent is already here. A malformed call ends the run after three,
+/// because "a deployment that cannot form a valid call after being told three
+/// times what was wrong is not going to, and the budget is better spent
+/// failing". A deployment told three times that eighteen actions changed
+/// nothing is in the same position, and the budget is spent either way -- the
+/// only question is whether it is spent before or after the fact.
+///
+/// Still not the harness deciding what to *do*: it decides when to stop, which
+/// is what a budget is.
+const NO_PROGRESS_LIMIT: usize = 3;
+
 /// What a run has actually changed, as one value.
 ///
 /// Progress is not "an action succeeded" -- a read succeeds and changes
@@ -1898,6 +1920,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
     let mut seen_fingerprints: std::collections::BTreeSet<String> =
         std::collections::BTreeSet::new();
     let mut progress_window: Vec<(String, EffectSignature, bool)> = Vec::new();
+    let mut no_progress_windows = 0usize;
     let mut malformed = 0usize;
     let mut checks_passed_at: Option<u8> = None;
     let mut idle_since_pass = 0usize;
@@ -2740,6 +2763,23 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                 ..Default::default()
             });
             progress_window.clear();
+            no_progress_windows += 1;
+            if no_progress_windows >= NO_PROGRESS_LIMIT {
+                persist_failure(
+                    store,
+                    run_id,
+                    &mut task_state,
+                    "no progress after repeated windows",
+                    serde_json::json!({
+                        "windows": no_progress_windows,
+                        "window_size": NO_PROGRESS_WINDOW,
+                        "step": step,
+                    }),
+                )?;
+                return Err(format!(
+                    "{no_progress_windows} windows of {NO_PROGRESS_WINDOW} actions changed neither the workspace nor the checks"
+                ));
+            }
         }
         let remaining = max_actions.saturating_sub(step);
         if checks_passed_at.is_some() && !edited {
