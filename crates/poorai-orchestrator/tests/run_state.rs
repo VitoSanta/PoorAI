@@ -201,3 +201,46 @@ fn an_interrupted_run_is_recovered_from_the_database() {
     assert_eq!(state.plan, vec!["fix the parser".to_string()]);
     assert_eq!(state.adopted_verifiers.len(), 1);
 }
+
+/// The guard I wrote against unread configuration checked declared profiles,
+/// not the loop's own tuning -- and `turn_timeout` was silently unread for
+/// several commits after a bulk edit clobbered its wiring. A field that no
+/// production path reads is the defect this whole audit was about, and it does
+/// not stop being one because I introduced it.
+#[test]
+fn every_tuning_field_reaches_the_loop() {
+    let source = include_str!("../src/lib.rs");
+    for (field, evidence) in [
+        ("malformed_call_limit", "tuning.malformed_call_limit"),
+        ("turn_timeout", "tuning.turn_timeout"),
+        ("host", "tuning.host"),
+        ("full_checks", "tuning.full_checks"),
+    ] {
+        assert!(
+            source.contains(evidence),
+            "RunTuning::{field} is declared and never read"
+        );
+    }
+}
+
+/// Output the backend could not parse is the deployment writing badly, not the
+/// backend failing -- measured on a real run: Ollama's own template parser
+/// returning `XML syntax error on line 3: unexpected end element </function>`
+/// in a 200 body, which ended a sixty-action run at action twenty-six.
+#[test]
+fn unparsable_output_is_retried_like_a_malformed_call() {
+    let source = include_str!("../src/lib.rs");
+    assert!(
+        source.contains("ProviderError::ModelOutput"),
+        "the loop does not distinguish unparsable model output"
+    );
+    // Counted against the same bound rather than retried forever.
+    let arm = source
+        .split("ProviderError::ModelOutput { safe_context }")
+        .nth(1)
+        .expect("no handling arm");
+    let arm = &arm[..arm.len().min(1_600)];
+    assert!(arm.contains("malformed += 1"), "not counted");
+    assert!(arm.contains("malformed_limit"), "not bounded");
+    assert!(arm.contains("continue"), "does not continue the run");
+}

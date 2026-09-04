@@ -1977,7 +1977,14 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                 "{turns} turns produced only {step} actions; the deployment is not emitting usable calls"
             ));
         }
-        let stream = match provider.chat(request.clone()).await {
+        // Cancellable, so a turn that goes nowhere can be cut short rather than
+        // waited out: the transport gives up on the answer, and cancelling
+        // closes the connection the backend is generating into.
+        let cancel = poorai_provider::Cancel::new();
+        let stream = match provider
+            .chat_cancellable(request.clone(), cancel.clone())
+            .await
+        {
             Ok(stream) => stream,
             Err(error) => {
                 if matches!(
@@ -2022,8 +2029,62 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                 return Err(error.to_string());
             }
         };
-        let reply = match poorai_provider::collect_reply(stream).await {
+        let collected = match tuning.turn_timeout {
+            Some(limit) => {
+                match tokio::time::timeout(limit, poorai_provider::collect_reply(stream)).await {
+                    Ok(collected) => collected,
+                    Err(_) => {
+                        cancel.cancel();
+                        Err(poorai_provider::ProviderError::Timeout {
+                            safe_context: format!("turn exceeded {} seconds", limit.as_secs()),
+                        })
+                    }
+                }
+            }
+            None => poorai_provider::collect_reply(stream).await,
+        };
+        let reply = match collected {
             Ok(reply) => reply,
+            // Output the backend could not parse is the deployment writing
+            // badly, not the backend failing. It belongs where a malformed
+            // call belongs: told to the deployment, counted against the same
+            // bound, and retried -- not ending a sixty-action run over one bad
+            // generation.
+            Err(poorai_provider::ProviderError::ModelOutput { safe_context }) => {
+                store
+                    .append_event(
+                        Some(run_id),
+                        &poorai_domain::RunEvent::ActionMalformed {
+                            step,
+                            problem: safe_context.clone(),
+                        },
+                    )
+                    .map_err(|e| e.to_string())?;
+                malformed += 1;
+                if malformed > malformed_limit {
+                    persist_failure(
+                        store,
+                        run_id,
+                        &mut task_state,
+                        "repeatedly malformed tool calls",
+                        serde_json::json!({"problem": safe_context}),
+                    )?;
+                    return Err(format!(
+                        "{malformed_limit} unparsable replies in a row: {safe_context}"
+                    ));
+                }
+                request.messages.push(poorai_domain::ChatMessage {
+                    role: "tool".into(),
+                    content: serde_json::json!({
+                        "unparsable_reply": format!(
+                            "The backend could not parse your last reply: {safe_context}. Emit exactly one native tool call and nothing else."
+                        )
+                    })
+                    .to_string(),
+                    ..Default::default()
+                });
+                continue;
+            }
             Err(error) => {
                 if matches!(
                     &error,
@@ -2079,6 +2140,23 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
         // was the difference between a usable agent and an unusable one, and
         // the audit could only say how long it took, never whether the time
         // went into reading a long prompt or generating a long answer.
+        // Asked after the turn, when the machine has just done the work the
+        // sample is about. Pressure read once at admission says nothing about
+        // a run that starts on a quiet machine and ends on a saturated one --
+        // which is usually the difference that explains its timings.
+        if let Some(host) = &tuning.host {
+            let pressure = host.memory_pressure().await;
+            store
+                .append_event(
+                    Some(run_id),
+                    &poorai_domain::RunEvent::ResourceSampled {
+                        step,
+                        turn: turns,
+                        pressure,
+                    },
+                )
+                .map_err(|e| e.to_string())?;
+        }
         let delivery = prompt_delivery(
             estimated_tokens(&request.messages),
             request.context_tokens,

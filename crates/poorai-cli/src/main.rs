@@ -258,6 +258,9 @@ fn exit_code(category: &str) -> i32 {
         "invalid_input" | "conflict" | "missing_evidence" | "incompatible_model"
         | "calibration" => 2,
         "policy_denied" => 3,
+        // The deployment produced output the backend could not parse: the work
+        // failed, not the infrastructure.
+        "model_output" => 1,
         // Busy is the host refusing to run two models at once, which from the
         // caller's side is the backend being unavailable to it right now.
         "provider_unavailable"
@@ -3213,6 +3216,7 @@ fn provider_error(e: poorai_provider::ProviderError) -> SafeError {
         poorai_provider::ProviderError::Protocol { .. } => "provider_protocol",
         poorai_provider::ProviderError::Cancelled => "provider_cancelled",
         poorai_provider::ProviderError::Truncated { .. } => "provider_truncated",
+        poorai_provider::ProviderError::ModelOutput { .. } => "model_output",
     };
     SafeError {
         category,

@@ -30,6 +30,18 @@ pub enum ProviderError {
     /// as the first is how a truncated reply becomes a recorded result.
     #[error("provider reply was truncated: {safe_context}")]
     Truncated { safe_context: String },
+    /// The backend could not parse what the model produced.
+    ///
+    /// Distinct from `Protocol`, which is the transport or the backend
+    /// misbehaving. This is the deployment emitting a tool call the backend's
+    /// own template parser rejects -- measured: `XML syntax error on line 3:
+    /// unexpected end element </function>` returned in a 200 body.
+    ///
+    /// It is the same class of thing as a malformed tool call, and belongs in
+    /// the same place: told to the deployment and retried under the same
+    /// bound, not ending a sixty-action run over one bad generation.
+    #[error("deployment produced output the backend could not parse: {safe_context}")]
+    ModelOutput { safe_context: String },
 }
 
 /// A handle that stops a reply in progress.

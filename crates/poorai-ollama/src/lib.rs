@@ -345,6 +345,23 @@ fn classify_backend_error(message: &str, fallback: String) -> ProviderError {
             ),
         };
     }
+    // A parse failure of what the model produced, rather than of the
+    // transport. Ollama's own template parser rejecting a tool call is the
+    // deployment writing badly, not the backend misbehaving, and it belongs
+    // where a malformed call belongs.
+    if [
+        "syntax error",
+        "unexpected end element",
+        "error parsing tool",
+        "invalid tool call",
+    ]
+    .iter()
+    .any(|needle| lowered.contains(needle))
+    {
+        return ProviderError::ModelOutput {
+            safe_context: elide(message),
+        };
+    }
     // The backend's own words, carried rather than discarded. Classifying an
     // error and then throwing away what it said leaves a run that failed for a
     // knowable reason reported as "a protocol error" -- which is the shape of
