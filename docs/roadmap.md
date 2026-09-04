@@ -55,6 +55,11 @@ open now, and each says what would settle it rather than when it will happen.
 - **No code reads the thresholds.** Every verdict in `thresholds.md` was
   computed by hand from a report. That is the same shape as the counter that
   was initialised and never incremented: nothing fails loudly when it drifts.
+- **A threshold of 1.0 can be falsified but never met**, for the same reason a
+  threshold of 0 can. A Wilson lower bound is below 1 for any finite run of
+  successes, so `hidden verification` and `scope respected` are reported as
+  `not falsified` with the bound their clean runs establish. Falsification is
+  unaffected, which is why the verdict below stands.
 - **A declared completion was rejected by the hidden verifier.** `bugfix-parse`
   at seed 2: the visible test went green, the loop verified it, and the hidden
   check disagreed. Under the interval rule 9 of 10 against a bar of 1.0 is
