@@ -142,3 +142,31 @@ Measured now, the two corpora disagree sharply. `m5-frozen-v1` produces no tool 
 **The bar is not being moved to fit the result.** Two things have to happen first, in this order. The nine failures have to be read — they are `allowed_failure`, `timeout`, `io_failure` or `protocol_failure`, and a non-zero exit from a test command the agent ran on purpose is a different thing from a tool that broke. Then the bar is re-derived from a pilot on the corpus it will judge, which is what the rule always said and could not do while the pilot's number was arithmetic.
 
 Until then this metric has no verdict, and saying so is the point: a threshold met against a corpus that cannot exercise it was never evidence.
+
+## Amendment — 2026-09-04: what a tool failure is
+
+The note above left two things to do before the failed threshold could be judged, in order: read the nine failures by class, then re-derive the bar from a pilot on the corpus it judges. The first is done and it changes the second.
+
+**The nine could not be read.** An evaluation destroys its workspace, and with it the event store the classifications live in; the repository store holds ten events, none of them a tool action. So the campaign that measured 0.214 cannot say what it measured, and no amount of reasoning recovers it. The report now carries `tool_failures_by_class` for exactly this reason — a count that cannot be acted on a day later is not a measurement, it is a number.
+
+**`external-v1` was re-run at the same corpus revision with the classes recorded.** Every failure it produced was `allowed_failure`: a command the deployment ran on purpose that exited non-zero. Zero timeouts, zero I/O failures, zero protocol failures.
+
+| | Attempts | Failures | Rate |
+|---|---|---|---|
+| All failed attempts (`tool_failure_rate`) | 34 | 3 | 0.088 `[0.030, 0.230]` |
+| Tool broke (`harness_failure_rate`) | 34 | 0 | 0.000 `[0.000, 0.102]` |
+| Command exited non-zero (`command_failure_rate`) | 34 | 3 | 0.088 `[0.030, 0.230]` |
+
+**The metric is split; the bar is not moved.** The derivation rule already says "denials are not tool failures — a denial is the policy working." A red test is the same kind of thing seen from the other side: on a repair corpus the first competent act is to run the failing test, so a bar that counts it penalises a run for looking before it edits and rewards one that edits blind. `harness_failure_rate` counts `timeout`, `io_failure`, `protocol_failure` and `unclassified`, and **the ≤ 0.10 bar attaches to it from this date.** `tool_failure_rate` keeps its old definition and is reported without a bar, so a number written under that name in an earlier campaign still says what it said then.
+
+This is a narrowing, and a narrowing makes a threshold easier to meet. Three things bound that:
+
+- The bar's value is unchanged. Only what it counts is.
+- An artifact with no breakdown has all its failures counted as harness failures. The old 0.214 therefore still reads 0.214 under the new metric; the redefinition does not reach backwards to improve a result it cannot read.
+- It does not rescue the result. **0 of 34 gives an interval of `[0.000, 0.102]`, whose upper bound is above the bar, so under the interval rule this is `inconclusive` — not `met`.** Thirty-five clean attempts would have cleared it. The campaign produced thirty-four.
+
+**What the second step still needs.** Re-deriving the bar from a pilot on `external-v1` is not yet possible and this amendment does not do it: a pilot must be disjoint from the corpus it calibrates, and `external-v1` has four tasks, one of which the provider failed on. Four tasks cannot be split into a pilot and an evaluation. The bar stays at its current value, now attached to the right quantity, until an external corpus large enough to be split exists — which makes corpus size a prerequisite for that derivation rather than an improvement to it.
+
+**A provider failure at 1 of 4.** `external-slugify-acronyms` never ran: zero turns, zero attempts. That is a quarter of the corpus, `[0.046, 0.699]`, and it is unmeasured — a rate this wide says only that it is not obviously rare.
+
+**The bar is judged by hand.** No code reads this document. Every verdict above was computed and written by a person or an agent reading a report, which is the same failure mode as a counter that was never incremented: nothing fails loudly when it drifts. Recorded as open, not fixed here.

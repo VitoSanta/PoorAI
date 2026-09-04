@@ -21,7 +21,7 @@ manifest; do not edit the table. CI fails if they drift apart.
 | M2 Calibration | **two deployments calibrated under the occupancy ladder** | The ladder fills the tier, samples pressure after the reply, and records the occupancy the backend reports with whether a needle placed at the start came back. qwen3.8:27b-mlx across 2048-65536: occupancy 0.90-0.95, needle 3/3 at every tier, generation falling from 18.3 to 12.6 tokens per second; 131072 did not answer within the measurement's own timeout and was refused as a stable point. granite4.2:30b-q6_K across 8192-65536: needle 3/3 at every tier and 6.0 falling to 4.2 tokens per second, about a third of qwen's rate at the same occupancy. | Five deployments still carry no profile under this harness. Linux and Windows host probes. |
 | M3 Safe execution | **complete on macOS** | Gitignore semantics through one walker shared by the index and the tools; reads denied outside the workspace with a measured allowlist; writes confined; network denied without a grant; bounded incremental I/O with process-group kill; every attempt audited allowed or denied, in five outcome classes; corpus preparation and external verifiers under their own bounded policy; services owned by a supervisor that kills them on drop. | Linux and Windows adapters. Under --provision an arbitrary executable with a network can still read the system and toolchain paths; that wants a separate process or VM. |
 | M4 Agent task loop | **complete** | Baseline, typed action, policy-controlled tool, audit, narrow verification, classified recovery, escalation at completion, terminal. Every transition persisted. Completion refused where nothing verifies, and judged against the baseline rather than a green suite. Non-progress detected by what changed rather than by what was proposed. A plan is a graph whose claims are checked where a check exists. Run state is replayable from the log. | The loop does not yet start from a replayed state; the state is recoverable and surfaced, and resuming into it is the step left. |
-| M5 Evaluation | **one campaign stands** | m5-frozen-v1 over 16 runs and external-v1 over 4, on qwen3.8:27b-mlx, with per-run cost folded from the events and a validated EvaluationRun beside each report. Every metric carries a Wilson interval. | The challenger and five controls are unmeasured. The tool-failure threshold was derived from a rate that was never measured and now fails on real repositories; it has no verdict until the nine observed failures are read and the bar is re-derived on the corpus it judges. |
+| M5 Evaluation | **one campaign stands** | m5-frozen-v1 over 16 runs and external-v1 over 4, on qwen3.8:27b-mlx, with per-run cost folded from the events and a validated EvaluationRun beside each report. Every metric carries a Wilson interval. | The challenger and five controls are unmeasured. The tool-failure metric is split: no broken tools in 34 attempts on the re-run, every failure a command exiting non-zero. The bar now attaches to `harness_failure_rate` and reads inconclusive at `[0.000, 0.102]`, one clean attempt short of clearing. |
 | M6 Beta | **not ready** | The thresholds were met by two deployments on a harness that has since changed under three of the metrics it reported. | Read the nine tool failures and re-derive that bar. Measure the challenger. Decide how many trials constitute a result. Neither corpus exercises a large context: the peak prompt was 12,080 tokens against 32,768 authorised, so nothing here tests what the calibration measured. Usability beyond --json. |
 
 Campaign evidence: m5-frozen-v1 (16 runs) and external-v1 (4 runs) on qwen3.8:27b-mlx, 2026-09-04, under calibration-harness-v4; granite4.2:30b-q6_K calibrated but not yet evaluated; five controls unmeasured.
@@ -37,12 +37,28 @@ open now, and each says what would settle it rather than when it will happen.
 - **Only one deployment has been measured.** `qwen3.8:27b-mlx` has a
   calibration under the occupancy ladder and one campaign. The challenger and
   the five controls have neither, so nothing here compares deployments.
-- **The tool-failure threshold has no verdict.** It was derived from a pilot
-  rate of 0.000 that was never measured, and the metric now reads 0.214 on real
-  repositories with the whole interval above the bar. The nine observed
-  failures have to be read — a non-zero exit from a test the agent ran on
-  purpose is not a broken tool — and the bar re-derived on a corpus that can
-  produce them. See [thresholds.md](thresholds.md).
+- **The tool-failure threshold is inconclusive, one attempt short.** The nine
+  failures were read: `external-v1`, re-run at the same corpus revision with
+  the classes recorded, produced no broken tools at all — every failure was a
+  command the deployment ran on purpose exiting non-zero. The metric is now
+  split, and the bar attaches to `harness_failure_rate`, which measured 0 of
+  34. Its interval is `[0.000, 0.102]`, whose upper bound is above the 0.10
+  bar, so it is inconclusive rather than met; 35 clean attempts would have
+  cleared it. See the 2026-09-04 amendment in [thresholds.md](thresholds.md).
+- **The bar cannot be re-derived on the corpus it judges.** A pilot has to be
+  disjoint from what it calibrates, and `external-v1` has four tasks — one of
+  which the provider failed on. So corpus size, not the derivation rule, is
+  what blocks it.
+- **A quarter of `external-v1` never ran.** One task of four ended in a
+  provider failure with zero turns, `[0.046, 0.699]`. An interval that wide
+  says only that it is not obviously rare.
+- **No code reads the thresholds.** Every verdict in `thresholds.md` was
+  computed by hand from a report. That is the same shape as the counter that
+  was initialised and never incremented: nothing fails loudly when it drifts.
+- **A campaign's classifications die with its workspace.** Reports now carry
+  `tool_failures_by_class`, which is why the failures above could be read at
+  all — but only for campaigns run after it existed. Anything measured before
+  cannot be re-examined, only re-run.
 - **How many trials constitute a result is unstated.** No threshold says, and a
   single trial of four tasks gives intervals wide enough to be worth little.
 

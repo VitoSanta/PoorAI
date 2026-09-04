@@ -2,7 +2,7 @@
 
 An `EvaluationRun` binds corpus revision, task IDs, harness revision, model/deployment, hardware/snapshot, execution strategy/profile, seeds, time limits, and raw artifacts.
 
-Primary metrics: resolved-task rate, deterministic verification pass rate, regression rate, time-to-verified-result, tool failure rate, intervention count, context/backend failures, and resource footprint. Report median and percentile latency; for proportions report counts and confidence intervals. Never compare runs with changed corpus or verifier without flagging it.
+Primary metrics: resolved-task rate, deterministic verification pass rate, regression rate, time-to-verified-result, harness failure rate, intervention count, context/backend failures, and resource footprint. Report median and percentile latency; for proportions report counts and confidence intervals. Never compare runs with changed corpus or verifier without flagging it.
 
 Promotion requires a predeclared comparison, identical environment where practical, and no regression in safety/verification metrics. Qualitative traces diagnose failures but do not substitute for metrics.
 
@@ -29,6 +29,7 @@ A run now writes a validated `EvaluationRun` beside its report, carrying corpus 
 **The campaigns in the roadmap predate three fixes that touch what they measured, and have to be re-run before they are quoted again.**
 
 - `tool_failures` was initialised to zero and never incremented. "Zero tool failures in 261 attempts" was arithmetic, not a measurement. A failed attempt is now audited as `failed` distinctly from a policy denial and is counted.
+- A failure count alone could not be acted on. `external-v1` measured nine and, a day later, could not say whether they were tools breaking or commands the agent ran on purpose exiting non-zero — the workspaces, and the event stores in them, do not survive the run. Reports now carry `tool_failures_by_class`, and the rate is split three ways: `tool_failure_rate` unchanged and without a bar, `harness_failure_rate` for tools that broke, which is what the threshold judges, and `command_failure_rate` for red tests, reported and deliberately not bounded.
 - The context sent to the backend was the model profile's static default rather than the calibrated one, so a campaign describing a 32768-token profile may have been running at 262144.
 - A task in a workspace with no checks completed successfully. Under the current rule it fails.
 

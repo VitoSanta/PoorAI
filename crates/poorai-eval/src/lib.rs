@@ -734,6 +734,38 @@ pub struct TaskOutcome {
 }
 
 impl TaskOutcome {
+    /// Classes that mean a tool broke rather than reported.
+    ///
+    /// A run that executes the failing test, reads the compiler, and fixes the
+    /// bug produces `allowed_failure` entries as a matter of course -- that is
+    /// the work. The other classes are the harness failing to do what it was
+    /// asked, and only they belong under a threshold.
+    const HARNESS_CLASSES: [&'static str; 4] =
+        ["timeout", "io_failure", "protocol_failure", "unclassified"];
+
+    /// Failed attempts where the tool itself was at fault.
+    ///
+    /// An artifact written before the classes existed carries no breakdown at
+    /// all. Those failures count here in full rather than being discarded: the
+    /// conservative reading of an unclassified failure is that it was real, and
+    /// a redefinition that quietly improves old numbers is worse than one that
+    /// cannot read them.
+    pub fn harness_failures(&self) -> usize {
+        if self.tool_failures > 0 && self.tool_failures_by_class.is_empty() {
+            return self.tool_failures;
+        }
+        self.tool_failures_by_class
+            .iter()
+            .filter(|(class, _)| Self::HARNESS_CLASSES.contains(&class.as_str()))
+            .map(|(_, count)| count)
+            .sum()
+    }
+
+    /// Failed attempts that were commands running and exiting non-zero.
+    pub fn command_failures(&self) -> usize {
+        self.tool_failures.saturating_sub(self.harness_failures())
+    }
+
     /// A task is resolved when the agent declared it done, the loop verified
     /// it, the hidden check agrees, and nothing outside the allowed files
     /// changed.
@@ -961,9 +993,38 @@ impl SuiteReport {
                 measured.iter().filter(|o| o.violation.is_some()).count(),
                 n,
             ),
+            // Kept at its original meaning -- every failed attempt, whatever
+            // the reason -- so that a number reported under this name in an
+            // earlier campaign still says what it said then. It carries no
+            // bar. Redefining a metric under a fixed name is a way of moving a
+            // threshold without writing an amendment.
             metric(
                 "tool_failure_rate",
                 measured.iter().map(|o| o.tool_failures).sum(),
+                measured.iter().map(|o| o.tool_attempts).sum(),
+            ),
+            // The share of attempts where a tool broke: it timed out, the
+            // filesystem refused it, or the call never formed a legal request.
+            //
+            // This is the harness's own health, and it is the thing a bar on
+            // "tool failures" was always meant to bound. It excludes a command
+            // that ran and exited non-zero, for the same reason the derivation
+            // rule already excludes a policy denial: the denial is the policy
+            // working, and the red test is the task working.
+            metric(
+                "harness_failure_rate",
+                measured.iter().map(|o| o.harness_failures()).sum(),
+                measured.iter().map(|o| o.tool_attempts).sum(),
+            ),
+            // Commands the deployment ran on purpose that exited non-zero.
+            //
+            // Reported without a bar, and deliberately: on a repair corpus the
+            // first thing a competent run does is execute the failing test, so
+            // driving this number down would reward a deployment that never
+            // looks. It is diagnostic, not a target.
+            metric(
+                "command_failure_rate",
+                measured.iter().map(|o| o.command_failures()).sum(),
                 measured.iter().map(|o| o.tool_attempts).sum(),
             ),
             // The share of turns the deployment could not form a usable call

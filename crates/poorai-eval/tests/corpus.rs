@@ -646,3 +646,52 @@ fn the_malformed_call_rate_is_a_first_class_metric() {
     // so it never becomes an action and would be invisible in an action rate.
     assert!((rate.rate - 0.1).abs() < 1e-9, "{rate:?}");
 }
+
+/// A command exiting non-zero is not a tool breaking.
+///
+/// Measured on `external-v1` after the classes were recorded: every failure the
+/// campaign produced was `allowed_failure`. The bar of 0.10 that this corpus
+/// "failed" at 9/42 was counting the agent running the failing test -- which on
+/// a repair corpus is the first thing a competent run does.
+#[test]
+fn a_red_test_is_not_a_harness_failure() {
+    let mut outcome = outcome(TaskKind::Bugfix);
+    outcome.tool_attempts = 10;
+    outcome.tool_failures = 4;
+    outcome.tool_failures_by_class = BTreeMap::from([
+        ("allowed_failure".to_string(), 3usize),
+        ("io_failure".to_string(), 1usize),
+    ]);
+
+    assert_eq!(outcome.harness_failures(), 1);
+    assert_eq!(outcome.command_failures(), 3);
+
+    let report = report_of(vec![outcome]);
+    let rate = |name: &str| {
+        report
+            .metrics()
+            .into_iter()
+            .find(|m| m.name == name)
+            .unwrap_or_else(|| panic!("{name} not reported"))
+    };
+    // The old name keeps the old meaning. A metric that changes what it counts
+    // while keeping its name moves a threshold without amending it.
+    assert_eq!(rate("tool_failure_rate").successes, 4);
+    assert_eq!(rate("harness_failure_rate").successes, 1);
+    assert_eq!(rate("command_failure_rate").successes, 3);
+}
+
+/// An artifact from before the classes existed carries no breakdown, and the
+/// conservative reading is that its failures were real. A redefinition that
+/// silently improves numbers it cannot actually read is worse than one that
+/// admits it cannot read them.
+#[test]
+fn an_unclassified_failure_counts_against_the_harness() {
+    let mut outcome = outcome(TaskKind::Bugfix);
+    outcome.tool_attempts = 42;
+    outcome.tool_failures = 9;
+    outcome.tool_failures_by_class = BTreeMap::new();
+
+    assert_eq!(outcome.harness_failures(), 9);
+    assert_eq!(outcome.command_failures(), 0);
+}
