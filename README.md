@@ -2,6 +2,12 @@
 
 **Experimental macOS-first local coding agent for Ollama. Public alpha, not production-ready.**
 
+[![CI](https://github.com/VitoSanta/PoorAI/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/VitoSanta/PoorAI/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-2f718e.svg)](LICENSE)
+[![Status: public alpha](https://img.shields.io/badge/status-public%20alpha-d97706.svg)](#status)
+
+[Documentation](docs/architecture.md) | [Roadmap](docs/roadmap.md) | [Security](SECURITY.md) | [Contributing](CONTRIBUTING.md)
+
 poorAI runs software-engineering tasks against a repository using an
 open-weight model served locally by Ollama. It is written in Rust, and it will
 not start a task until it has measured the machine and the model it is about to
@@ -53,7 +59,7 @@ reporting a success it cannot support.
 ## Requirements
 
 - macOS on Apple silicon. Other platforms build and test, but run unsandboxed.
-- Rust 1.90 or newer.
+- Rust 1.88 or newer (the workspace MSRV declared in `Cargo.toml`).
 - [Ollama](https://ollama.com) running locally with at least one model pulled.
 - Roughly 24 GB of free memory for a 30B model at a 32K context.
 
@@ -158,6 +164,13 @@ cannot be checked.
 `v0.1.0-alpha.1`. Milestone status is generated from
 [docs/milestones.json](docs/milestones.json); do not edit the table in the
 roadmap by hand.
+
+## Maintainer
+
+Built and maintained by [Vito Santanelli](https://github.com/VitoSanta).
+Use [GitHub Issues](https://github.com/VitoSanta/PoorAI/issues) for reproducible
+bug reports and feature proposals; report security concerns through
+[SECURITY.md](SECURITY.md).
 
 ## Licence
 
