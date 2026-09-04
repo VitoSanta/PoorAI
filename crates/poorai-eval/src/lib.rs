@@ -659,7 +659,35 @@ pub struct TaskOutcome {
     pub declared_complete: bool,
     /// The hidden verifier passed afterwards.
     pub hidden_verifier_passed: bool,
-    pub visible_verifier_passed: bool,
+    /// Whether the visible verifier passed **before the agent started**.
+    ///
+    /// It is the baseline, not a result: on a repair task it is expected to be
+    /// false, because the test is red and that is the bug. It was named
+    /// `visible_verifier_passed` and read, by anyone looking at a report, as an
+    /// outcome -- a completed task appeared to sit beside a failing check. The
+    /// alias keeps older artifacts readable, since the value they carry was
+    /// always this one.
+    #[serde(alias = "visible_verifier_passed")]
+    pub visible_verifier_passed_before: bool,
+    /// Whether the visible verifier passed **after the run**.
+    ///
+    /// Never recorded before: the field above was assigned once, at baseline,
+    /// and nothing measured the visible check at the end. So a report could not
+    /// answer the plainest question about a run -- whether the repository's own
+    /// test suite was green when it stopped.
+    #[serde(default)]
+    pub visible_verifier_passed_after: bool,
+    /// The files the agent left behind, when it declared a task complete and
+    /// the hidden verifier disagreed.
+    ///
+    /// That disagreement is the most informative outcome an evaluation
+    /// produces: the deployment satisfied the check it could see and not the
+    /// one it could not. The workspace is destroyed with the run, so without
+    /// this the report says a miss happened and nothing about what the miss
+    /// was. Retained only for those outcomes, and bounded -- this is evidence
+    /// about a failure, not a backup of the workspace.
+    #[serde(default)]
+    pub rejected_result: BTreeMap<String, String>,
     pub changed_files: Vec<String>,
     pub out_of_scope_changes: Vec<String>,
     pub tool_attempts: usize,

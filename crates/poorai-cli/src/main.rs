@@ -1492,7 +1492,9 @@ async fn evaluate_task(
         seed,
         declared_complete: false,
         hidden_verifier_passed: false,
-        visible_verifier_passed: false,
+        visible_verifier_passed_before: false,
+        visible_verifier_passed_after: false,
+        rejected_result: Default::default(),
         changed_files: vec![],
         out_of_scope_changes: vec![],
         tool_attempts: 0,
@@ -1579,7 +1581,7 @@ async fn evaluate_task(
     // Run the checks once before the agent starts, so anything the build
     // generates — a lockfile, a compiled index — is part of the baseline
     // rather than being scored as the agent's work.
-    outcome.visible_verifier_passed = run_verifier(&policy, &task.visible_verifier).await;
+    outcome.visible_verifier_passed_before = run_verifier(&policy, &task.visible_verifier).await;
     let before = poorai_eval::snapshot(&root).unwrap_or_default();
     let run_id = new_id();
     let request = poorai_domain::ModelRequest {
@@ -1730,12 +1732,51 @@ async fn evaluate_task(
     let edited = poorai_orchestrator::edited_paths(&store, run_id).unwrap_or_default();
     outcome.out_of_scope_changes =
         poorai_eval::out_of_scope_changes(task, &outcome.changed_files, &edited);
+    // The state the repository's own suite is actually in when the run stops.
+    // Measured before the hidden files land, so it is the check the agent
+    // could see, judged on the work it left.
+    outcome.visible_verifier_passed_after = run_verifier(&policy, &task.visible_verifier).await;
     // Hidden files land only now: the agent could not read, edit or anticipate
     // a check it never saw.
     if poorai_eval::materialise_hidden(task, &root).is_ok() {
         outcome.hidden_verifier_passed = run_verifier(&policy, &task.hidden_verifier).await;
     }
+    // A declared completion the hidden verifier rejects is the most
+    // informative outcome an evaluation produces, and until now it left no
+    // evidence: the workspace is deleted, so the report said a miss happened
+    // and nothing about what it was. The corpus holds the original of every
+    // allowed file, so keeping what the agent left is enough to read the
+    // change back.
+    if outcome.declared_complete && !outcome.hidden_verifier_passed {
+        outcome.rejected_result = retained_result(task, &root);
+    }
     outcome
+}
+
+/// What the agent left in the files it was allowed to touch.
+///
+/// Bounded per file: this is evidence about one failure, not a copy of the
+/// workspace, and a report that can grow without limit is a report nobody
+/// keeps. A file cut short says so, rather than appearing complete.
+fn retained_result(task: &poorai_eval::Task, root: &Path) -> BTreeMap<String, String> {
+    const LIMIT: usize = 8_192;
+    let mut retained = BTreeMap::new();
+    for relative in &task.allowed_files {
+        let Ok(content) = std::fs::read_to_string(root.join(relative)) else {
+            continue;
+        };
+        let content = if content.len() > LIMIT {
+            let mut cut = LIMIT;
+            while cut > 0 && !content.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            format!("{}\n... truncated at {LIMIT} bytes", &content[..cut])
+        } else {
+            content
+        };
+        retained.insert(relative.clone(), content);
+    }
+    retained
 }
 
 async fn run_verifier(policy: &poorai_tools::ToolPolicy, verifier: &poorai_eval::Verifier) -> bool {

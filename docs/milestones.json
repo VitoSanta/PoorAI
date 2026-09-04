@@ -2,7 +2,7 @@
   "schema_version": 1,
   "assessed_on": "2026-09-04",
   "note": "The single source of milestone status. The roadmap's status table is generated from this file by `scripts/milestones.py`; nothing else asserts a milestone's state. Written by hand, read by everything, so the three places that used to disagree cannot.",
-  "campaign_evidence": "m5-frozen-v1 (16 runs) and external-v1 (4 runs) on qwen3.8:27b-mlx, 2026-09-04, under calibration-harness-v4; granite4.2:30b-q6_K calibrated but not yet evaluated; five controls unmeasured",
+  "campaign_evidence": "m5-frozen-v1 (16 runs, twice) and external-v1 (4 runs, twice) on qwen3.8:27b-mlx, 2026-09-04, under calibration-harness-v4; granite4.2:30b-q6_K calibrated but not yet evaluated; five controls unmeasured",
   "milestones": [
     {
       "id": "M0",
@@ -42,16 +42,16 @@
     {
       "id": "M5",
       "name": "Evaluation",
-      "status": "one campaign stands",
-      "evidence": "m5-frozen-v1 over 16 runs and external-v1 over 4, on qwen3.8:27b-mlx, with per-run cost folded from the events and a validated EvaluationRun beside each report. Every metric carries a Wilson interval.",
-      "remaining": "The challenger and five controls are unmeasured. The tool-failure threshold was derived from a rate that was never measured and now fails on real repositories; it has no verdict until the nine observed failures are read and the bar is re-derived on the corpus it judges."
+      "status": "two campaigns stand",
+      "evidence": "m5-frozen-v1 over 16 runs twice and external-v1 over 4 twice, on qwen3.8:27b-mlx, with per-run cost folded from the events and a validated EvaluationRun beside each report. Every metric carries a Wilson interval. Failures are recorded by class and malformed calls by kind, so a campaign can be read after its workspaces are gone.",
+      "remaining": "The challenger and five controls are unmeasured. The tool-failure metric is split: no broken tools in 34 attempts, every failure a command exiting non-zero, and the bar now attaches to harness_failure_rate, which reads inconclusive at [0.000, 0.102] -- one clean attempt short of clearing. Hidden verification failed at 9 of 10 against a bar of 1.0, and the campaign predates the retention that would let that miss be read."
     },
     {
       "id": "M6",
       "name": "Beta",
       "status": "not ready",
       "evidence": "The thresholds were met by two deployments on a harness that has since changed under three of the metrics it reported.",
-      "remaining": "Read the nine tool failures and re-derive that bar. Measure the challenger. Decide how many trials constitute a result. Neither corpus exercises a large context: the peak prompt was 12,080 tokens against 32,768 authorised, so nothing here tests what the calibration measured. Usability beyond --json."
+      "remaining": "Re-run the campaign that missed the hidden-verification bar, now that a rejected completion leaves its work behind. Re-derive the tool-failure bar on a corpus large enough to split into a pilot and an evaluation; external-v1's four tasks are not. Measure the challenger. Neither corpus exercises a large context: the peak prompt was 12,080 tokens against 32,768 authorised, so nothing here tests what the calibration measured. Nothing reads thresholds.md, so every verdict in it is computed by hand. Usability beyond --json."
     }
   ]
 }

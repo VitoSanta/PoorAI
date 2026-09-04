@@ -21,10 +21,10 @@ manifest; do not edit the table. CI fails if they drift apart.
 | M2 Calibration | **two deployments calibrated under the occupancy ladder** | The ladder fills the tier, samples pressure after the reply, and records the occupancy the backend reports with whether a needle placed at the start came back. qwen3.8:27b-mlx across 2048-65536: occupancy 0.90-0.95, needle 3/3 at every tier, generation falling from 18.3 to 12.6 tokens per second; 131072 did not answer within the measurement's own timeout and was refused as a stable point. granite4.2:30b-q6_K across 8192-65536: needle 3/3 at every tier and 6.0 falling to 4.2 tokens per second, about a third of qwen's rate at the same occupancy. | Five deployments still carry no profile under this harness. Linux and Windows host probes. |
 | M3 Safe execution | **complete on macOS** | Gitignore semantics through one walker shared by the index and the tools; reads denied outside the workspace with a measured allowlist; writes confined; network denied without a grant; bounded incremental I/O with process-group kill; every attempt audited allowed or denied, in five outcome classes; corpus preparation and external verifiers under their own bounded policy; services owned by a supervisor that kills them on drop. | Linux and Windows adapters. Under --provision an arbitrary executable with a network can still read the system and toolchain paths; that wants a separate process or VM. |
 | M4 Agent task loop | **complete** | Baseline, typed action, policy-controlled tool, audit, narrow verification, classified recovery, escalation at completion, terminal. Every transition persisted. Completion refused where nothing verifies, and judged against the baseline rather than a green suite. Non-progress detected by what changed rather than by what was proposed. A plan is a graph whose claims are checked where a check exists. Run state is replayable from the log. | The loop does not yet start from a replayed state; the state is recoverable and surfaced, and resuming into it is the step left. |
-| M5 Evaluation | **one campaign stands** | m5-frozen-v1 over 16 runs and external-v1 over 4, on qwen3.8:27b-mlx, with per-run cost folded from the events and a validated EvaluationRun beside each report. Every metric carries a Wilson interval. | The challenger and five controls are unmeasured. The tool-failure metric is split: no broken tools in 34 attempts on the re-run, every failure a command exiting non-zero. The bar now attaches to `harness_failure_rate` and reads inconclusive at `[0.000, 0.102]`, one clean attempt short of clearing. |
-| M6 Beta | **not ready** | The thresholds were met by two deployments on a harness that has since changed under three of the metrics it reported. | Read the nine tool failures and re-derive that bar. Measure the challenger. Decide how many trials constitute a result. Neither corpus exercises a large context: the peak prompt was 12,080 tokens against 32,768 authorised, so nothing here tests what the calibration measured. Usability beyond --json. |
+| M5 Evaluation | **two campaigns stand** | m5-frozen-v1 over 16 runs twice and external-v1 over 4 twice, on qwen3.8:27b-mlx, with per-run cost folded from the events and a validated EvaluationRun beside each report. Every metric carries a Wilson interval. Failures are recorded by class and malformed calls by kind, so a campaign can be read after its workspaces are gone. | The challenger and five controls are unmeasured. The tool-failure metric is split: no broken tools in 34 attempts, every failure a command exiting non-zero, and the bar now attaches to harness_failure_rate, which reads inconclusive at [0.000, 0.102] -- one clean attempt short of clearing. Hidden verification failed at 9 of 10 against a bar of 1.0, and the campaign predates the retention that would let that miss be read. |
+| M6 Beta | **not ready** | The thresholds were met by two deployments on a harness that has since changed under three of the metrics it reported. | Re-run the campaign that missed the hidden-verification bar, now that a rejected completion leaves its work behind. Re-derive the tool-failure bar on a corpus large enough to split into a pilot and an evaluation; external-v1's four tasks are not. Measure the challenger. Neither corpus exercises a large context: the peak prompt was 12,080 tokens against 32,768 authorised, so nothing here tests what the calibration measured. Nothing reads thresholds.md, so every verdict in it is computed by hand. Usability beyond --json. |
 
-Campaign evidence: m5-frozen-v1 (16 runs) and external-v1 (4 runs) on qwen3.8:27b-mlx, 2026-09-04, under calibration-harness-v4; granite4.2:30b-q6_K calibrated but not yet evaluated; five controls unmeasured.
+Campaign evidence: m5-frozen-v1 (16 runs, twice) and external-v1 (4 runs, twice) on qwen3.8:27b-mlx, 2026-09-04, under calibration-harness-v4; granite4.2:30b-q6_K calibrated but not yet evaluated; five controls unmeasured.
 <!-- /generated:milestones -->
 
 ## What remains
@@ -55,11 +55,18 @@ open now, and each says what would settle it rather than when it will happen.
 - **No code reads the thresholds.** Every verdict in `thresholds.md` was
   computed by hand from a report. That is the same shape as the counter that
   was initialised and never incremented: nothing fails loudly when it drifts.
-- **One turn in five produces no usable call, and nothing is known about why.**
-  24% of turns on `m5-frozen-v1` and 19% on `external-v1`. It is now reported
-  as `malformed_call_rate`, and each occurrence names its fault, but no
-  campaign has yet been run with the kinds recorded — so the distribution is
-  unmeasured and no fix can be chosen from it.
+- **A declared completion was rejected by the hidden verifier.** `bugfix-parse`
+  at seed 2: the visible test went green, the loop verified it, and the hidden
+  check disagreed. Under the interval rule 9 of 10 against a bar of 1.0 is
+  `failed`. The specific defect cannot be read — the campaign predates the
+  retention that now keeps the agent's work for exactly these outcomes — so it
+  needs a re-run before anything can be concluded about it.
+- **Malformed calls are `multiple_calls` and `no_tool_call`, evenly.** Six of
+  fifty turns, three each, and zero of every other kind. The deployment is not
+  misunderstanding the schemas it was given: it is emitting several calls in
+  one turn, which the loop refuses whole, or answering in prose instead of
+  acting. Whether the loop should take the first of several calls rather than
+  discard them all is an open design question, not a defect.
 - **The capability probe overstates the action channel.** It records
   `structured_tools` as reliable from three trials of a trivial call. Three
   trials cannot predict a fifth of real turns being unusable, and the probe's

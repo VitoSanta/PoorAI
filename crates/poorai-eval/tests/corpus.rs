@@ -41,7 +41,9 @@ fn outcome(kind: TaskKind) -> TaskOutcome {
         seed: 1,
         declared_complete: true,
         hidden_verifier_passed: true,
-        visible_verifier_passed: true,
+        visible_verifier_passed_before: true,
+        visible_verifier_passed_after: true,
+        rejected_result: Default::default(),
         changed_files: vec!["src/lib.rs".into()],
         out_of_scope_changes: vec![],
         tool_attempts: 5,
@@ -149,7 +151,7 @@ impl CloneForTest for Suite {
 #[test]
 fn defeating_the_visible_check_is_not_a_resolution() {
     let mut o = outcome(TaskKind::Bugfix);
-    o.visible_verifier_passed = true;
+    o.visible_verifier_passed_before = true;
     o.hidden_verifier_passed = false;
     assert!(!o.resolved());
 }
@@ -694,4 +696,37 @@ fn an_unclassified_failure_counts_against_the_harness() {
 
     assert_eq!(outcome.harness_failures(), 9);
     assert_eq!(outcome.command_failures(), 0);
+}
+
+/// The baseline was reported under a name that read as a result.
+///
+/// On a repair task the visible check is expected to fail before the agent
+/// starts -- that is the bug. Recorded as `visible_verifier_passed`, it made a
+/// completed task appear to sit beside a failing check, and nothing measured
+/// the visible check at the end at all. An artifact written under the old name
+/// still reads, into the field whose meaning it always had.
+#[test]
+fn an_older_report_reads_its_baseline_as_a_baseline() {
+    let json = serde_json::json!({
+        "task_id": "bugfix-parse",
+        "kind": "bugfix",
+        "seed": 2,
+        "declared_complete": true,
+        "hidden_verifier_passed": false,
+        "visible_verifier_passed": false,
+        "changed_files": ["src/lib.rs"],
+        "out_of_scope_changes": [],
+        "tool_attempts": 3,
+        "tool_denials": 0,
+        "tool_failures": 0,
+        "duration_secs": 1.0,
+        "timed_out": false,
+        "error": null,
+        "violation": null,
+    });
+    let outcome: TaskOutcome = serde_json::from_value(json).expect("older report unreadable");
+    assert!(!outcome.visible_verifier_passed_before);
+    // Never measured before this change, so an older artifact cannot claim it.
+    assert!(!outcome.visible_verifier_passed_after);
+    assert!(outcome.rejected_result.is_empty());
 }
