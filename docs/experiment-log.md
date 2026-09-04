@@ -685,3 +685,26 @@ Then: the argument coercion made `"run build"` one argument with a space, so npm
 Writes went from none to nine; reads fell by two thirds. The build went from not running at all to producing real TypeScript errors. And the run still does not finish: fifteen re-reads were flagged — the result saying plainly that the file had not changed since it was last shown — and the deployment re-read anyway.
 
 **That is where the harness's part of this ends and a different question begins.** The honest reading is not "poorAI cannot do this": it is that this deployment reads compulsively and acts rarely on a fifteen-file task, and separating the two requires running the same task on another of the seven. Until that is done, the finding is about one deployment and says nothing about the rest.
+
+### The challenger's ladder — 2026-09-04
+
+`granite4.2:30b-q6_K`, calibrated under the occupancy ladder so it is comparable
+with the primary rather than with a number measured a different way.
+
+| tier | tokens/s | occupancy | prompt tokens | needle |
+|---|---:|---:|---:|:---:|
+| 8192 | 6.0 | 0.82 | 6,747 | 3/3 |
+| 32768 | 4.8 | 0.84 | 27,416 | 3/3 |
+| 65536 | 4.2 | 0.85 | 55,506 | 3/3 |
+
+Every tier is a stable point and the needle came back at all three, so it holds
+a full context as reliably as the primary does. It generates at about a third of
+the rate: 4.2 tokens per second against qwen's 12.6 at 65536.
+
+Its `context_boundary` is `rejected` rather than `limit_not_enforced` — a typed
+refusal when a prompt exceeds the configured context, which is the better of the
+three contracts measured across the seven deployments, since the run learns that
+the context was dropped instead of having to infer it.
+
+Nothing has been evaluated on it. A calibration says what a deployment costs,
+not what it can do.

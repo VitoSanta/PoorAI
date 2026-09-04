@@ -2,7 +2,7 @@
   "schema_version": 1,
   "assessed_on": "2026-09-04",
   "note": "The single source of milestone status. The roadmap's status table is generated from this file by `scripts/milestones.py`; nothing else asserts a milestone's state. Written by hand, read by everything, so the three places that used to disagree cannot.",
-  "campaign_evidence": "m5-frozen-v1 (16 runs) and external-v1 (4 runs) on qwen3.8:27b-mlx, 2026-09-04, under calibration-harness-v4; the challenger and the five controls are unmeasured",
+  "campaign_evidence": "m5-frozen-v1 (16 runs) and external-v1 (4 runs) on qwen3.8:27b-mlx, 2026-09-04, under calibration-harness-v4; granite4.2:30b-q6_K calibrated but not yet evaluated; five controls unmeasured",
   "milestones": [
     {
       "id": "M0",
@@ -21,9 +21,9 @@
     {
       "id": "M2",
       "name": "Calibration",
-      "status": "one deployment calibrated under the occupancy ladder",
-      "evidence": "The ladder fills the tier, samples pressure after the reply, and records the occupancy the backend reports with whether a needle placed at the start came back. Measured on qwen3.8:27b-mlx across 2048-32768: occupancy 0.90-0.94, needle recalled 3/3 at every tier, and generation falling from 18.3 to 15.4 tokens per second -- a 16% cost the allocation ladder could not see.",
-      "remaining": "Six deployments still carry no profile under this harness. Linux and Windows host probes."
+      "status": "two deployments calibrated under the occupancy ladder",
+      "evidence": "The ladder fills the tier, samples pressure after the reply, and records the occupancy the backend reports with whether a needle placed at the start came back. qwen3.8:27b-mlx across 2048-65536: occupancy 0.90-0.95, needle 3/3 at every tier, generation falling from 18.3 to 12.6 tokens per second; 131072 did not answer within the measurement's own timeout and was refused as a stable point. granite4.2:30b-q6_K across 8192-65536: needle 3/3 at every tier and 6.0 falling to 4.2 tokens per second, about a third of qwen's rate at the same occupancy.",
+      "remaining": "Five deployments still carry no profile under this harness. Linux and Windows host probes."
     },
     {
       "id": "M3",
