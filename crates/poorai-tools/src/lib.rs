@@ -651,8 +651,28 @@ impl ToolPolicy {
         // Denying the data still closes what matters: contents are unreadable
         // and a directory cannot be listed, so a command can neither read the
         // user's files nor enumerate them.
+        // poorAI's own state, denied to the agent's commands.
+        //
+        // `list_tree` and `search` exclude it through the shared walker, but a
+        // command does not go through that walker: `ls -la` and `find` see the
+        // event log, the index artifacts and the calibration records, and a
+        // real run spent a fifth of its budget exploring them before it had
+        // installed anything. The agent's workspace is the project, not the
+        // harness's records of the project.
+        //
+        // The scratch directory is deliberately not denied: it is the child's
+        // own HOME and TMPDIR, and denying it would break the tools that were
+        // pointed at it.
+        let state = std::path::Path::new(root).join(POLICY_EXCLUSIONS[3]);
+        // `file-read-data`, not `file-read*`. Measured: seatbelt resolves the
+        // last matching rule *per operation name*, so a `file-read*` denial
+        // after a `file-read-data` allowance does not override it and the path
+        // stays readable. The two look interchangeable and are not.
+        let harness_state = quotable(&state)
+            .map(|state| format!("(deny file-read-data {state})"))
+            .unwrap_or_default();
         let reads = format!(
-            "(deny file-read-data)(allow file-read-data {})",
+            "(deny file-read-data)(allow file-read-data {}){harness_state}",
             readable.join("")
         );
         let network = if self.network_allowed() {

@@ -516,3 +516,61 @@ fn the_toolchain_still_runs_under_the_read_boundary() {
     assert!(result.stdout.contains("workspace contents"));
     assert!(result.stdout.contains("git version"));
 }
+
+/// Found by watching a real run spend a fifth of its budget on `ls .poorai`
+/// and `cat` of an index artifact before it had installed anything.
+///
+/// `list_tree` and `search` exclude the harness's state through the shared
+/// walker, but a command does not go through that walker. The agent's
+/// workspace is the project, not the records the harness keeps about it.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_sandboxed_command_cannot_read_the_harness_state() {
+    let root = tempfile::tempdir().unwrap();
+    let state = root.path().join(".poorai");
+    fs::create_dir_all(state.join("indexes")).unwrap();
+    fs::write(state.join("indexes/idx.json"), "harness bookkeeping").unwrap();
+    fs::write(root.path().join("real.rs"), "fn real() {}").unwrap();
+
+    let result = block_on(run_command(
+        &policy(root.path()),
+        "sh",
+        &["-c".to_string(), "cat .poorai/indexes/idx.json".to_string()],
+    ))
+    .unwrap();
+    assert!(result.sandboxed);
+    assert!(
+        !result.stdout.contains("harness bookkeeping"),
+        "the agent read the harness's own records: {}",
+        result.stdout
+    );
+
+    // The project itself is untouched by the denial.
+    let project = block_on(run_command(
+        &policy(root.path()),
+        "sh",
+        &["-c".to_string(), "cat real.rs".to_string()],
+    ))
+    .unwrap();
+    assert_eq!(project.exit_code, Some(0));
+    assert!(project.stdout.contains("fn real"));
+}
+
+/// The scratch directory is deliberately readable: it is the child's own HOME
+/// and TMPDIR, and denying it would break the tools that were pointed at it.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_childs_own_scratch_directory_stays_readable() {
+    let root = tempfile::tempdir().unwrap();
+    let result = block_on(run_command(
+        &policy(root.path()),
+        "sh",
+        &[
+            "-c".to_string(),
+            "echo written > \"$TMPDIR/probe.txt\" && cat \"$TMPDIR/probe.txt\"".to_string(),
+        ],
+    ))
+    .unwrap();
+    assert_eq!(result.exit_code, Some(0), "{result:?}");
+    assert!(result.stdout.contains("written"));
+}
