@@ -485,6 +485,73 @@ fn outcome_class(outcome: &serde_json::Value) -> &'static str {
     }
 }
 
+/// Attaches what the harness knows and the deployment does not.
+///
+/// Two facts, both measured on a real run. A failing command's output carries
+/// its locations, because reading a compiler is mechanical work and the
+/// deployment was paying actions to do it by hand. And a read of a file this
+/// run has already been shown, unchanged, says so -- the content still comes
+/// back, since a caller that genuinely wants it again should get it.
+fn annotate(
+    outcome: &mut serde_json::Value,
+    action: &ActionProposal,
+    reads: &mut ReadHistory,
+    step: u8,
+) {
+    match action {
+        ActionProposal::RunCommand { .. }
+            if outcome.get("exit_code").and_then(serde_json::Value::as_i64) != Some(0) =>
+        {
+            let located = poorai_verify::diagnostics(&format!(
+                "{}\n{}",
+                outcome
+                    .get("stdout")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default(),
+                outcome
+                    .get("stderr")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+            ));
+            if !located.is_empty()
+                && let Some(object) = outcome.as_object_mut()
+            {
+                object.insert(
+                    "diagnostics".into(),
+                    serde_json::to_value(&located).unwrap_or_default(),
+                );
+            }
+        }
+        ActionProposal::ReadFile { path, .. } => {
+            let Some(hash) = outcome
+                .get("artifact_hash")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+            else {
+                return;
+            };
+            match reads.0.get(path) {
+                Some((earlier, seen)) if *seen == hash => {
+                    if let Some(object) = outcome.as_object_mut() {
+                        object.insert(
+                            "already_read".into(),
+                            serde_json::json!({
+                                "at_step": earlier,
+                                "unchanged_since": true,
+                                "note": "You have already been shown this file and it has not changed. Reading it again returns the same bytes.",
+                            }),
+                        );
+                    }
+                }
+                _ => {
+                    reads.0.insert(path.clone(), (step, hash));
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Executes one typed action under policy and audits the attempt.
 ///
 /// Every attempt is recorded, allowed or denied. A policy denial is the security
@@ -510,7 +577,35 @@ pub async fn execute_action_with_services(
     action: ActionProposal,
     services: &mut poorai_tools::service::ServiceSupervisor,
 ) -> Result<serde_json::Value, ActionExecutionError> {
-    let result = attempt_action(policy, &action, services).await;
+    let mut history = ReadHistory::default();
+    execute_action_recorded(store, run_id, policy, action, services, &mut history, 0).await
+}
+
+/// What this run has already been shown, so a re-read can be recognised.
+#[derive(Debug, Default)]
+pub struct ReadHistory(std::collections::BTreeMap<String, (u8, String)>);
+
+/// Executes one action, enriches its outcome with what the harness knows, and
+/// audits what the deployment was actually told.
+///
+/// The enrichment happens here rather than in the loop because the audit is
+/// this project's record of what happened, and a result recorded without the
+/// facts attached to it says the deployment saw less than it did.
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_action_recorded(
+    store: &Store,
+    run_id: poorai_domain::Id,
+    policy: &ToolPolicy,
+    action: ActionProposal,
+    services: &mut poorai_tools::service::ServiceSupervisor,
+    reads: &mut ReadHistory,
+    step: u8,
+) -> Result<serde_json::Value, ActionExecutionError> {
+    let mut result = attempt_action(policy, &action, services).await;
+    if let Ok(outcome) = &mut result {
+        annotate(outcome, &action, reads, step);
+    }
+    let result = result;
     let payload = match &result {
         Ok(outcome) => poorai_domain::RunEvent::ToolAction {
             action: serde_json::to_value(&action).unwrap_or_default(),
@@ -1921,8 +2016,7 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
     // a file it has already read, unchanged, is a fact the harness has and the
     // deployment does not -- and a measured run spent forty-two reads on
     // twenty-four files, re-reading the whole project twice before it stopped.
-    let mut files_read: std::collections::BTreeMap<String, (u8, String)> =
-        std::collections::BTreeMap::new();
+    let mut files_read = ReadHistory::default();
     let mut seen_fingerprints: std::collections::BTreeSet<String> =
         std::collections::BTreeSet::new();
     let mut progress_window: Vec<(String, EffectSignature, bool)> = Vec::new();
@@ -2604,19 +2698,26 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
         // budget, not the first refusal, is what bounds the loop.
         // Kept before the action is consumed, so a read can be recognised as
         // one the run has already been shown.
-        let action_for_reads = action.clone();
-        let mut outcome =
-            match execute_action_with_services(store, run_id, &policy, action, &mut services).await
-            {
-                Ok(outcome) => outcome,
-                Err(ActionExecutionError::Denied(denial)) => {
-                    serde_json::json!({"denied": denial})
-                }
-                Err(error) => serde_json::json!({
-                    "tool_failure": error.to_string(),
-                    "failure_category": error.category(),
-                }),
-            };
+        let outcome = match execute_action_recorded(
+            store,
+            run_id,
+            &policy,
+            action,
+            &mut services,
+            &mut files_read,
+            step,
+        )
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(ActionExecutionError::Denied(denial)) => {
+                serde_json::json!({"denied": denial})
+            }
+            Err(error) => serde_json::json!({
+                "tool_failure": error.to_string(),
+                "failure_category": error.category(),
+            }),
+        };
         // A one-time grant expires with the action it was given for.
         if let Some(approval) = once_granted.take() {
             policy.approvals.retain(|granted| *granted != approval);
@@ -2673,62 +2774,6 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                             .unwrap_or("changed")
                     ),
                 );
-            }
-        }
-        // A command's failures, located. The harness knows how to read a
-        // compiler's output; a deployment that runs its own build gets prose
-        // and pays actions to find the file and line in it by hand -- measured:
-        // sixteen reads and no writes after a failing `npm run build`.
-        //
-        // Attached to any command's output, not only to a check's, because the
-        // deployment runs its own builds and those are where it is working.
-        if let ActionProposal::RunCommand { .. } = &action_for_reads
-            && outcome.get("exit_code").and_then(serde_json::Value::as_i64) != Some(0)
-        {
-            let located = poorai_verify::diagnostics(&format!(
-                "{}\n{}",
-                outcome
-                    .get("stdout")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default(),
-                outcome
-                    .get("stderr")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-            ));
-            if !located.is_empty()
-                && let Some(object) = outcome.as_object_mut()
-            {
-                object.insert(
-                    "diagnostics".into(),
-                    serde_json::to_value(&located).unwrap_or_default(),
-                );
-            }
-        }
-        // A re-read of unchanged content, said plainly. The deployment cannot
-        // see that it is going in circles; the harness can, and withholding it
-        // costs an action every time.
-        if let ActionProposal::ReadFile { path, .. } = &action_for_reads
-            && let Some(hash) = outcome
-                .get("artifact_hash")
-                .and_then(serde_json::Value::as_str)
-        {
-            match files_read.get(path) {
-                Some((earlier, seen)) if seen == hash => {
-                    if let Some(object) = outcome.as_object_mut() {
-                        object.insert(
-                            "already_read".into(),
-                            serde_json::json!({
-                                "at_step": earlier,
-                                "unchanged_since": true,
-                                "note": "You have already been shown this file, and it has not changed. Reading it again will return the same bytes.",
-                            }),
-                        );
-                    }
-                }
-                _ => {
-                    files_read.insert(path.clone(), (step, hash.to_string()));
-                }
             }
         }
         // "Make one hypothesis-linked correction, rerun the narrow check."
@@ -4902,6 +4947,109 @@ mod tests {
         assert_eq!(
             verification.payload["still_failing_from_before"],
             serde_json::json!(["sh -c exit 1"])
+        );
+    }
+
+    /// Behavioural, not structural: the earlier fixture for this grepped the
+    /// source, which proves the code is written and not that it runs.
+    #[tokio::test]
+    async fn a_failing_command_comes_back_with_its_locations() {
+        let root = tempfile::tempdir().unwrap();
+        let policy = ToolPolicy {
+            root: root.path().to_path_buf(),
+            extra_readable: Vec::new(),
+            allow_commands: vec!["sh".into()],
+            output_limit: 8192,
+            timeout: Duration::from_secs(10),
+            sandbox: poorai_tools::SandboxPolicy::Disabled,
+            approvals: Vec::new(),
+        };
+        let provider = SequenceProvider(std::sync::Mutex::new(std::collections::VecDeque::from([
+            r#"{"capability":"run_command","executable":"sh","args":["-c","echo 'src/parser.rs:42:17: error: mismatched types' >&2; exit 1"]}"#.into(),
+            r#"{"capability":"complete","rationale":"done"}"#.into(),
+        ])));
+        let store = Store::open(":memory:").unwrap();
+        let run_id = new_id();
+        let request = ModelRequest {
+            deployment: deployment(),
+            context_tokens: 4096,
+            tools: None,
+            seed: None,
+            sampling: Default::default(),
+            messages: vec![poorai_domain::ChatMessage::text("user", "do work")],
+        };
+        let _ = run_action_loop(&store, &provider, run_id, request, &policy, &[], 3).await;
+
+        let events = store.events_for_run(run_id).unwrap();
+        let command = events
+            .iter()
+            .find(|event| {
+                event.event_type == "tool.action"
+                    && event.payload["action"]["capability"] == "run_command"
+            })
+            .expect("the command ran");
+        let located = &command.payload["outcome"]["diagnostics"];
+        assert!(!located.is_null(), "no locations: {}", command.payload);
+        assert_eq!(located[0]["path"], "src/parser.rs");
+        assert_eq!(located[0]["line"], 42);
+    }
+
+    /// A read of a file this run has already been shown, unchanged, says so --
+    /// and still returns the content, because a caller that wants it again
+    /// should get it.
+    #[tokio::test]
+    async fn a_second_read_of_an_unchanged_file_says_so() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("code.rs"), "fn one() {}").unwrap();
+        let policy = ToolPolicy {
+            root: root.path().to_path_buf(),
+            extra_readable: Vec::new(),
+            allow_commands: vec![],
+            output_limit: 8192,
+            timeout: Duration::from_secs(5),
+            sandbox: poorai_tools::SandboxPolicy::Disabled,
+            approvals: Vec::new(),
+        };
+        let read = r#"{"capability":"read_file","path":"code.rs"}"#;
+        let provider = SequenceProvider(std::sync::Mutex::new(std::collections::VecDeque::from([
+            read.into(),
+            read.into(),
+            r#"{"capability":"complete","rationale":"done"}"#.into(),
+        ])));
+        let store = Store::open(":memory:").unwrap();
+        let run_id = new_id();
+        let request = ModelRequest {
+            deployment: deployment(),
+            context_tokens: 4096,
+            tools: None,
+            seed: None,
+            sampling: Default::default(),
+            messages: vec![poorai_domain::ChatMessage::text("user", "do work")],
+        };
+        let _ = run_action_loop(&store, &provider, run_id, request, &policy, &[], 4).await;
+
+        let reads: Vec<_> = store
+            .events_for_run(run_id)
+            .unwrap()
+            .into_iter()
+            .filter(|event| {
+                event.event_type == "tool.action"
+                    && event.payload["action"]["capability"] == "read_file"
+            })
+            .collect();
+        assert_eq!(reads.len(), 2);
+        assert!(
+            reads[0].payload["outcome"]["already_read"].is_null(),
+            "the first read was called a repeat"
+        );
+        let repeat = &reads[1].payload["outcome"]["already_read"];
+        assert_eq!(repeat["unchanged_since"], true, "{}", reads[1].payload);
+        // The content still comes back.
+        assert!(
+            reads[1].payload["outcome"]["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("fn one")),
+            "the content was withheld"
         );
     }
 
