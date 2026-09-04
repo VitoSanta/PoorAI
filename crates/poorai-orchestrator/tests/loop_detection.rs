@@ -368,3 +368,24 @@ fn a_re_read_of_unchanged_content_is_said_plainly() {
         "a re-read was turned into a refusal"
     );
 }
+
+/// Typed diagnostics were wired into the verification path only. A deployment
+/// that runs its own `npm run build` got prose, and paid actions finding the
+/// file and line by hand: sixteen reads and no writes after one failing build.
+///
+/// The harness knows how to read a compiler's output. That is mechanical work,
+/// which is the harness's, and `direction.md` lists it as such.
+#[test]
+fn a_failing_command_carries_its_locations() {
+    let source = include_str!("../src/lib.rs");
+    let arm = source
+        .split("ActionProposal::RunCommand { .. } = &action_for_reads")
+        .nth(1)
+        .expect("command output is not parsed for diagnostics");
+    let arm = &arm[..arm.len().min(900)];
+    assert!(arm.contains("poorai_verify::diagnostics"), "{arm}");
+    // Only where the command actually failed: a passing build has nothing to
+    // locate, and attaching an empty list to every result is noise.
+    assert!(arm.contains("exit_code"), "attached regardless of outcome");
+    assert!(arm.contains("!located.is_empty()"), "empty lists attached");
+}

@@ -2675,6 +2675,36 @@ pub async fn run_action_loop_with_prompt_budget_and_context_tiers<P: ModelProvid
                 );
             }
         }
+        // A command's failures, located. The harness knows how to read a
+        // compiler's output; a deployment that runs its own build gets prose
+        // and pays actions to find the file and line in it by hand -- measured:
+        // sixteen reads and no writes after a failing `npm run build`.
+        //
+        // Attached to any command's output, not only to a check's, because the
+        // deployment runs its own builds and those are where it is working.
+        if let ActionProposal::RunCommand { .. } = &action_for_reads
+            && outcome.get("exit_code").and_then(serde_json::Value::as_i64) != Some(0)
+        {
+            let located = poorai_verify::diagnostics(&format!(
+                "{}\n{}",
+                outcome
+                    .get("stdout")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default(),
+                outcome
+                    .get("stderr")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+            ));
+            if !located.is_empty()
+                && let Some(object) = outcome.as_object_mut()
+            {
+                object.insert(
+                    "diagnostics".into(),
+                    serde_json::to_value(&located).unwrap_or_default(),
+                );
+            }
+        }
         // A re-read of unchanged content, said plainly. The deployment cannot
         // see that it is going in circles; the harness can, and withholding it
         // costs an action every time.
